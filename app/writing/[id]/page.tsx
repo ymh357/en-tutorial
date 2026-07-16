@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import {
   AlertTriangle,
@@ -68,6 +68,40 @@ Guidelines:
 
 const buildReviewPrompt = (taskPrompt: string, content: string): string =>
   `Task: ${taskPrompt || "Free writing"}\n\nStudent's writing:\n${content}\n\nAnalyze this writing and return the JSON review described in the system prompt.`;
+
+const DRAFT_SAVE_DEBOUNCE_MS = 500;
+
+const getDraftKey = (id: string): string => `en-tutor-writing-draft-${id}`;
+
+const loadDraft = (id: string): string => {
+  if (typeof window === "undefined") return "";
+  try {
+    const raw = window.localStorage.getItem(getDraftKey(id));
+    if (!raw) return "";
+    const parsed = JSON.parse(raw) as { content?: string };
+    return typeof parsed.content === "string" ? parsed.content : "";
+  } catch {
+    return "";
+  }
+};
+
+const saveDraft = (id: string, content: string): void => {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(getDraftKey(id), JSON.stringify({ content }));
+  } catch {
+    // Ignore quota-exceeded or serialization errors — draft persistence is best-effort.
+  }
+};
+
+const clearDraft = (id: string): void => {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.removeItem(getDraftKey(id));
+  } catch {
+    // Ignore storage errors on cleanup.
+  }
+};
 
 const parseReviewResponse = (raw: string): WritingReview | null => {
   let text = raw.trim();
@@ -178,7 +212,7 @@ const WritingEditorPage = () => {
     ? decodeURIComponent(searchParams.get("prompt") as string)
     : "";
 
-  const [content, setContent] = useState("");
+  const [content, setContent] = useState(() => loadDraft(sessionId));
   const [phase, setPhase] = useState<"writing" | "review">("writing");
   const [isReviewing, setIsReviewing] = useState(false);
   const [reviewError, setReviewError] = useState<string | null>(null);
@@ -189,6 +223,30 @@ const WritingEditorPage = () => {
   const [addedKeys, setAddedKeys] = useState<Set<number>>(new Set());
   const [addingKey, setAddingKey] = useState<number | null>(null);
   const [startTime] = useState<number>(() => Date.now());
+
+  // Debounced auto-save of the draft to localStorage while writing.
+  useEffect(() => {
+    if (phase !== "writing") return;
+    const timer = setTimeout(() => {
+      if (content.trim()) {
+        saveDraft(sessionId, content);
+      } else {
+        clearDraft(sessionId);
+      }
+    }, DRAFT_SAVE_DEBOUNCE_MS);
+    return () => clearTimeout(timer);
+  }, [content, sessionId, phase]);
+
+  // Warn before leaving the tab if there's unsaved, unsubmitted writing.
+  useEffect(() => {
+    const handleBeforeUnload = (e: BeforeUnloadEvent) => {
+      if (phase === "writing" && content.trim()) {
+        e.preventDefault();
+      }
+    };
+    window.addEventListener("beforeunload", handleBeforeUnload);
+    return () => window.removeEventListener("beforeunload", handleBeforeUnload);
+  }, [phase, content]);
 
   const wordCount = useMemo(
     () => content.trim().split(/\s+/).filter(Boolean).length,
@@ -250,6 +308,7 @@ const WritingEditorPage = () => {
       await dbHelpers.incrementTodayStat("timeSpent", timeSpentSeconds);
       await dbHelpers.updateStreak();
 
+      clearDraft(sessionId);
       setReview(parsedReview);
       setPhase("review");
     } catch (err) {

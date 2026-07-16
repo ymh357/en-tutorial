@@ -1,7 +1,8 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { Volume2 } from "lucide-react";
+import Link from "next/link";
+import { Flame, Volume2 } from "lucide-react";
 import { db } from "@/lib/db";
 import { dbHelpers } from "@/lib/db-helpers";
 import { useDueCards } from "@/hooks/use-db";
@@ -53,6 +54,12 @@ const formatInterval = (days: number): string => {
 
 const getNow = (): number => Date.now();
 
+const getEncouragement = (cardsReviewed: number): string => {
+  if (cardsReviewed < 10) return "Nice warm-up!";
+  if (cardsReviewed <= 30) return "Great session!";
+  return "Incredible dedication!";
+};
+
 const formatTimeSpent = (ms: number): string => {
   const totalSeconds = Math.round(ms / 1000);
   const minutes = Math.floor(totalSeconds / 60);
@@ -69,6 +76,9 @@ const SrsPage = () => {
   const [sessionDone, setSessionDone] = useState(false);
   const [startedAt] = useState(getNow);
   const [finishedAt, setFinishedAt] = useState<number | null>(null);
+  const [streak, setStreak] = useState<{ current: number; longest: number } | null>(
+    null
+  );
 
   const totalCards = dueCards.length;
   const currentCard: CardType | undefined = dueCards[index];
@@ -101,7 +111,8 @@ const SrsPage = () => {
     if (index + 1 >= totalCards) {
       setFinishedAt(getNow());
       setSessionDone(true);
-      await dbHelpers.updateStreak();
+      const streakResult = await dbHelpers.updateStreak();
+      setStreak(streakResult);
     } else {
       setIndex((i) => i + 1);
     }
@@ -132,18 +143,42 @@ const SrsPage = () => {
         <h1 className="text-2xl font-bold">Review</h1>
         <Card>
           <CardHeader>
-            <CardTitle>Session complete</CardTitle>
-            <CardDescription>Nice work — here&apos;s your summary.</CardDescription>
+            <CardTitle>{getEncouragement(reviewedCount)}</CardTitle>
+            <CardDescription>Session complete — here&apos;s your summary.</CardDescription>
           </CardHeader>
-          <CardContent className="grid grid-cols-2 gap-4">
-            <div className="rounded-lg bg-muted/50 p-4 text-center">
-              <p className="text-2xl font-bold">{reviewedCount}</p>
-              <p className="text-sm text-muted-foreground">Cards reviewed</p>
+          <CardContent className="space-y-4">
+            <div className="grid grid-cols-2 gap-4">
+              <div className="rounded-lg bg-muted/50 p-4 text-center">
+                <p className="text-2xl font-bold">{reviewedCount}</p>
+                <p className="text-sm text-muted-foreground">Cards reviewed</p>
+              </div>
+              <div className="rounded-lg bg-muted/50 p-4 text-center">
+                <p className="text-2xl font-bold">{formatTimeSpent(timeSpent)}</p>
+                <p className="text-sm text-muted-foreground">Time spent</p>
+              </div>
             </div>
-            <div className="rounded-lg bg-muted/50 p-4 text-center">
-              <p className="text-2xl font-bold">{formatTimeSpent(timeSpent)}</p>
-              <p className="text-sm text-muted-foreground">Time spent</p>
-            </div>
+
+            {streak && (
+              <div className="flex items-center gap-2 rounded-lg bg-muted/50 p-4">
+                <Flame className="size-5 shrink-0 text-orange-500" />
+                <div>
+                  <p className="text-sm font-medium">
+                    {streak.current} day{streak.current === 1 ? "" : "s"} streak
+                  </p>
+                  <p className="text-xs text-muted-foreground">
+                    Best: {streak.longest} days
+                  </p>
+                </div>
+              </div>
+            )}
+
+            <p className="text-center text-sm text-muted-foreground italic">
+              Consistent daily review is the key to long-term memory.
+            </p>
+
+            <Button className="w-full" render={<Link href="/" />}>
+              Back to Dashboard
+            </Button>
           </CardContent>
         </Card>
       </div>

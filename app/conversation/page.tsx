@@ -52,11 +52,14 @@ const ScenarioCard = ({
   </Card>
 );
 
+const COLLAPSED_SCENARIO_COUNT = 6;
+
 const ConversationPage = () => {
   const router = useRouter();
   const recentConversations = useConversations(5);
   const [customScenario, setCustomScenario] = useState("");
   const [activeCategory, setActiveCategory] = useState<string>("all");
+  const [showAllScenarios, setShowAllScenarios] = useState(false);
 
   const startConversation = (scenarioId: string, type: string) => {
     const id = crypto.randomUUID();
@@ -85,6 +88,10 @@ const ConversationPage = () => {
     activeCategory === "all"
       ? SCENARIOS
       : SCENARIOS.filter((s) => s.category === activeCategory);
+
+  const visibleScenarios = showAllScenarios
+    ? filteredScenarios
+    : filteredScenarios.slice(0, COLLAPSED_SCENARIO_COUNT);
 
   return (
     <div className="max-w-4xl space-y-8">
@@ -157,7 +164,10 @@ const ConversationPage = () => {
           <Button
             variant={activeCategory === "all" ? "default" : "outline"}
             size="sm"
-            onClick={() => setActiveCategory("all")}
+            onClick={() => {
+              setActiveCategory("all");
+              setShowAllScenarios(false);
+            }}
           >
             All
           </Button>
@@ -166,14 +176,17 @@ const ConversationPage = () => {
               key={cat.key}
               variant={activeCategory === cat.key ? "default" : "outline"}
               size="sm"
-              onClick={() => setActiveCategory(cat.key)}
+              onClick={() => {
+                setActiveCategory(cat.key);
+                setShowAllScenarios(false);
+              }}
             >
               {cat.label}
             </Button>
           ))}
         </div>
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-          {filteredScenarios.map((scenario) => (
+          {visibleScenarios.map((scenario) => (
             <ScenarioCard
               key={scenario.id}
               scenario={scenario}
@@ -181,6 +194,11 @@ const ConversationPage = () => {
             />
           ))}
         </div>
+        {!showAllScenarios && filteredScenarios.length > COLLAPSED_SCENARIO_COUNT && (
+          <Button variant="outline" size="sm" onClick={() => setShowAllScenarios(true)}>
+            Show all {filteredScenarios.length} scenarios
+          </Button>
+        )}
       </div>
 
       {/* Recent conversations */}

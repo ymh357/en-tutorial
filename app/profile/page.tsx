@@ -443,7 +443,7 @@ const ProfilePage = () => {
           <CardContent>
             {allCards.length === 0 ? (
               <p className="text-sm text-muted-foreground">
-                No vocabulary cards yet.
+                Complete conversations and reading to start tracking vocabulary growth.
               </p>
             ) : (
               <div className="min-h-[200px] overflow-x-auto">
@@ -462,7 +462,7 @@ const ProfilePage = () => {
           <CardContent>
             {scorePoints.length === 0 ? (
               <p className="text-sm text-muted-foreground">
-                Complete a conversation with a review to see score trends.
+                Complete your first conversation to see score trends.
               </p>
             ) : (
               <>
@@ -496,7 +496,7 @@ const ProfilePage = () => {
           <CardContent className="space-y-3">
             {errorPatternStats.length === 0 ? (
               <p className="text-sm text-muted-foreground">
-                No writing reviews yet. Submit a writing piece to see error patterns.
+                Submit writing for review to see your error patterns.
               </p>
             ) : (
               errorPatternStats.map((stat) => (
@@ -531,7 +531,7 @@ const ProfilePage = () => {
           <CardContent className="space-y-3">
             {practiceDistribution.every((d) => d.value === 0) ? (
               <p className="text-sm text-muted-foreground">
-                No practice sessions logged yet.
+                Start practicing to see your activity distribution.
               </p>
             ) : (
               practiceDistribution.map((item) => {

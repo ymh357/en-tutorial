@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import Link from "next/link";
 import {
   Ear,
   Headphones,
@@ -137,6 +138,26 @@ const diffWords = (original: string, userText: string): DiffResult => {
 };
 
 type Mode = "dictation" | "comprehension" | "shadowing";
+
+// Shared post-exercise navigation shown once a result/completion state renders.
+const ExerciseCompletionActions = ({
+  onTryAnother,
+}: {
+  onTryAnother: () => void;
+}) => (
+  <div className="flex flex-col gap-2 sm:flex-row">
+    <Button
+      variant="outline"
+      className="flex-1 min-h-[44px]"
+      render={<Link href="/" />}
+    >
+      Back to Dashboard
+    </Button>
+    <Button className="flex-1 min-h-[44px]" onClick={onTryAnother}>
+      Try Another Exercise
+    </Button>
+  </div>
+);
 
 // --- Dictation ---
 
@@ -313,6 +334,12 @@ const DictationTab = ({ cefrLevel }: { cefrLevel: string }) => {
           {completed} sentence{completed === 1 ? "" : "s"} completed &middot; avg
           accuracy {avgAccuracy}%
         </p>
+      )}
+
+      {result && (
+        <ExerciseCompletionActions
+          onTryAnother={() => void generateSentence()}
+        />
       )}
     </div>
   );
@@ -510,12 +537,9 @@ const ComprehensionTab = ({ cefrLevel }: { cefrLevel: string }) => {
                   {Math.round((score / data.questions.length) * 100)}%)
                 </AlertDescription>
               </Alert>
-              <Button
-                className="w-full min-h-[44px]"
-                onClick={() => void generatePassage()}
-              >
-                Next Passage
-              </Button>
+              <ExerciseCompletionActions
+                onTryAnother={() => void generatePassage()}
+              />
             </>
           ) : (
             <Button
@@ -745,6 +769,12 @@ const ShadowingTab = ({ cefrLevel }: { cefrLevel: string }) => {
             </p>
           </CardContent>
         </Card>
+      )}
+
+      {result && transcript !== null && (
+        <ExerciseCompletionActions
+          onTryAnother={() => void nextSentence()}
+        />
       )}
 
       {sentences.length > 0 && (

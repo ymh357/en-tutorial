@@ -161,6 +161,18 @@ const QUICK_LAUNCH = [
     description: "Practice spaced repetition",
     icon: Brain,
   },
+  {
+    href: "/listening",
+    title: "Listening",
+    description: "Sharpen your listening skills",
+    icon: Headphones,
+  },
+  {
+    href: "/translate",
+    title: "Translate",
+    description: "Practice Chinese-to-English translation",
+    icon: Languages,
+  },
 ] as const;
 
 const DashboardPage = () => {
@@ -266,6 +278,23 @@ const DashboardPage = () => {
     }
   );
 
+  // Auto-detect completion from today's stats, so a step already done (e.g. in
+  // a previous tab, or via Quick Launch without hitting "Start") still shows
+  // as completed rather than relying solely on the sessionStorage click-trail.
+  const statsCompletedSteps = useMemo<Set<StudyStepType>>(() => {
+    const detected = new Set<StudyStepType>();
+    if (!todayStats) return detected;
+    if (todayStats.srsReviewed > 0) detected.add("srs");
+    if (todayStats.conversationCount > 0) detected.add("conversation");
+    if (todayStats.readingCount > 0) detected.add("reading");
+    if (todayStats.writingCount > 0) detected.add("writing");
+    return detected;
+  }, [todayStats]);
+
+  const mergedCompletedSteps = useMemo<Set<StudyStepType>>(() => {
+    return new Set([...completedSteps, ...statsCompletedSteps]);
+  }, [completedSteps, statsCompletedSteps]);
+
   const markStepCompleted = (type: StudyStepType) => {
     setCompletedSteps((prev) => {
       const next = new Set(prev);
@@ -305,7 +334,7 @@ const DashboardPage = () => {
     0
   );
   const completedPlanMinutes = studyPlan
-    .filter((step) => completedSteps.has(step.type))
+    .filter((step) => mergedCompletedSteps.has(step.type))
     .reduce((sum, step) => sum + step.estimatedMinutes, 0);
   const planProgressPct =
     totalPlanMinutes > 0
@@ -313,7 +342,7 @@ const DashboardPage = () => {
       : 0;
 
   const firstUnfinishedStep = studyPlan.find(
-    (step) => !completedSteps.has(step.type)
+    (step) => !mergedCompletedSteps.has(step.type)
   );
 
   const greeting = useMemo(() => getGreeting(new Date().getHours()), []);
@@ -360,7 +389,7 @@ const DashboardPage = () => {
               <ol className="space-y-3">
                 {studyPlan.map((step, index) => {
                   const Icon = STEP_ICONS[step.type];
-                  const done = completedSteps.has(step.type);
+                  const done = mergedCompletedSteps.has(step.type);
                   return (
                     <li
                       key={step.type}
@@ -475,7 +504,7 @@ const DashboardPage = () => {
           <CardTitle>Quick Launch</CardTitle>
         </CardHeader>
         <CardContent>
-          <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+          <div className="grid grid-cols-2 gap-3 md:grid-cols-3">
             {QUICK_LAUNCH.map((item) => {
               const Icon = item.icon;
               return (

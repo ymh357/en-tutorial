@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import Link from "next/link";
 import {
   ArrowRight,
   Check,
@@ -820,6 +821,14 @@ const TranslatePage = () => {
               </Button>
             )}
           </div>
+
+          <Button
+            variant="ghost"
+            className="w-full min-h-[44px]"
+            render={<Link href="/" />}
+          >
+            Back to Dashboard
+          </Button>
         </>
       )}
     </div>

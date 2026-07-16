@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   BookOpen,
   CheckCircle2,
@@ -80,6 +80,7 @@ export interface AssessmentResult {
 }
 
 const ASSESSMENTS_STORAGE_KEY = "en-tutor-assessments";
+const ASSESSMENT_PROGRESS_KEY = "en-tutor-assessment-progress";
 
 const WRITING_PROMPTS = [
   "Describe a memorable trip you have taken and explain what made it special.",
@@ -266,6 +267,46 @@ const saveAssessment = (result: AssessmentResult): void => {
   );
 };
 
+interface AssessmentProgress {
+  phase: Phase;
+  readingData: ReadingData | null;
+  readingAnswers: Record<number, number>;
+  readingScore: number;
+  clozeData: ClozeData | null;
+  clozeAnswers: Record<number, string>;
+  clozeScore: number;
+  writingContent: string;
+  writingScore: number;
+  writingFeedback: string;
+  conversationHistory: ConversationTurn[];
+  conversationScore: number;
+  conversationFeedback: string;
+}
+
+const saveAssessmentProgress = (progress: AssessmentProgress): void => {
+  if (typeof window === "undefined") return;
+  window.sessionStorage.setItem(
+    ASSESSMENT_PROGRESS_KEY,
+    JSON.stringify(progress)
+  );
+};
+
+const loadAssessmentProgress = (): AssessmentProgress | null => {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = window.sessionStorage.getItem(ASSESSMENT_PROGRESS_KEY);
+    if (!raw) return null;
+    return JSON.parse(raw) as AssessmentProgress;
+  } catch {
+    return null;
+  }
+};
+
+const clearAssessmentProgress = (): void => {
+  if (typeof window === "undefined") return;
+  window.sessionStorage.removeItem(ASSESSMENT_PROGRESS_KEY);
+};
+
 const SECTION_LABELS = ["Reading", "Cloze", "Writing", "Conversation"] as const;
 
 const PhaseProgress = ({ currentIndex }: { currentIndex: number }) => (
@@ -283,33 +324,63 @@ const PhaseProgress = ({ currentIndex }: { currentIndex: number }) => (
   </div>
 );
 
+// Restorable phases only — a fresh "intro" or a completed "results" never
+// need to resume from a saved snapshot.
+const RESTORABLE_PHASES = new Set<Phase>(["reading", "cloze", "writing", "conversation"]);
+
+const initialAssessmentProgress = (): AssessmentProgress | null => {
+  const saved = loadAssessmentProgress();
+  if (!saved || !RESTORABLE_PHASES.has(saved.phase)) return null;
+  return saved;
+};
+
 const AssessmentPage = () => {
   const profile = useProfile();
   const cefrLevel = profile?.initialCefrLevel || "B1";
 
-  const [phase, setPhase] = useState<Phase>("intro");
+  const [restoredProgress] = useState<AssessmentProgress | null>(
+    initialAssessmentProgress
+  );
+
+  const [phase, setPhase] = useState<Phase>(() => restoredProgress?.phase ?? "intro");
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
 
   // Reading section state
-  const [readingData, setReadingData] = useState<ReadingData | null>(null);
-  const [readingAnswers, setReadingAnswers] = useState<
-    Record<number, number>
-  >({});
-  const [readingScore, setReadingScore] = useState<number>(0);
+  const [readingData, setReadingData] = useState<ReadingData | null>(
+    () => restoredProgress?.readingData ?? null
+  );
+  const [readingAnswers, setReadingAnswers] = useState<Record<number, number>>(
+    () => restoredProgress?.readingAnswers ?? {}
+  );
+  const [readingScore, setReadingScore] = useState<number>(
+    () => restoredProgress?.readingScore ?? 0
+  );
 
   // Cloze section state
-  const [clozeData, setClozeData] = useState<ClozeData | null>(null);
-  const [clozeAnswers, setClozeAnswers] = useState<Record<number, string>>({});
-  const [clozeScore, setClozeScore] = useState<number>(0);
+  const [clozeData, setClozeData] = useState<ClozeData | null>(
+    () => restoredProgress?.clozeData ?? null
+  );
+  const [clozeAnswers, setClozeAnswers] = useState<Record<number, string>>(
+    () => restoredProgress?.clozeAnswers ?? {}
+  );
+  const [clozeScore, setClozeScore] = useState<number>(
+    () => restoredProgress?.clozeScore ?? 0
+  );
 
   // Writing section state
   const [writingPrompt] = useState<string>(
     () => WRITING_PROMPTS[Math.floor(Math.random() * WRITING_PROMPTS.length)]
   );
-  const [writingContent, setWritingContent] = useState("");
-  const [writingScore, setWritingScore] = useState<number>(0);
-  const [writingFeedback, setWritingFeedback] = useState<string>("");
+  const [writingContent, setWritingContent] = useState(
+    () => restoredProgress?.writingContent ?? ""
+  );
+  const [writingScore, setWritingScore] = useState<number>(
+    () => restoredProgress?.writingScore ?? 0
+  );
+  const [writingFeedback, setWritingFeedback] = useState<string>(
+    () => restoredProgress?.writingFeedback ?? ""
+  );
 
   // Conversation section state
   const [conversationTopic] = useState<string>(
@@ -320,10 +391,14 @@ const AssessmentPage = () => {
   );
   const [conversationHistory, setConversationHistory] = useState<
     ConversationTurn[]
-  >([]);
+  >(() => restoredProgress?.conversationHistory ?? []);
   const [conversationInput, setConversationInput] = useState("");
-  const [conversationScore, setConversationScore] = useState<number>(0);
-  const [conversationFeedback, setConversationFeedback] = useState<string>("");
+  const [conversationScore, setConversationScore] = useState<number>(
+    () => restoredProgress?.conversationScore ?? 0
+  );
+  const [conversationFeedback, setConversationFeedback] = useState<string>(
+    () => restoredProgress?.conversationFeedback ?? ""
+  );
 
   const [previousAssessments] = useState<AssessmentResult[]>(() =>
     loadPreviousAssessments()
@@ -336,6 +411,41 @@ const AssessmentPage = () => {
     previousAssessments.length > 0
       ? previousAssessments[previousAssessments.length - 1]
       : null;
+
+  // Persist progress to sessionStorage whenever the phase advances, so a
+  // refresh mid-assessment doesn't lose the student's work.
+  useEffect(() => {
+    if (phase === "intro" || phase === "results") return;
+    saveAssessmentProgress({
+      phase,
+      readingData,
+      readingAnswers,
+      readingScore,
+      clozeData,
+      clozeAnswers,
+      clozeScore,
+      writingContent,
+      writingScore,
+      writingFeedback,
+      conversationHistory,
+      conversationScore,
+      conversationFeedback,
+    });
+  }, [
+    phase,
+    readingData,
+    readingAnswers,
+    readingScore,
+    clozeData,
+    clozeAnswers,
+    clozeScore,
+    writingContent,
+    writingScore,
+    writingFeedback,
+    conversationHistory,
+    conversationScore,
+    conversationFeedback,
+  ]);
 
   // --- Section 1: Reading ---
   const startReading = async (): Promise<void> => {
@@ -548,6 +658,7 @@ Return ONLY valid JSON (no markdown fences, no explanation) in this exact format
       });
     }
     await dbHelpers.updateStreak();
+    clearAssessmentProgress();
     setPhase("results");
   };
 

@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
-import { useChat } from "@ai-sdk/react";
+import { useChat, type UIMessage } from "@ai-sdk/react";
 import { DefaultChatTransport } from "ai";
 import { ArrowLeft, Mic, Send, Square, Volume2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -46,6 +46,15 @@ const getMessageText = (parts: Array<{ type: string; text?: string }>): string =
     .filter((p) => p.type === "text")
     .map((p) => p.text ?? "")
     .join("");
+
+// Convert stored ConversationMessage records (used for db persistence) into
+// UIMessage objects that useChat can be seeded with on restore.
+const toUIMessages = (messages: ConversationMessage[]): UIMessage[] =>
+  messages.map((m, idx) => ({
+    id: `restored-${idx}`,
+    role: m.role,
+    parts: [{ type: "text", text: m.content }],
+  }));
 
 const buildSystemPrompt = (params: {
   type: ScenarioType | null;
@@ -131,7 +140,7 @@ const ConversationPage = () => {
     [system]
   );
 
-  const { messages, sendMessage, status, stop, error } = useChat({
+  const { messages, sendMessage, status, stop, error, setMessages } = useChat({
     id: conversationId,
     transport,
   });
@@ -142,6 +151,7 @@ const ConversationPage = () => {
   const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const [startTime] = useState<number>(() => Date.now());
+  const previousStatusRef = useRef(status);
 
   const isStreaming = status === "streaming" || status === "submitted";
   const voiceSupported =
@@ -154,6 +164,60 @@ const ConversationPage = () => {
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
+
+  // On mount, restore any in-progress (unreviewed) conversation from IndexedDB
+  // so a refresh doesn't lose the exchange so far.
+  useEffect(() => {
+    void (async () => {
+      const existing = await db.conversations.get(conversationId);
+      if (existing && existing.messages.length > 0 && !existing.review) {
+        setMessages(toUIMessages(existing.messages));
+      }
+    })();
+    // Only run once on mount for this conversation id.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [conversationId]);
+
+  // Persist the conversation (without a review) each time the assistant
+  // finishes streaming a reply, so refresh preserves progress.
+  useEffect(() => {
+    const wasStreaming =
+      previousStatusRef.current === "streaming" ||
+      previousStatusRef.current === "submitted";
+    if (wasStreaming && status === "ready") {
+      const conversationMessages: ConversationMessage[] = messages
+        .filter((m) => m.role === "user" || m.role === "assistant")
+        .map((m) => ({
+          role: m.role as "user" | "assistant",
+          content: getMessageText(m.parts),
+          timestamp: new Date(),
+        }));
+
+      if (conversationMessages.length > 0) {
+        void db.conversations.put({
+          id: conversationId,
+          scenario: type === "preset" ? title : (scenarioParam ?? title),
+          scenarioType: type ?? "free",
+          messages: conversationMessages,
+          review: null,
+          duration: Math.round((Date.now() - startTime) / 1000),
+          createdAt: new Date(),
+        });
+      }
+    }
+    previousStatusRef.current = status;
+  }, [status, messages, conversationId, type, scenarioParam, title, startTime]);
+
+  // Warn before leaving the tab if the conversation hasn't been ended/reviewed yet.
+  useEffect(() => {
+    const handleBeforeUnload = (e: BeforeUnloadEvent) => {
+      if (messages.length > 0) {
+        e.preventDefault();
+      }
+    };
+    window.addEventListener("beforeunload", handleBeforeUnload);
+    return () => window.removeEventListener("beforeunload", handleBeforeUnload);
+  }, [messages.length]);
 
   const handleSend = () => {
     const text = input.trim();

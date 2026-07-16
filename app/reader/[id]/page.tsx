@@ -365,83 +365,10 @@ const ReaderSessionPage = ({
   occurrenceCounterRef.current = new Map();
   let globalPosition = 0;
 
-  return (
-    <div className="max-w-4xl space-y-4 pb-8 px-4 md:px-8">
-      <div className="flex items-center justify-between gap-4">
-        <div className="flex items-center gap-3 min-w-0">
-          <Button variant="ghost" size="icon" onClick={() => router.push("/reader")}>
-            <ArrowLeft className="h-4 w-4" />
-          </Button>
-          <h1 className="text-xl font-bold truncate">{session.title}</h1>
-        </div>
-        <div className="flex items-center gap-2 shrink-0">
-          {session.difficulty && session.difficulty !== UNKNOWN_DIFFICULTY && (
-            <Badge>{session.difficulty}</Badge>
-          )}
-        </div>
-      </div>
+  const hasLookupPanel = Boolean(wordPopup || sentencePanel);
 
-      <div className="text-sm text-muted-foreground">
-        Vocab Coverage: <span className="font-semibold text-foreground">{vocabCoverage}%</span>{" "}
-        known
-      </div>
-
-      <Card>
-        <CardContent className="pt-6 space-y-4 leading-relaxed text-base px-4 md:px-6">
-          {paragraphs.map((paragraph, pIndex) => {
-            const tokens = tokenizeParagraph(paragraph);
-            return (
-              <p key={pIndex}>
-                {tokens.map((token, tIndex) => {
-                  if (!token.isWord) {
-                    return <span key={tIndex}>{token.text}</span>;
-                  }
-                  const lemma = lemmatize(token.text);
-                  const count = occurrenceCounterRef.current.get(lemma) ?? 0;
-                  occurrenceCounterRef.current.set(lemma, count + 1);
-                  const position = globalPosition++;
-                  const isInSrs = srsLemmaSet.has(lemma);
-                  const isSelected = wordPopup?.position === position;
-
-                  return (
-                    <span
-                      key={tIndex}
-                      role="button"
-                      tabIndex={0}
-                      onClick={() => void handleWordClick(token.text, position)}
-                      className={`cursor-pointer rounded px-0.5 py-0.5 inline-block min-h-[24px] hover:bg-primary/15 transition-colors ${
-                        isSelected ? "bg-primary/25" : ""
-                      } ${isInSrs ? "underline decoration-dotted decoration-primary/60 underline-offset-4" : ""}`}
-                    >
-                      {token.text}
-                    </span>
-                  );
-                })}
-              </p>
-            );
-          })}
-        </CardContent>
-      </Card>
-
-      <div className="space-y-2">
-        <p className="text-xs text-muted-foreground">
-          Click a sentence below to get a grammar breakdown and translation:
-        </p>
-        <div className="flex flex-wrap gap-2">
-          {sentences.map((sentence, index) => (
-            <Button
-              key={index}
-              variant="outline"
-              size="sm"
-              className="text-xs h-auto min-h-[44px] py-2 whitespace-normal text-left"
-              onClick={() => void handleSentenceClick(sentence)}
-            >
-              {sentence.length > 60 ? `${sentence.slice(0, 60)}...` : sentence}
-            </Button>
-          ))}
-        </div>
-      </div>
-
+  const lookupPanelContent = (
+    <>
       {wordPopup && (
         <Card className="border-primary/40">
           <CardHeader className="pb-2">
@@ -537,16 +464,116 @@ const ReaderSessionPage = ({
         </Card>
       )}
 
-      <Button className="w-full" size="lg" onClick={() => void handleFinishReading()} disabled={isFinishing}>
-        {isFinishing ? (
-          <>
-            <Loader2 className="h-4 w-4 animate-spin" />
-            Finishing...
-          </>
-        ) : (
-          "Finish Reading"
-        )}
-      </Button>
+      {!hasLookupPanel && (
+        <p className="hidden lg:block text-sm text-muted-foreground">
+          Click a word for its definition or a sentence for a grammar breakdown. Results appear
+          here.
+        </p>
+      )}
+    </>
+  );
+
+  return (
+    <div className="flex flex-col lg:flex-row lg:items-start gap-4 pb-24 lg:pb-8 px-4 md:px-8">
+      <div className="flex-1 min-w-0 max-w-4xl space-y-4">
+        <div className="flex items-center justify-between gap-4">
+          <div className="flex items-center gap-3 min-w-0">
+            <Button variant="ghost" size="icon" onClick={() => router.push("/reader")}>
+              <ArrowLeft className="h-4 w-4" />
+            </Button>
+            <h1 className="text-xl font-bold truncate">{session.title}</h1>
+          </div>
+          <div className="flex items-center gap-2 shrink-0">
+            {session.difficulty && session.difficulty !== UNKNOWN_DIFFICULTY && (
+              <Badge>{session.difficulty}</Badge>
+            )}
+          </div>
+        </div>
+
+        <div className="text-sm text-muted-foreground">
+          Vocab Coverage: <span className="font-semibold text-foreground">{vocabCoverage}%</span>{" "}
+          known
+        </div>
+
+        <Card>
+          <CardContent className="pt-6 space-y-4 leading-relaxed text-base px-4 md:px-6">
+            {paragraphs.map((paragraph, pIndex) => {
+              const tokens = tokenizeParagraph(paragraph);
+              return (
+                <p key={pIndex}>
+                  {tokens.map((token, tIndex) => {
+                    if (!token.isWord) {
+                      return <span key={tIndex}>{token.text}</span>;
+                    }
+                    const lemma = lemmatize(token.text);
+                    const count = occurrenceCounterRef.current.get(lemma) ?? 0;
+                    occurrenceCounterRef.current.set(lemma, count + 1);
+                    const position = globalPosition++;
+                    const isInSrs = srsLemmaSet.has(lemma);
+                    const isSelected = wordPopup?.position === position;
+
+                    return (
+                      <span
+                        key={tIndex}
+                        role="button"
+                        tabIndex={0}
+                        onClick={() => void handleWordClick(token.text, position)}
+                        className={`cursor-pointer rounded px-0.5 py-0.5 inline-block min-h-[24px] hover:bg-primary/15 transition-colors ${
+                          isSelected ? "bg-primary/25" : ""
+                        } ${isInSrs ? "underline decoration-dotted decoration-primary/60 underline-offset-4" : ""}`}
+                      >
+                        {token.text}
+                      </span>
+                    );
+                  })}
+                </p>
+              );
+            })}
+          </CardContent>
+        </Card>
+
+        <div className="space-y-2">
+          <p className="text-xs text-muted-foreground">
+            Click a sentence below to get a grammar breakdown and translation:
+          </p>
+          <div className="flex flex-wrap gap-2">
+            {sentences.map((sentence, index) => (
+              <Button
+                key={index}
+                variant="outline"
+                size="sm"
+                className="text-xs h-auto min-h-[44px] py-2 whitespace-normal text-left"
+                onClick={() => void handleSentenceClick(sentence)}
+              >
+                {sentence.length > 60 ? `${sentence.slice(0, 60)}...` : sentence}
+              </Button>
+            ))}
+          </div>
+        </div>
+
+        <Button className="w-full" size="lg" onClick={() => void handleFinishReading()} disabled={isFinishing}>
+          {isFinishing ? (
+            <>
+              <Loader2 className="h-4 w-4 animate-spin" />
+              Finishing...
+            </>
+          ) : (
+            "Finish Reading"
+          )}
+        </Button>
+      </div>
+
+      {/* Desktop: sticky lookup sidebar that stays visible while scrolling the article. */}
+      <div className="hidden lg:block lg:w-80 lg:shrink-0 lg:sticky lg:top-0 lg:h-screen lg:overflow-y-auto lg:py-4 space-y-4">
+        {lookupPanelContent}
+      </div>
+
+      {/* Mobile: fixed bottom sheet, only mounted while there's something to show. */}
+      {hasLookupPanel && (
+        <div className="lg:hidden fixed bottom-0 left-0 right-0 z-50 max-h-[70vh] overflow-y-auto bg-background border-t shadow-lg p-4 space-y-4">
+          {lookupPanelContent}
+        </div>
+      )}
     </div>
   );
 };
