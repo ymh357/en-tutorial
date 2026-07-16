@@ -49,7 +49,7 @@ The JSON must exactly match this schema:
     { "text": string, "reason": string }
   ],
   "newVocabulary": [
-    { "word": string, "lemma": string, "definition": string, "example": string }
+    { "word": string, "lemma": string, "definition": string, "example": string, "collocations": string[] }
   ]
 }
 
@@ -59,6 +59,8 @@ Guidelines:
 - "improvements" are places where the user's English was correct but not idiomatic — suggest a more natural or native-sounding phrasing, with the surrounding context.
 - "highlights" are things the user genuinely did well (good word choice, correct complex structure, natural phrasing) — be specific and honest, do not invent praise if there is nothing notable.
 - "newVocabulary" are useful words or phrases from the conversation (assistant's or user's) that are worth the learner adding to their vocabulary list — include the dictionary lemma form.
+- For each "newVocabulary" item, include "collocations": 3-5 common collocations/word partnerships for that word (e.g., for "resist": "resist temptation", "resist change", "resist the urge"). Return them as an array of short strings.
+- The "example" sentence for each "newVocabulary" item must be a DIFFERENT sentence from how the word was actually used in this conversation — write a fresh example that shows the word in a new context, so the learner sees it used more than one way.
 - Be encouraging in tone, but honest and precise about errors.
 - If there are no errors, improvements, highlights, or new vocabulary, return an empty array for that field — do not omit the field.
 - Output must be parseable by JSON.parse with no post-processing.`;
@@ -181,7 +183,8 @@ const ReviewPage = () => {
   const handleAddToSrs = async (
     kind: ItemKind,
     key: string,
-    cardData: Pick<SrsCard, "type" | "lemma" | "front" | "back" | "context">
+    cardData: Pick<SrsCard, "type" | "lemma" | "front" | "back" | "context"> &
+      Partial<Pick<SrsCard, "collocations" | "wordFamily">>
   ) => {
     if (!conversation || addedKeys.has(key) || addingKey) return;
     setAddingKey(key);
@@ -204,6 +207,8 @@ const ReviewPage = () => {
           masteryLevel: "new",
           createdAt: new Date(),
           lastReviewedAt: null,
+          ...(cardData.collocations ? { collocations: cardData.collocations } : {}),
+          ...(cardData.wordFamily ? { wordFamily: cardData.wordFamily } : {}),
         };
         await db.cards.add(newCard);
         await dbHelpers.incrementTodayStat("wordsLearned");
@@ -479,6 +484,12 @@ const ReviewPage = () => {
                       <p className="mt-1 text-xs italic text-muted-foreground">
                         {vocab.example}
                       </p>
+                      {vocab.collocations && vocab.collocations.length > 0 && (
+                        <p className="mt-1 text-xs text-muted-foreground">
+                          <span className="font-medium">Collocations: </span>
+                          {vocab.collocations.join("; ")}
+                        </p>
+                      )}
                       <Button
                         size="sm"
                         variant={isAdded ? "secondary" : "outline"}
@@ -491,6 +502,7 @@ const ReviewPage = () => {
                             front: vocab.word,
                             back: vocab.definition,
                             context: vocab.example,
+                            collocations: vocab.collocations,
                           })
                         }
                       >

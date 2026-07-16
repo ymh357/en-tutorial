@@ -48,7 +48,8 @@ Return ONLY valid JSON (no markdown fences, no explanation outside the JSON) in 
       "end": <character index>,
       "original": "<the text being annotated>",
       "replacement": "<suggested replacement, or same text if positive>",
-      "explanation": "<why this is an error/suggestion/improvement, or why it's good>"
+      "explanation": "<why this is an error/suggestion/improvement, or why it's good>",
+      "collocations": ["<correct collocation pattern(s), when relevant>"]
     }
   ],
   "polishedVersion": "<the full text rewritten with all corrections applied>",
@@ -64,7 +65,8 @@ Guidelines:
 - For "suggestion" type: better word choices, more natural expressions
 - For "style" type: register/tone improvements, sentence structure
 - Annotations must have accurate start/end character positions in the original text
-- Include at least 1-2 positive annotations if the writing has any merit`;
+- Include at least 1-2 positive annotations if the writing has any merit
+- Include a "collocations" array on an annotation whenever the error/suggestion involves a word partnership the learner got wrong (e.g., a wrong preposition, verb-noun pairing, or adjective-noun pairing) — show the correct collocation pattern(s) (e.g., ["depend on someone", "rely on someone"]). Omit or leave empty when not relevant (e.g., pure spelling errors or positive annotations).`;
 
 const buildReviewPrompt = (taskPrompt: string, content: string): string =>
   `Task: ${taskPrompt || "Free writing"}\n\nStudent's writing:\n${content}\n\nAnalyze this writing and return the JSON review described in the system prompt.`;
@@ -364,6 +366,9 @@ const WritingEditorPage = () => {
           masteryLevel: "new",
           createdAt: new Date(),
           lastReviewedAt: null,
+          ...(annotation.collocations && annotation.collocations.length > 0
+            ? { collocations: annotation.collocations }
+            : {}),
         };
         await db.cards.add(newCard);
         await dbHelpers.incrementTodayStat("wordsLearned");
@@ -558,6 +563,12 @@ const WritingEditorPage = () => {
             <p className="whitespace-normal break-words text-muted-foreground">
               {selected.explanation}
             </p>
+            {selected.collocations && selected.collocations.length > 0 && (
+              <p className="whitespace-normal break-words text-muted-foreground">
+                <span className="font-medium">Collocations: </span>
+                {selected.collocations.join("; ")}
+              </p>
+            )}
           </CardContent>
         </Card>
       )}

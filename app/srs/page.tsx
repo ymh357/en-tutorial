@@ -234,6 +234,20 @@ const SrsPage = () => {
                   &ldquo;{currentCard.context}&rdquo;
                 </p>
               )}
+              {currentCard.collocations && currentCard.collocations.length > 0 && (
+                <div className="text-sm">
+                  <p className="font-medium">Common collocations:</p>
+                  <p className="text-muted-foreground">
+                    {currentCard.collocations.join("; ")}
+                  </p>
+                </div>
+              )}
+              {currentCard.wordFamily && (
+                <p className="text-sm text-muted-foreground">
+                  <span className="font-medium text-foreground">Word family: </span>
+                  {currentCard.wordFamily}
+                </p>
+              )}
             </div>
           )}
 

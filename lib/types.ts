@@ -28,6 +28,8 @@ export interface Card {
   masteryLevel: MasteryLevel;
   createdAt: Date;
   lastReviewedAt: Date | null;
+  collocations?: string[]; // Common collocations/word partnerships
+  wordFamily?: string; // Related word from the same family
 }
 
 export interface ConversationMessage {
@@ -62,6 +64,7 @@ export interface ConversationReview {
     lemma: string;
     definition: string;
     example: string;
+    collocations?: string[];
   }>;
 }
 
@@ -105,6 +108,7 @@ export interface WritingAnnotation {
   original: string;
   replacement: string;
   explanation: string;
+  collocations?: string[]; // Correct collocation pattern(s), when relevant (e.g., wrong preposition)
 }
 
 export interface WritingReview {

@@ -63,9 +63,44 @@ interface WordPopupState {
   sentence: string;
   position: number;
   definition: string | null;
+  collocations: string[] | null;
+  wordFamily: string | null;
   isLoading: boolean;
   error: string | null;
 }
+
+// Parses the AI response for a word lookup. Expected format is a definition,
+// optionally followed by "Collocations: a, b, c" and "Word family: x" lines,
+// each on their own line. Falls back gracefully if the AI omits either.
+const parseWordLookupResponse = (
+  raw: string
+): { definition: string; collocations: string[]; wordFamily: string | null } => {
+  const lines = raw.split("\n").map((l) => l.trim()).filter(Boolean);
+  const definitionLines: string[] = [];
+  let collocations: string[] = [];
+  let wordFamily: string | null = null;
+
+  for (const line of lines) {
+    const collocationsMatch = line.match(/^collocations?:\s*(.+)$/i);
+    const wordFamilyMatch = line.match(/^word family:\s*(.+)$/i);
+    if (collocationsMatch) {
+      collocations = collocationsMatch[1]
+        .split(/[,;]/)
+        .map((c) => c.trim())
+        .filter(Boolean);
+    } else if (wordFamilyMatch) {
+      wordFamily = wordFamilyMatch[1].trim();
+    } else {
+      definitionLines.push(line);
+    }
+  }
+
+  return {
+    definition: definitionLines.join(" ").trim() || raw.trim(),
+    collocations,
+    wordFamily,
+  };
+};
 
 interface SentencePanelState {
   sentence: string;
@@ -161,6 +196,8 @@ const ReaderSessionPage = ({
       sentence,
       position,
       definition: null,
+      collocations: null,
+      wordFamily: null,
       isLoading: true,
       error: null,
     });
@@ -170,7 +207,7 @@ const ReaderSessionPage = ({
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          prompt: `Define the word "${word}" as used in this context: "${sentence}". Give a brief, contextual definition (not a dictionary definition). If the word has a specific meaning in this context that differs from its most common meaning, explain that. Response format: just the definition, 1-2 sentences max.`,
+          prompt: `Define the word "${word}" as used in this context: "${sentence}". Give a brief, contextual definition (not a dictionary definition). If the word has a specific meaning in this context that differs from its most common meaning, explain that. Then, on a new line, provide 2-3 common collocations for this word in the format "Collocations: collocation one, collocation two, collocation three". Then, on another new line, provide one related word from the same word family in the format "Word family: relatedword". Response format: definition (1-2 sentences max), then the Collocations line, then the Word family line. No markdown, no extra commentary.`,
         }),
       });
 
@@ -178,9 +215,17 @@ const ReaderSessionPage = ({
       const data: { content?: string; error?: string } = await res.json();
       if (data.error || !data.content) throw new Error(data.error || "No definition returned");
 
+      const parsed = parseWordLookupResponse(data.content);
+
       setWordPopup((prev) =>
         prev && prev.word === word && prev.position === position
-          ? { ...prev, definition: data.content!.trim(), isLoading: false }
+          ? {
+              ...prev,
+              definition: parsed.definition,
+              collocations: parsed.collocations,
+              wordFamily: parsed.wordFamily,
+              isLoading: false,
+            }
           : prev
       );
 
@@ -188,7 +233,7 @@ const ReaderSessionPage = ({
         const lookup: ReadingLookup = {
           word,
           lemma,
-          definition: data.content.trim(),
+          definition: parsed.definition,
           position,
         };
         const existingLookups = session.lookups.filter(
@@ -275,6 +320,10 @@ const ReaderSessionPage = ({
           masteryLevel: "new",
           createdAt: new Date(),
           lastReviewedAt: null,
+          ...(wordPopup.collocations && wordPopup.collocations.length > 0
+            ? { collocations: wordPopup.collocations }
+            : {}),
+          ...(wordPopup.wordFamily ? { wordFamily: wordPopup.wordFamily } : {}),
         };
         await db.cards.add(newCard);
         await dbHelpers.incrementTodayStat("wordsLearned");
@@ -403,6 +452,18 @@ const ReaderSessionPage = ({
               <p className="text-sm">
                 <span className="text-muted-foreground">In this context: </span>
                 {wordPopup.definition}
+              </p>
+            )}
+            {wordPopup.collocations && wordPopup.collocations.length > 0 && (
+              <p className="text-sm">
+                <span className="text-muted-foreground">Common collocations: </span>
+                {wordPopup.collocations.join("; ")}
+              </p>
+            )}
+            {wordPopup.wordFamily && (
+              <p className="text-sm">
+                <span className="text-muted-foreground">Word family: </span>
+                {wordPopup.wordFamily}
               </p>
             )}
             {wordPopup.definition && (

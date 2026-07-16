@@ -77,12 +77,20 @@ const buildSystemPrompt = (params: {
     "Default to a casual, relaxed register. Only shift to a more formal tone if the scenario itself is professional (e.g., a job interview or business meeting).",
   ].join(" ");
 
+  const pedagogyInstructions = [
+    "i+1 input: Mostly speak at the user's level, but occasionally (roughly 1 in every 5-10 sentences) use a slightly more advanced word, idiom, or sentence structure than the user would use themselves. Don't overload any single reply with hard vocabulary — the goal is a gentle stretch, not a wall of unfamiliar language.",
+    "Pushed output: Don't let the user coast on short answers. When they give a brief or vague reply, ask a genuine follow-up that requires elaboration — things like \"What do you mean by that?\", \"Why do you think that happened?\", or \"Can you give me an example?\". Aim to get the user producing longer, more complex sentences over the course of the conversation, not just one-word or one-clause responses.",
+    "Recast, not correction: Never explicitly point out or explain a grammar mistake the user makes. Instead, weave the correct form naturally into your own reply, as a native speaker would when confirming or reacting to what someone said. For example, if the user says \"I goed to the store yesterday,\" you might reply \"Oh, you went to the store? What did you pick up?\" — the correction is implicit, embedded in your response, never flagged.",
+    "Cognitive challenge: Don't just agree with everything the user says. Occasionally offer a mildly different opinion, push back and ask them to justify their view, or introduce a small unexpected twist into the scenario. Stay warm and non-confrontational, but be a real conversational partner with your own perspective, not a pushover who just validates whatever the user says.",
+  ].join(" ");
+
   const baseInstructions = [
     "Stay in character throughout the conversation.",
     levelLine,
-    "Do not correct the user's grammar mid-conversation — just respond naturally, as a real person in this situation would. Corrections happen later in a separate review step.",
+    "Do not explicitly correct the user's grammar mid-conversation — no direct callouts, no \"you should have said X.\" Detailed corrections happen later in a separate review step. Your only in-conversation error-correction tool is the recast technique described below.",
     "Keep responses conversational and not too long.",
     speechPatterns,
+    pedagogyInstructions,
   ].join(" ");
 
   if (type === "preset" && scenarioParam) {
