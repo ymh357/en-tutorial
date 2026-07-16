@@ -1,0 +1,235 @@
+"use client";
+
+import { useMemo, useState } from "react";
+import { Volume2 } from "lucide-react";
+import { db } from "@/lib/db";
+import { dbHelpers } from "@/lib/db-helpers";
+import { useDueCards } from "@/hooks/use-db";
+import {
+  computeNextReview,
+  getNextIntervals,
+  ratingLabels,
+  type Rating,
+} from "@/lib/srs-algorithm";
+import type { Card as CardType, CardSource, MasteryLevel } from "@/lib/types";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
+import { Progress, ProgressTrack, ProgressIndicator } from "@/components/ui/progress";
+
+const sourceLabels: Record<CardSource, string> = {
+  conversation: "Conversation",
+  reading: "Reading",
+  writing: "Writing",
+  manual: "Manual",
+};
+
+const masteryLabels: Record<MasteryLevel, string> = {
+  new: "New",
+  learning: "Learning",
+  familiar: "Familiar",
+  mastered: "Mastered",
+};
+
+const formatInterval = (days: number): string => {
+  if (days < 1 / 24) {
+    const minutes = Math.max(1, Math.round(days * 24 * 60));
+    return `${minutes}m`;
+  }
+  if (days < 1) {
+    const hours = Math.max(1, Math.round(days * 24));
+    return `${hours}h`;
+  }
+  const rounded = Math.round(days);
+  return `${rounded}d`;
+};
+
+const speak = (text: string): void => {
+  if (typeof window === "undefined" || !window.speechSynthesis) return;
+  window.speechSynthesis.cancel();
+  const utterance = new SpeechSynthesisUtterance(text);
+  utterance.lang = "en-US";
+  window.speechSynthesis.speak(utterance);
+};
+
+const getNow = (): number => Date.now();
+
+const formatTimeSpent = (ms: number): string => {
+  const totalSeconds = Math.round(ms / 1000);
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  if (minutes === 0) return `${seconds}s`;
+  return `${minutes}m ${seconds}s`;
+};
+
+const SrsPage = () => {
+  const dueCards = useDueCards(50);
+  const [index, setIndex] = useState(0);
+  const [showAnswer, setShowAnswer] = useState(false);
+  const [reviewedCount, setReviewedCount] = useState(0);
+  const [sessionDone, setSessionDone] = useState(false);
+  const [startedAt] = useState(getNow);
+  const [finishedAt, setFinishedAt] = useState<number | null>(null);
+
+  const totalCards = dueCards.length;
+  const currentCard: CardType | undefined = dueCards[index];
+
+  const nextIntervals = useMemo(() => {
+    if (!currentCard) return null;
+    return getNextIntervals(currentCard);
+  }, [currentCard]);
+
+  const handleShowAnswer = (): void => {
+    setShowAnswer(true);
+  };
+
+  const handleSpeak = (): void => {
+    if (currentCard) speak(currentCard.front);
+  };
+
+  const handleRate = async (rating: Rating): Promise<void> => {
+    if (!currentCard) return;
+    const result = computeNextReview(currentCard, rating);
+    await db.cards.update(currentCard.id, result);
+    await dbHelpers.incrementTodayStat("srsReviewed");
+
+    setReviewedCount((count) => count + 1);
+    setShowAnswer(false);
+
+    if (index + 1 >= totalCards) {
+      setFinishedAt(getNow());
+      setSessionDone(true);
+    } else {
+      setIndex((i) => i + 1);
+    }
+  };
+
+  // Empty state: nothing was due at all.
+  if (totalCards === 0 && !sessionDone) {
+    return (
+      <div className="mx-auto max-w-2xl space-y-6">
+        <h1 className="text-2xl font-bold">Review</h1>
+        <Card>
+          <CardContent className="flex flex-col items-center gap-2 py-12 text-center">
+            <p className="text-lg font-medium">All caught up!</p>
+            <p className="text-sm text-muted-foreground">
+              No cards to review right now.
+            </p>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
+
+  // Session summary: all due cards have been reviewed.
+  if (sessionDone) {
+    const timeSpent = finishedAt ? finishedAt - startedAt : 0;
+    return (
+      <div className="mx-auto max-w-2xl space-y-6">
+        <h1 className="text-2xl font-bold">Review</h1>
+        <Card>
+          <CardHeader>
+            <CardTitle>Session complete</CardTitle>
+            <CardDescription>Nice work — here&apos;s your summary.</CardDescription>
+          </CardHeader>
+          <CardContent className="grid grid-cols-2 gap-4">
+            <div className="rounded-lg bg-muted/50 p-4 text-center">
+              <p className="text-2xl font-bold">{reviewedCount}</p>
+              <p className="text-sm text-muted-foreground">Cards reviewed</p>
+            </div>
+            <div className="rounded-lg bg-muted/50 p-4 text-center">
+              <p className="text-2xl font-bold">{formatTimeSpent(timeSpent)}</p>
+              <p className="text-sm text-muted-foreground">Time spent</p>
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
+
+  if (!currentCard || !nextIntervals) return null;
+
+  const remaining = totalCards - index;
+  const progressValue = (index / totalCards) * 100;
+
+  return (
+    <div className="mx-auto max-w-2xl space-y-6">
+      <div className="space-y-2">
+        <div className="flex items-center justify-between">
+          <h1 className="text-2xl font-bold">Review</h1>
+          <span className="text-sm text-muted-foreground">
+            {remaining} card{remaining === 1 ? "" : "s"} remaining
+          </span>
+        </div>
+        <Progress value={progressValue}>
+          <ProgressTrack>
+            <ProgressIndicator />
+          </ProgressTrack>
+        </Progress>
+      </div>
+
+      <Card>
+        <CardHeader>
+          <div className="flex items-center justify-between">
+            <Badge variant="outline">{sourceLabels[currentCard.source]}</Badge>
+            <Badge variant="secondary">{masteryLabels[currentCard.masteryLevel]}</Badge>
+          </div>
+        </CardHeader>
+        <CardContent className="space-y-6">
+          <div className="flex items-center justify-center gap-3 py-8">
+            <p className="text-center text-3xl font-semibold">{currentCard.front}</p>
+            <Button
+              variant="ghost"
+              size="icon"
+              aria-label="Pronounce"
+              onClick={handleSpeak}
+            >
+              <Volume2 />
+            </Button>
+          </div>
+
+          {showAnswer && (
+            <div className="space-y-3 rounded-lg bg-muted/50 p-4">
+              <p className="text-base font-medium">{currentCard.back}</p>
+              {currentCard.context && (
+                <p className="text-sm text-muted-foreground italic">
+                  &ldquo;{currentCard.context}&rdquo;
+                </p>
+              )}
+            </div>
+          )}
+
+          {!showAnswer ? (
+            <Button className="w-full" onClick={handleShowAnswer}>
+              Show Answer
+            </Button>
+          ) : (
+            <div className="grid grid-cols-4 gap-2">
+              {([0, 1, 2, 3] as Rating[]).map((rating) => (
+                <Button
+                  key={rating}
+                  variant={rating === 2 ? "default" : "outline"}
+                  className="flex h-auto flex-col gap-0.5 py-2"
+                  onClick={() => handleRate(rating)}
+                >
+                  <span className="text-sm">{ratingLabels[rating]}</span>
+                  <span className="text-xs text-muted-foreground">
+                    {formatInterval(nextIntervals[rating])}
+                  </span>
+                </Button>
+              ))}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+    </div>
+  );
+};
+
+export default SrsPage;
