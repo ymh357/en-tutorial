@@ -82,6 +82,8 @@ export interface ReadingLookup {
   position: number;
 }
 
+export const UNKNOWN_DIFFICULTY = "unknown";
+
 export interface ReadingSession {
   id: string;
   title: string;

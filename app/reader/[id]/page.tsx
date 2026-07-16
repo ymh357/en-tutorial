@@ -10,7 +10,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
 import { db } from "@/lib/db";
 import { dbHelpers } from "@/lib/db-helpers";
-import type { Card as SrsCard, ReadingLookup } from "@/lib/types";
+import { UNKNOWN_DIFFICULTY, type Card as SrsCard, type ReadingLookup } from "@/lib/types";
 
 // Splits article text into paragraphs, and each paragraph into tokens
 // (words and separators) so every word can be rendered as a clickable span.
@@ -303,6 +303,7 @@ const ReaderSessionPage = ({
       });
       await dbHelpers.incrementTodayStat("readingCount");
       await dbHelpers.incrementTodayStat("timeSpent", Math.round(durationSeconds / 60));
+      await dbHelpers.updateStreak();
 
       setFinishSummary({
         lookups: session.lookups.length,
@@ -381,7 +382,7 @@ const ReaderSessionPage = ({
           <h1 className="text-xl font-bold truncate">{session.title}</h1>
         </div>
         <div className="flex items-center gap-2 shrink-0">
-          {session.difficulty && session.difficulty !== "unknown" && (
+          {session.difficulty && session.difficulty !== UNKNOWN_DIFFICULTY && (
             <Badge>{session.difficulty}</Badge>
           )}
         </div>

@@ -3,7 +3,14 @@ import { qualityModel } from "@/lib/ai";
 
 export const maxDuration = 120;
 
+const MAX_BODY_SIZE = 100_000; // ~100KB
+
 export const POST = async (req: Request): Promise<Response> => {
+  const contentLength = req.headers.get("content-length");
+  if (contentLength && parseInt(contentLength, 10) > MAX_BODY_SIZE) {
+    return Response.json({ error: "Request body too large" }, { status: 413 });
+  }
+
   let body: { prompt?: string; system?: string };
   try {
     body = await req.json();

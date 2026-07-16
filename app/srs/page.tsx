@@ -96,7 +96,10 @@ const SrsPage = () => {
   const handleRate = async (rating: Rating): Promise<void> => {
     if (!currentCard) return;
     const result = computeNextReview(currentCard, rating);
-    await db.cards.update(currentCard.id, result);
+    await db.cards.update(currentCard.id, {
+      ...result,
+      lastReviewedAt: new Date(),
+    });
     await dbHelpers.incrementTodayStat("srsReviewed");
 
     setReviewedCount((count) => count + 1);
@@ -105,6 +108,7 @@ const SrsPage = () => {
     if (index + 1 >= totalCards) {
       setFinishedAt(getNow());
       setSessionDone(true);
+      await dbHelpers.updateStreak();
     } else {
       setIndex((i) => i + 1);
     }

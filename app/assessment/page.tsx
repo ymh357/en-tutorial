@@ -31,6 +31,7 @@ import {
   ProgressIndicator,
 } from "@/components/ui/progress";
 import { useProfile } from "@/hooks/use-db";
+import { db } from "@/lib/db";
 import { dbHelpers } from "@/lib/db-helpers";
 
 type Phase =
@@ -531,7 +532,22 @@ Return ONLY valid JSON (no markdown fences, no explanation) in this exact format
     };
     saveAssessment(result);
     setFinalResult(result);
-    await dbHelpers.incrementTodayStat("timeSpent", 0);
+
+    // Update profile CEFR level based on assessment result
+    const cefrFromScore = (s: number): string => {
+      if (s < 45) return "A2";
+      if (s < 65) return "B1";
+      if (s < 85) return "B2";
+      return "C1";
+    };
+    const newLevel = cefrFromScore(composite);
+    const currentProfile = await dbHelpers.getProfile();
+    if (currentProfile.initialCefrLevel !== newLevel) {
+      await db.learningProfile.update("singleton", {
+        initialCefrLevel: newLevel,
+      });
+    }
+    await dbHelpers.updateStreak();
     setPhase("results");
   };
 

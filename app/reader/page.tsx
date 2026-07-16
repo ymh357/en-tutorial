@@ -26,7 +26,7 @@ import {
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { db } from "@/lib/db";
 import { useReadingSessions } from "@/hooks/use-db";
-import type { ReadingSession } from "@/lib/types";
+import { UNKNOWN_DIFFICULTY, type ReadingSession } from "@/lib/types";
 
 const DIFFICULTIES = ["A2", "B1", "B2", "C1"] as const;
 
@@ -66,7 +66,7 @@ const createSession = async (
     content: input.content,
     source: input.source,
     sourceUrl: input.sourceUrl,
-    difficulty: input.difficulty ?? "unknown",
+    difficulty: input.difficulty ?? UNKNOWN_DIFFICULTY,
     lookups: [],
     sentenceAnalyses: [],
     vocabCoverage: 0,

@@ -5,6 +5,8 @@ import { isIP } from "node:net";
 
 export const maxDuration = 15;
 
+const MAX_RESPONSE_BYTES = 5 * 1024 * 1024; // 5MB
+
 const isPrivateIp = (ip: string): boolean => {
   const parts = ip.split(".").map(Number);
   if (parts.length !== 4 || parts.some((p) => isNaN(p))) return true;
@@ -18,9 +20,14 @@ const isPrivateIp = (ip: string): boolean => {
   return false;
 };
 
+interface ValidatedUrl {
+  fetchUrl: string;
+  originalHost: string;
+}
+
 const validateUrl = async (
   raw: string
-): Promise<{ ok: true; url: string } | { ok: false; error: string }> => {
+): Promise<{ ok: true; result: ValidatedUrl } | { ok: false; error: string }> => {
   let parsed: URL;
   try {
     parsed = new URL(raw);
@@ -42,26 +49,64 @@ const validateUrl = async (
     return { ok: false, error: "URL not allowed" };
   }
 
-  // Reject raw IP addresses (including decimal, hex, octal forms)
   if (isIP(host) !== 0) {
     if (isPrivateIp(host)) {
       return { ok: false, error: "URL not allowed" };
     }
-    // Even for public IPs, skip DNS check — already resolved
-    return { ok: true, url: parsed.toString() };
+    return { ok: true, result: { fetchUrl: parsed.toString(), originalHost: host } };
   }
 
-  // Resolve hostname and verify the IP is not private
+  // Resolve hostname, validate IP, then pin the fetch to the resolved IP
+  let resolvedIp: string;
   try {
     const { address } = await lookup(host);
-    if (isPrivateIp(address)) {
+    resolvedIp = address;
+    if (isPrivateIp(resolvedIp)) {
       return { ok: false, error: "URL not allowed" };
     }
   } catch {
     return { ok: false, error: "Could not resolve hostname" };
   }
 
-  return { ok: true, url: parsed.toString() };
+  // Replace hostname with resolved IP to prevent DNS rebinding
+  const pinnedUrl = new URL(parsed.toString());
+  pinnedUrl.hostname = resolvedIp;
+
+  return {
+    ok: true,
+    result: { fetchUrl: pinnedUrl.toString(), originalHost: host },
+  };
+};
+
+const readBodyWithLimit = async (
+  response: Response,
+  maxBytes: number
+): Promise<string> => {
+  const contentLength = response.headers.get("content-length");
+  if (contentLength && parseInt(contentLength, 10) > maxBytes) {
+    throw new Error("Response too large");
+  }
+
+  const reader = response.body?.getReader();
+  if (!reader) throw new Error("No response body");
+
+  const decoder = new TextDecoder();
+  const chunks: string[] = [];
+  let totalBytes = 0;
+
+  // eslint-disable-next-line no-constant-condition
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    totalBytes += value.byteLength;
+    if (totalBytes > maxBytes) {
+      reader.cancel();
+      throw new Error("Response too large");
+    }
+    chunks.push(decoder.decode(value, { stream: true }));
+  }
+  chunks.push(decoder.decode());
+  return chunks.join("");
 };
 
 export const POST = async (req: Request): Promise<Response> => {
@@ -96,10 +141,11 @@ export const POST = async (req: Request): Promise<Response> => {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 10000);
 
-    const response = await fetch(validation.url, {
+    const response = await fetch(validation.result.fetchUrl, {
       headers: {
         "User-Agent":
           "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
+        Host: validation.result.originalHost,
       },
       signal: controller.signal,
       redirect: "manual",
@@ -107,7 +153,6 @@ export const POST = async (req: Request): Promise<Response> => {
 
     clearTimeout(timeout);
 
-    // Reject redirects — they can point to internal addresses
     if (response.status >= 300 && response.status < 400) {
       return Response.json(
         {
@@ -127,7 +172,20 @@ export const POST = async (req: Request): Promise<Response> => {
       );
     }
 
-    const html = await response.text();
+    let html: string;
+    try {
+      html = await readBodyWithLimit(response, MAX_RESPONSE_BYTES);
+    } catch {
+      return Response.json(
+        {
+          title: "",
+          content: "",
+          error: "Response too large (>5MB). Try pasting the text directly.",
+        },
+        { status: 200 }
+      );
+    }
+
     const { document } = parseHTML(html);
 
     const reader = new Readability(document as unknown as Document);
