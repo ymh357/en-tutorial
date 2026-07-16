@@ -3,15 +3,67 @@
 import { use, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useLiveQuery } from "dexie-react-hooks";
-import { Volume2, Loader2, Plus, Check, ArrowLeft } from "lucide-react";
+import { Volume2, Loader2, Plus, Check, ArrowLeft, ClipboardCheck } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
+import { Input } from "@/components/ui/input";
 import { db } from "@/lib/db";
 import { dbHelpers } from "@/lib/db-helpers";
 import { UNKNOWN_DIFFICULTY, type Card as SrsCard, type ReadingLookup } from "@/lib/types";
 import { speak } from "@/lib/tts";
+
+interface ComprehensionQuestion {
+  question: string;
+  type: string;
+}
+
+interface QuestionEvaluation {
+  correct: boolean;
+  feedback: string;
+}
+
+const getComprehensionQuestionsKey = (id: string): string =>
+  `en-tutor-reading-questions-${id}`;
+
+const loadComprehensionQuestions = (id: string): ComprehensionQuestion[] => {
+  if (typeof window === "undefined") return [];
+  try {
+    const raw = window.localStorage.getItem(getComprehensionQuestionsKey(id));
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter(
+      (q): q is ComprehensionQuestion =>
+        q && typeof q === "object" && typeof q.question === "string" && typeof q.type === "string"
+    );
+  } catch {
+    return [];
+  }
+};
+
+const parseEvaluationResponse = (raw: string): QuestionEvaluation[] | null => {
+  let text = raw.trim();
+  const fenceMatch = text.match(/```(?:json)?\s*([\s\S]*?)```/);
+  if (fenceMatch) {
+    text = fenceMatch[1].trim();
+  }
+  try {
+    const parsed = JSON.parse(text) as { evaluations?: unknown };
+    if (!parsed || !Array.isArray(parsed.evaluations)) return null;
+    const evaluations = parsed.evaluations.filter(
+      (e): e is QuestionEvaluation =>
+        e &&
+        typeof e === "object" &&
+        typeof (e as QuestionEvaluation).correct === "boolean" &&
+        typeof (e as QuestionEvaluation).feedback === "string"
+    );
+    return evaluations.length > 0 ? evaluations : null;
+  } catch {
+    return null;
+  }
+};
 
 // Splits article text into paragraphs, and each paragraph into tokens
 // (words and separators) so every word can be rendered as a clickable span.
@@ -132,11 +184,76 @@ const ReaderSessionPage = ({
     coverage: number;
   } | null>(null);
 
+  const [comprehensionQuestions, setComprehensionQuestions] = useState<
+    ComprehensionQuestion[]
+  >([]);
+  const [comprehensionAnswers, setComprehensionAnswers] = useState<string[]>([]);
+  const [comprehensionEvaluations, setComprehensionEvaluations] = useState<
+    QuestionEvaluation[] | null
+  >(null);
+  const [isCheckingAnswers, setIsCheckingAnswers] = useState(false);
+  const [comprehensionError, setComprehensionError] = useState<string | null>(null);
+
   const startTimeRef = useRef<number>(Date.now());
 
   useEffect(() => {
     startTimeRef.current = Date.now();
   }, [id]);
+
+  // Load comprehension questions (if any) saved by the reader creation flow.
+  useEffect(() => {
+    const questions = loadComprehensionQuestions(id);
+    setComprehensionQuestions(questions);
+    setComprehensionAnswers(new Array(questions.length).fill(""));
+    setComprehensionEvaluations(null);
+    setComprehensionError(null);
+  }, [id]);
+
+  const handleAnswerChange = (index: number, value: string): void => {
+    setComprehensionAnswers((prev) => {
+      const next = [...prev];
+      next[index] = value;
+      return next;
+    });
+  };
+
+  const handleCheckAnswers = async (): Promise<void> => {
+    if (!session || comprehensionQuestions.length === 0) return;
+    setIsCheckingAnswers(true);
+    setComprehensionError(null);
+    try {
+      const questionsAndAnswers = comprehensionQuestions
+        .map(
+          (q, i) =>
+            `${i + 1}. Q: "${q.question}" A: "${comprehensionAnswers[i] ?? ""}"`
+        )
+        .join("\n");
+      const prompt = `Article: "${session.content}"\n\nQuestions and student answers:\n${questionsAndAnswers}\n\nEvaluate each answer. Return JSON:\n{\n  "evaluations": [\n    { "correct": true/false, "feedback": "brief feedback" }\n  ]\n}`;
+
+      const res = await fetch("/api/review", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ prompt }),
+      });
+
+      if (!res.ok) throw new Error(`Request failed: ${res.status}`);
+      const data: { content?: string; error?: string } = await res.json();
+      if (data.error || !data.content) throw new Error(data.error || "No evaluation returned");
+
+      const evaluations = parseEvaluationResponse(data.content);
+      if (!evaluations) {
+        throw new Error("Could not parse the AI's evaluation response");
+      }
+
+      setComprehensionEvaluations(evaluations);
+    } catch (err) {
+      setComprehensionError(
+        err instanceof Error ? err.message : "Failed to check answers"
+      );
+    } finally {
+      setIsCheckingAnswers(false);
+    }
+  };
 
   const sentences = useMemo(
     () => (session ? splitIntoSentences(session.content) : []),
@@ -611,6 +728,65 @@ const ReaderSessionPage = ({
             ))}
           </div>
         </div>
+
+        {comprehensionQuestions.length > 0 && (
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2 text-base">
+                <ClipboardCheck className="h-4 w-4" />
+                Comprehension Check
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              {comprehensionQuestions.map((q, i) => {
+                const evaluation = comprehensionEvaluations?.[i];
+                return (
+                  <div key={i} className="space-y-2">
+                    <p className="text-sm font-medium">
+                      {i + 1}. {q.question}
+                    </p>
+                    <Input
+                      value={comprehensionAnswers[i] ?? ""}
+                      onChange={(e) => handleAnswerChange(i, e.target.value)}
+                      placeholder="Your answer..."
+                      disabled={isCheckingAnswers}
+                      className="h-10"
+                    />
+                    {evaluation && (
+                      <p
+                        className={`text-sm ${
+                          evaluation.correct ? "text-green-600 dark:text-green-400" : "text-destructive"
+                        }`}
+                      >
+                        {evaluation.correct ? "Correct — " : "Not quite — "}
+                        {evaluation.feedback}
+                      </p>
+                    )}
+                  </div>
+                );
+              })}
+
+              {comprehensionError && (
+                <p className="text-sm text-destructive">{comprehensionError}</p>
+              )}
+
+              <Button
+                className="w-full sm:w-auto"
+                onClick={() => void handleCheckAnswers()}
+                disabled={isCheckingAnswers}
+              >
+                {isCheckingAnswers ? (
+                  <>
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    Checking...
+                  </>
+                ) : (
+                  "Check Answers"
+                )}
+              </Button>
+            </CardContent>
+          </Card>
+        )}
 
         <Button className="w-full" size="lg" onClick={() => void handleFinishReading()} disabled={isFinishing}>
           {isFinishing ? (

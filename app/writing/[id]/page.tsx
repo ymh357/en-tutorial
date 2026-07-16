@@ -16,6 +16,10 @@ import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { db } from "@/lib/db";
 import { dbHelpers } from "@/lib/db-helpers";
+import {
+  WRITING_REVIEW_ROUND1_SYSTEM,
+  WRITING_REVIEW_ROUND2_SYSTEM,
+} from "@/lib/writing-prompts";
 import type {
   AnnotationType,
   Card as SrsCard,
@@ -24,6 +28,14 @@ import type {
   WritingSession,
   WritingTaskType,
 } from "@/lib/types";
+
+interface Round1Review {
+  contentScore: number;
+  structureFeedback: string;
+  suggestions: string[];
+  strengths: string[];
+  revisionPriority: string;
+}
 
 const MIN_WORDS = 10;
 
@@ -36,7 +48,9 @@ const TASK_TYPE_LABEL: Record<WritingTaskType, string> = {
   free: "Free Writing",
 };
 
-const REVIEW_SYSTEM_PROMPT = `You are an expert English writing tutor. Analyze the student's writing and provide detailed feedback.
+// Shared JSON schema/guidelines appended to the round 2 (language-focused) system
+// prompt so the AI knows the exact annotation format to return.
+const REVIEW_JSON_SCHEMA = `
 
 Return ONLY valid JSON (no markdown fences, no explanation outside the JSON) in this exact format:
 {
@@ -70,6 +84,31 @@ Guidelines:
 
 const buildReviewPrompt = (taskPrompt: string, content: string): string =>
   `Task: ${taskPrompt || "Free writing"}\n\nStudent's writing:\n${content}\n\nAnalyze this writing and return the JSON review described in the system prompt.`;
+
+const parseRound1Response = (raw: string): Round1Review | null => {
+  let text = raw.trim();
+  const fenceMatch = text.match(/```(?:json)?\s*([\s\S]*?)```/);
+  if (fenceMatch) {
+    text = fenceMatch[1].trim();
+  }
+  try {
+    const parsed = JSON.parse(text) as Round1Review;
+    if (
+      !parsed ||
+      typeof parsed !== "object" ||
+      typeof parsed.contentScore !== "number" ||
+      typeof parsed.structureFeedback !== "string" ||
+      !Array.isArray(parsed.suggestions) ||
+      !Array.isArray(parsed.strengths) ||
+      typeof parsed.revisionPriority !== "string"
+    ) {
+      return null;
+    }
+    return parsed;
+  } catch {
+    return null;
+  }
+};
 
 const DRAFT_SAVE_DEBOUNCE_MS = 500;
 
@@ -216,8 +255,12 @@ const WritingEditorPage = () => {
 
   const [content, setContent] = useState(() => loadDraft(sessionId));
   const [phase, setPhase] = useState<"writing" | "review">("writing");
+  // null = writing phase (before round 1 or after revising for round 2);
+  // 1 = round 1 (content/structure) result is showing; 2 = round 2 (language) result is showing.
+  const [reviewRound, setReviewRound] = useState<1 | 2 | null>(null);
   const [isReviewing, setIsReviewing] = useState(false);
   const [reviewError, setReviewError] = useState<string | null>(null);
+  const [round1Review, setRound1Review] = useState<Round1Review | null>(null);
   const [review, setReview] = useState<WritingReview | null>(null);
   const [selectedAnnotation, setSelectedAnnotation] = useState<number | null>(
     null
@@ -262,7 +305,7 @@ const WritingEditorPage = () => {
     [review, content]
   );
 
-  const runReview = async (): Promise<void> => {
+  const runRound1Review = async (): Promise<void> => {
     setIsReviewing(true);
     setReviewError(null);
 
@@ -271,7 +314,48 @@ const WritingEditorPage = () => {
       const res = await fetch("/api/review", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ prompt, system: REVIEW_SYSTEM_PROMPT }),
+        body: JSON.stringify({ prompt, system: WRITING_REVIEW_ROUND1_SYSTEM }),
+      });
+
+      if (!res.ok) {
+        throw new Error(`Review request failed (${res.status})`);
+      }
+
+      const data = (await res.json()) as { content?: string };
+      if (!data.content) {
+        throw new Error("Empty response from review service");
+      }
+
+      const parsedRound1 = parseRound1Response(data.content);
+      if (!parsedRound1) {
+        throw new Error("Could not parse the AI's review response");
+      }
+
+      setRound1Review(parsedRound1);
+      setReviewRound(1);
+      setPhase("review");
+    } catch (err) {
+      setReviewError(
+        err instanceof Error ? err.message : "Failed to generate review"
+      );
+    } finally {
+      setIsReviewing(false);
+    }
+  };
+
+  const runRound2Review = async (): Promise<void> => {
+    setIsReviewing(true);
+    setReviewError(null);
+
+    try {
+      const prompt = buildReviewPrompt(taskPrompt, content);
+      const res = await fetch("/api/review", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          prompt,
+          system: WRITING_REVIEW_ROUND2_SYSTEM + REVIEW_JSON_SCHEMA,
+        }),
       });
 
       if (!res.ok) {
@@ -312,6 +396,7 @@ const WritingEditorPage = () => {
 
       clearDraft(sessionId);
       setReview(parsedReview);
+      setReviewRound(2);
       setPhase("review");
     } catch (err) {
       setReviewError(
@@ -324,12 +409,26 @@ const WritingEditorPage = () => {
 
   const handleSubmit = (): void => {
     if (!canSubmit) return;
-    void runReview();
+    void runRound1Review();
+  };
+
+  const handleSubmitRound2 = (): void => {
+    if (!canSubmit) return;
+    void runRound2Review();
   };
 
   const handleRetry = (): void => {
     setReviewError(null);
-    void runReview();
+    if (round1Review === null) {
+      void runRound1Review();
+    } else {
+      void runRound2Review();
+    }
+  };
+
+  const handleReviseAndResubmit = (): void => {
+    setReviewError(null);
+    setPhase("writing");
   };
 
   const handleAddToSrs = async (
@@ -423,7 +522,7 @@ const WritingEditorPage = () => {
             {wordCount < MIN_WORDS && ` (minimum ${MIN_WORDS})`}
           </span>
           <Button
-            onClick={handleSubmit}
+            onClick={round1Review === null ? handleSubmit : handleSubmitRound2}
             disabled={!canSubmit}
             className="w-full min-h-[44px] sm:w-auto"
           >
@@ -432,8 +531,10 @@ const WritingEditorPage = () => {
                 <Loader2 className="h-4 w-4 animate-spin" />
                 Analyzing your writing...
               </>
+            ) : round1Review === null ? (
+              "Submit for Content Review"
             ) : (
-              "Submit for Review"
+              "Submit for Language Review"
             )}
           </Button>
         </div>
@@ -456,10 +557,12 @@ const WritingEditorPage = () => {
   }
 
   // ---- Phase 2: Review ----
-  if (!review) return null;
+  if (!round1Review) return null;
 
   const selected =
-    selectedAnnotation !== null ? review.annotations[selectedAnnotation] : null;
+    review && selectedAnnotation !== null
+      ? review.annotations[selectedAnnotation]
+      : null;
 
   return (
     <div className="mx-auto flex w-full max-w-3xl flex-col gap-6 p-4 pb-8 md:p-6">
@@ -476,143 +579,230 @@ const WritingEditorPage = () => {
         <Badge variant="outline">{TASK_TYPE_LABEL[taskType]}</Badge>
       </div>
 
-      {/* Overall Score */}
+      {/* Round 1: Content & Structure Review */}
       <Card>
-        <CardContent className="flex flex-col items-center gap-1 py-6">
-          <div className="text-4xl font-bold">{review.score}</div>
-          <div className="text-sm text-muted-foreground">
-            {scoreLabel(review.score)} · out of 10
+        <CardHeader>
+          <CardTitle className="flex flex-wrap items-center justify-between gap-2 text-base">
+            <span>Round 1 · Content &amp; Structure</span>
+            <span className="text-2xl font-bold">
+              {round1Review.contentScore}
+              <span className="text-sm font-normal text-muted-foreground">
+                {" "}
+                / 10
+              </span>
+            </span>
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-4 text-sm">
+          <p className="whitespace-normal break-words">
+            {round1Review.structureFeedback}
+          </p>
+
+          {round1Review.suggestions.length > 0 && (
+            <div className="space-y-1.5">
+              <p className="font-medium">Suggestions</p>
+              <ul className="list-disc space-y-1 pl-5">
+                {round1Review.suggestions.map((s, i) => (
+                  <li key={i} className="whitespace-normal break-words">
+                    {s}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+
+          {round1Review.strengths.length > 0 && (
+            <div className="space-y-1.5">
+              <p className="font-medium">Strengths</p>
+              <ul className="list-disc space-y-1 pl-5">
+                {round1Review.strengths.map((s, i) => (
+                  <li key={i} className="whitespace-normal break-words">
+                    {s}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+
+          <div className="rounded-lg border border-primary/30 bg-primary/5 p-3">
+            <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+              Revision Priority
+            </p>
+            <p className="mt-1 whitespace-normal break-words font-medium">
+              {round1Review.revisionPriority}
+            </p>
           </div>
         </CardContent>
       </Card>
 
-      {/* Annotated Text */}
-      <Card className="w-full overflow-hidden">
-        <CardHeader>
-          <CardTitle className="text-base">Your Writing</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <p className="w-full whitespace-pre-wrap break-words text-sm leading-relaxed">
-            {segments.map((segment, i) => {
-              if (segment.annotationIndex === null) {
-                return <span key={i}>{segment.text}</span>;
-              }
-              const annotation = review.annotations[segment.annotationIndex];
-              return (
-                <span
-                  key={i}
-                  role="button"
-                  tabIndex={0}
-                  className={`cursor-pointer rounded px-0.5 ${ANNOTATION_CLASS[annotation.type]} ${
-                    selectedAnnotation === segment.annotationIndex
-                      ? "ring-2 ring-foreground/40"
-                      : ""
-                  }`}
-                  onClick={() => setSelectedAnnotation(segment.annotationIndex)}
-                >
-                  {segment.text}
-                </span>
-              );
-            })}
-          </p>
-        </CardContent>
-      </Card>
+      {/* After round 1, before round 2: offer revision */}
+      {reviewRound === 1 && (
+        <Button
+          onClick={handleReviseAndResubmit}
+          className="w-full min-h-[44px]"
+        >
+          Revise &amp; Resubmit
+        </Button>
+      )}
 
-      {/* Detail panel */}
-      {selected && selectedAnnotation !== null && (
-        <Card className={ANNOTATION_CLASS[selected.type].replace("/70", "/20")}>
-          <CardHeader>
-            <CardTitle className="flex flex-wrap items-center justify-between gap-2 text-sm">
-              <span>{ANNOTATION_LABEL[selected.type]}</span>
-              {selected.type !== "positive" && (
-                <Button
-                  size="sm"
-                  variant={addedKeys.has(selectedAnnotation) ? "secondary" : "outline"}
-                  disabled={
-                    addedKeys.has(selectedAnnotation) ||
-                    addingKey === selectedAnnotation
-                  }
-                  onClick={() => handleAddToSrs(selectedAnnotation, selected)}
-                  className="min-h-[44px]"
-                >
-                  {addedKeys.has(selectedAnnotation) ? (
-                    <>
-                      <Check className="h-3.5 w-3.5" />
-                      Added!
-                    </>
-                  ) : (
-                    <>
-                      <Plus className="h-3.5 w-3.5" />
-                      Add to SRS
-                    </>
-                  )}
-                </Button>
-              )}
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-2 text-sm">
-            {selected.type !== "positive" && (
-              <p className="whitespace-normal break-words">
-                <span className="text-muted-foreground line-through">
-                  {selected.original}
-                </span>
-                {" -> "}
-                <span className="font-medium">{selected.replacement}</span>
-              </p>
-            )}
-            <p className="whitespace-normal break-words text-muted-foreground">
-              {selected.explanation}
+      {reviewError && (
+        <Card className="border-destructive/30 bg-destructive/5">
+          <CardContent className="flex flex-col items-center gap-3 py-6">
+            <AlertTriangle className="h-6 w-6 text-destructive" />
+            <p className="text-center text-sm text-muted-foreground break-words">
+              {reviewError}
             </p>
-            {selected.collocations && selected.collocations.length > 0 && (
-              <p className="whitespace-normal break-words text-muted-foreground">
-                <span className="font-medium">Collocations: </span>
-                {selected.collocations.join("; ")}
-              </p>
-            )}
+            <Button onClick={handleRetry} className="min-h-[44px]">
+              Retry
+            </Button>
           </CardContent>
         </Card>
       )}
 
-      {/* Polished Version */}
-      <Card className="w-full overflow-hidden">
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2 text-base">
-            <Sparkles className="h-4 w-4" />
-            Polished Version
-          </CardTitle>
-        </CardHeader>
-        <CardContent>
-          <p className="w-full whitespace-pre-wrap break-words text-sm leading-relaxed text-muted-foreground">
-            {review.polishedVersion}
-          </p>
-        </CardContent>
-      </Card>
-
-      {/* Error Patterns */}
-      {review.errorPatterns.length > 0 && (
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-base">Error Patterns</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-2">
-            {review.errorPatterns.map((pattern, i) => (
-              <div key={i} className="w-full rounded-lg border p-3 text-sm">
-                <p className="break-words font-medium">{pattern.category}</p>
-                <p className="mt-1 whitespace-normal break-words text-xs text-muted-foreground">
-                  {pattern.description}
-                </p>
+      {/* Round 2: Language Review (only once submitted) */}
+      {reviewRound === 2 && review && (
+        <>
+          {/* Overall Score */}
+          <Card>
+            <CardContent className="flex flex-col items-center gap-1 py-6">
+              <div className="text-4xl font-bold">{review.score}</div>
+              <div className="text-sm text-muted-foreground">
+                {scoreLabel(review.score)} · out of 10
               </div>
-            ))}
-          </CardContent>
-        </Card>
+            </CardContent>
+          </Card>
+
+          {/* Annotated Text */}
+          <Card className="w-full overflow-hidden">
+            <CardHeader>
+              <CardTitle className="text-base">Your Writing</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <p className="w-full whitespace-pre-wrap break-words text-sm leading-relaxed">
+                {segments.map((segment, i) => {
+                  if (segment.annotationIndex === null) {
+                    return <span key={i}>{segment.text}</span>;
+                  }
+                  const annotation = review.annotations[segment.annotationIndex];
+                  return (
+                    <span
+                      key={i}
+                      role="button"
+                      tabIndex={0}
+                      className={`cursor-pointer rounded px-0.5 ${ANNOTATION_CLASS[annotation.type]} ${
+                        selectedAnnotation === segment.annotationIndex
+                          ? "ring-2 ring-foreground/40"
+                          : ""
+                      }`}
+                      onClick={() => setSelectedAnnotation(segment.annotationIndex)}
+                    >
+                      {segment.text}
+                    </span>
+                  );
+                })}
+              </p>
+            </CardContent>
+          </Card>
+
+          {/* Detail panel */}
+          {selected && selectedAnnotation !== null && (
+            <Card className={ANNOTATION_CLASS[selected.type].replace("/70", "/20")}>
+              <CardHeader>
+                <CardTitle className="flex flex-wrap items-center justify-between gap-2 text-sm">
+                  <span>{ANNOTATION_LABEL[selected.type]}</span>
+                  {selected.type !== "positive" && (
+                    <Button
+                      size="sm"
+                      variant={addedKeys.has(selectedAnnotation) ? "secondary" : "outline"}
+                      disabled={
+                        addedKeys.has(selectedAnnotation) ||
+                        addingKey === selectedAnnotation
+                      }
+                      onClick={() => handleAddToSrs(selectedAnnotation, selected)}
+                      className="min-h-[44px]"
+                    >
+                      {addedKeys.has(selectedAnnotation) ? (
+                        <>
+                          <Check className="h-3.5 w-3.5" />
+                          Added!
+                        </>
+                      ) : (
+                        <>
+                          <Plus className="h-3.5 w-3.5" />
+                          Add to SRS
+                        </>
+                      )}
+                    </Button>
+                  )}
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-2 text-sm">
+                {selected.type !== "positive" && (
+                  <p className="whitespace-normal break-words">
+                    <span className="text-muted-foreground line-through">
+                      {selected.original}
+                    </span>
+                    {" -> "}
+                    <span className="font-medium">{selected.replacement}</span>
+                  </p>
+                )}
+                <p className="whitespace-normal break-words text-muted-foreground">
+                  {selected.explanation}
+                </p>
+                {selected.collocations && selected.collocations.length > 0 && (
+                  <p className="whitespace-normal break-words text-muted-foreground">
+                    <span className="font-medium">Collocations: </span>
+                    {selected.collocations.join("; ")}
+                  </p>
+                )}
+              </CardContent>
+            </Card>
+          )}
+
+          {/* Polished Version */}
+          <Card className="w-full overflow-hidden">
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2 text-base">
+                <Sparkles className="h-4 w-4" />
+                Polished Version
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <p className="w-full whitespace-pre-wrap break-words text-sm leading-relaxed text-muted-foreground">
+                {review.polishedVersion}
+              </p>
+            </CardContent>
+          </Card>
+
+          {/* Error Patterns */}
+          {review.errorPatterns.length > 0 && (
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-base">Error Patterns</CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-2">
+                {review.errorPatterns.map((pattern, i) => (
+                  <div key={i} className="w-full rounded-lg border p-3 text-sm">
+                    <p className="break-words font-medium">{pattern.category}</p>
+                    <p className="mt-1 whitespace-normal break-words text-xs text-muted-foreground">
+                      {pattern.description}
+                    </p>
+                  </div>
+                ))}
+              </CardContent>
+            </Card>
+          )}
+        </>
       )}
 
-      <Button
-        onClick={() => router.push("/writing")}
-        className="w-full min-h-[44px]"
-      >
-        Start New Writing Task
-      </Button>
+      {reviewRound === 2 && (
+        <Button
+          onClick={() => router.push("/writing")}
+          className="w-full min-h-[44px]"
+        >
+          Start New Writing Task
+        </Button>
+      )}
     </div>
   );
 };
