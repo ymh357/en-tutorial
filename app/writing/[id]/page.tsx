@@ -1,0 +1,536 @@
+"use client";
+
+import { useMemo, useState } from "react";
+import { useParams, useRouter, useSearchParams } from "next/navigation";
+import {
+  AlertTriangle,
+  ArrowLeft,
+  Check,
+  Loader2,
+  Plus,
+  Sparkles,
+} from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Textarea } from "@/components/ui/textarea";
+import { Badge } from "@/components/ui/badge";
+import { db } from "@/lib/db";
+import { dbHelpers } from "@/lib/db-helpers";
+import type {
+  AnnotationType,
+  Card as SrsCard,
+  WritingAnnotation,
+  WritingReview,
+  WritingSession,
+  WritingTaskType,
+} from "@/lib/types";
+
+const MIN_WORDS = 10;
+
+const TASK_TYPE_LABEL: Record<WritingTaskType, string> = {
+  email: "Business Email",
+  essay: "Essay",
+  social: "Social Media Post",
+  report: "Report Summary",
+  quick: "Quick Task",
+  free: "Free Writing",
+};
+
+const REVIEW_SYSTEM_PROMPT = `You are an expert English writing tutor. Analyze the student's writing and provide detailed feedback.
+
+Return ONLY valid JSON (no markdown fences, no explanation outside the JSON) in this exact format:
+{
+  "score": <1-10>,
+  "annotations": [
+    {
+      "type": "error" | "suggestion" | "style" | "positive",
+      "start": <character index in original text>,
+      "end": <character index>,
+      "original": "<the text being annotated>",
+      "replacement": "<suggested replacement, or same text if positive>",
+      "explanation": "<why this is an error/suggestion/improvement, or why it's good>"
+    }
+  ],
+  "polishedVersion": "<the full text rewritten with all corrections applied>",
+  "errorPatterns": [
+    { "category": "<e.g., tense, articles, prepositions>", "description": "<brief description>" }
+  ]
+}
+
+Guidelines:
+- Be encouraging while honest about errors
+- Mark genuinely good expressions as "positive" type
+- For "error" type: grammar mistakes, spelling errors
+- For "suggestion" type: better word choices, more natural expressions
+- For "style" type: register/tone improvements, sentence structure
+- Annotations must have accurate start/end character positions in the original text
+- Include at least 1-2 positive annotations if the writing has any merit`;
+
+const buildReviewPrompt = (taskPrompt: string, content: string): string =>
+  `Task: ${taskPrompt || "Free writing"}\n\nStudent's writing:\n${content}\n\nAnalyze this writing and return the JSON review described in the system prompt.`;
+
+const parseReviewResponse = (raw: string): WritingReview | null => {
+  let text = raw.trim();
+  const fenceMatch = text.match(/```(?:json)?\s*([\s\S]*?)```/);
+  if (fenceMatch) {
+    text = fenceMatch[1].trim();
+  }
+  try {
+    const parsed = JSON.parse(text) as WritingReview;
+    if (
+      !parsed ||
+      typeof parsed !== "object" ||
+      typeof parsed.score !== "number" ||
+      !Array.isArray(parsed.annotations) ||
+      typeof parsed.polishedVersion !== "string" ||
+      !Array.isArray(parsed.errorPatterns)
+    ) {
+      return null;
+    }
+    return parsed;
+  } catch {
+    return null;
+  }
+};
+
+const scoreLabel = (score: number): string => {
+  if (score >= 9) return "Excellent";
+  if (score >= 7) return "Good";
+  if (score >= 5) return "Fair";
+  return "Needs Work";
+};
+
+const ANNOTATION_PRIORITY: Record<AnnotationType, number> = {
+  error: 0,
+  suggestion: 1,
+  style: 2,
+  positive: 3,
+};
+
+const ANNOTATION_CLASS: Record<AnnotationType, string> = {
+  error: "bg-red-200/70 dark:bg-red-900/50",
+  suggestion: "bg-yellow-200/70 dark:bg-yellow-900/50",
+  style: "bg-blue-200/70 dark:bg-blue-900/50",
+  positive: "bg-green-200/70 dark:bg-green-900/50",
+};
+
+const ANNOTATION_LABEL: Record<AnnotationType, string> = {
+  error: "Grammar Error",
+  suggestion: "Word Choice",
+  style: "Style",
+  positive: "Excellent",
+};
+
+type Segment = {
+  text: string;
+  annotationIndex: number | null;
+};
+
+// Split the text into segments at annotation boundaries. When ranges overlap,
+// the higher-priority annotation type (error > suggestion > style > positive)
+// wins for the overlapping portion.
+const buildSegments = (
+  text: string,
+  annotations: WritingAnnotation[]
+): Segment[] => {
+  if (annotations.length === 0) {
+    return [{ text, annotationIndex: null }];
+  }
+
+  const boundaries = new Set<number>([0, text.length]);
+  annotations.forEach((a) => {
+    boundaries.add(Math.max(0, Math.min(a.start, text.length)));
+    boundaries.add(Math.max(0, Math.min(a.end, text.length)));
+  });
+  const sorted = Array.from(boundaries).sort((a, b) => a - b);
+
+  const segments: Segment[] = [];
+  for (let i = 0; i < sorted.length - 1; i++) {
+    const start = sorted[i];
+    const end = sorted[i + 1];
+    if (start >= end) continue;
+
+    let bestIndex: number | null = null;
+    let bestPriority = Infinity;
+    annotations.forEach((a, idx) => {
+      if (a.start <= start && a.end >= end) {
+        const priority = ANNOTATION_PRIORITY[a.type];
+        if (priority < bestPriority) {
+          bestPriority = priority;
+          bestIndex = idx;
+        }
+      }
+    });
+
+    segments.push({ text: text.slice(start, end), annotationIndex: bestIndex });
+  }
+  return segments;
+};
+
+const WritingEditorPage = () => {
+  const router = useRouter();
+  const params = useParams<{ id: string }>();
+  const searchParams = useSearchParams();
+
+  const sessionId = params.id;
+  const taskType = (searchParams.get("type") as WritingTaskType | null) ?? "free";
+  const taskPrompt = searchParams.get("prompt")
+    ? decodeURIComponent(searchParams.get("prompt") as string)
+    : "";
+
+  const [content, setContent] = useState("");
+  const [phase, setPhase] = useState<"writing" | "review">("writing");
+  const [isReviewing, setIsReviewing] = useState(false);
+  const [reviewError, setReviewError] = useState<string | null>(null);
+  const [review, setReview] = useState<WritingReview | null>(null);
+  const [selectedAnnotation, setSelectedAnnotation] = useState<number | null>(
+    null
+  );
+  const [addedKeys, setAddedKeys] = useState<Set<number>>(new Set());
+  const [addingKey, setAddingKey] = useState<number | null>(null);
+  const [startTime] = useState<number>(() => Date.now());
+
+  const wordCount = useMemo(
+    () => content.trim().split(/\s+/).filter(Boolean).length,
+    [content]
+  );
+
+  const canSubmit = wordCount >= MIN_WORDS && !isReviewing;
+
+  const segments = useMemo(
+    () => (review ? buildSegments(content, review.annotations) : []),
+    [review, content]
+  );
+
+  const runReview = async (): Promise<void> => {
+    setIsReviewing(true);
+    setReviewError(null);
+
+    try {
+      const prompt = buildReviewPrompt(taskPrompt, content);
+      const res = await fetch("/api/review", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ prompt, system: REVIEW_SYSTEM_PROMPT }),
+      });
+
+      if (!res.ok) {
+        throw new Error(`Review request failed (${res.status})`);
+      }
+
+      const data = (await res.json()) as { content?: string };
+      if (!data.content) {
+        throw new Error("Empty response from review service");
+      }
+
+      const parsedReview = parseReviewResponse(data.content);
+      if (!parsedReview) {
+        throw new Error("Could not parse the AI's review response");
+      }
+
+      const session: WritingSession = {
+        id: sessionId,
+        taskType,
+        taskPrompt,
+        content,
+        wordCount,
+        review: parsedReview,
+        createdAt: new Date(),
+      };
+      await db.writingSessions.put(session);
+
+      const errorCount = parsedReview.annotations.filter(
+        (a) => a.type === "error" || a.type === "suggestion"
+      ).length;
+      const timeSpentSeconds = Math.round((Date.now() - startTime) / 1000);
+      await dbHelpers.incrementTodayStat("writingCount");
+      if (errorCount > 0) {
+        await dbHelpers.incrementTodayStat("wordsLearned", errorCount);
+      }
+      await dbHelpers.incrementTodayStat("timeSpent", timeSpentSeconds);
+      await dbHelpers.updateStreak();
+
+      setReview(parsedReview);
+      setPhase("review");
+    } catch (err) {
+      setReviewError(
+        err instanceof Error ? err.message : "Failed to generate review"
+      );
+    } finally {
+      setIsReviewing(false);
+    }
+  };
+
+  const handleSubmit = (): void => {
+    if (!canSubmit) return;
+    void runReview();
+  };
+
+  const handleRetry = (): void => {
+    setReviewError(null);
+    void runReview();
+  };
+
+  const handleAddToSrs = async (
+    index: number,
+    annotation: WritingAnnotation
+  ): Promise<void> => {
+    if (addedKeys.has(index) || addingKey !== null) return;
+    setAddingKey(index);
+    try {
+      const lemma = annotation.original
+        .toLowerCase()
+        .replace(/[^a-z\s]/g, "")
+        .trim()
+        .split(/\s+/)
+        .filter(Boolean)
+        .slice(0, 4)
+        .join(" ");
+
+      const existing = await dbHelpers.getCardByLemma(lemma);
+      if (!existing) {
+        const newCard: SrsCard = {
+          id: crypto.randomUUID(),
+          type: "error",
+          lemma,
+          front: annotation.original,
+          back: `${annotation.replacement}\n\n${annotation.explanation}`,
+          context: annotation.explanation,
+          source: "writing",
+          sourceId: sessionId,
+          easeFactor: 2.5,
+          interval: 0,
+          repetitions: 0,
+          nextReview: new Date(),
+          masteryLevel: "new",
+          createdAt: new Date(),
+          lastReviewedAt: null,
+        };
+        await db.cards.add(newCard);
+        await dbHelpers.incrementTodayStat("wordsLearned");
+      }
+      setAddedKeys((prev) => new Set(prev).add(index));
+    } finally {
+      setAddingKey(null);
+    }
+  };
+
+  // ---- Phase 1: Writing ----
+  if (phase === "writing") {
+    return (
+      <div className="mx-auto flex max-w-3xl flex-col gap-6 pb-8">
+        <div className="flex items-center justify-between pt-2">
+          <Button
+            variant="ghost"
+            size="sm"
+            className="-ml-2"
+            onClick={() => router.push("/writing")}
+          >
+            <ArrowLeft className="h-4 w-4" />
+            Back
+          </Button>
+          <Badge variant="outline">{TASK_TYPE_LABEL[taskType]}</Badge>
+        </div>
+
+        {taskPrompt && (
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base">Task</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <p className="text-sm text-muted-foreground">{taskPrompt}</p>
+            </CardContent>
+          </Card>
+        )}
+
+        <Textarea
+          value={content}
+          onChange={(e) => setContent(e.target.value)}
+          placeholder="Start writing here..."
+          className="min-h-[320px] resize-y text-base leading-relaxed"
+          disabled={isReviewing}
+        />
+
+        <div className="flex items-center justify-between">
+          <span className="text-sm text-muted-foreground">
+            {wordCount} {wordCount === 1 ? "word" : "words"}
+            {wordCount < MIN_WORDS && ` (minimum ${MIN_WORDS})`}
+          </span>
+          <Button onClick={handleSubmit} disabled={!canSubmit}>
+            {isReviewing ? (
+              <>
+                <Loader2 className="h-4 w-4 animate-spin" />
+                Analyzing your writing...
+              </>
+            ) : (
+              "Submit for Review"
+            )}
+          </Button>
+        </div>
+
+        {reviewError && (
+          <Card className="border-destructive/30 bg-destructive/5">
+            <CardContent className="flex flex-col items-center gap-3 py-6">
+              <AlertTriangle className="h-6 w-6 text-destructive" />
+              <p className="text-center text-sm text-muted-foreground">
+                {reviewError}
+              </p>
+              <Button onClick={handleRetry}>Retry</Button>
+            </CardContent>
+          </Card>
+        )}
+      </div>
+    );
+  }
+
+  // ---- Phase 2: Review ----
+  if (!review) return null;
+
+  const selected =
+    selectedAnnotation !== null ? review.annotations[selectedAnnotation] : null;
+
+  return (
+    <div className="mx-auto flex max-w-3xl flex-col gap-6 pb-8">
+      <div className="flex items-center justify-between pt-2">
+        <Button
+          variant="ghost"
+          size="sm"
+          className="-ml-2"
+          onClick={() => router.push("/writing")}
+        >
+          <ArrowLeft className="h-4 w-4" />
+          Back to Writing
+        </Button>
+        <Badge variant="outline">{TASK_TYPE_LABEL[taskType]}</Badge>
+      </div>
+
+      {/* Overall Score */}
+      <Card>
+        <CardContent className="flex flex-col items-center gap-1 py-6">
+          <div className="text-4xl font-bold">{review.score}</div>
+          <div className="text-sm text-muted-foreground">
+            {scoreLabel(review.score)} · out of 10
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Annotated Text */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">Your Writing</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <p className="whitespace-pre-wrap text-sm leading-relaxed">
+            {segments.map((segment, i) => {
+              if (segment.annotationIndex === null) {
+                return <span key={i}>{segment.text}</span>;
+              }
+              const annotation = review.annotations[segment.annotationIndex];
+              return (
+                <span
+                  key={i}
+                  role="button"
+                  tabIndex={0}
+                  className={`cursor-pointer rounded px-0.5 ${ANNOTATION_CLASS[annotation.type]} ${
+                    selectedAnnotation === segment.annotationIndex
+                      ? "ring-2 ring-foreground/40"
+                      : ""
+                  }`}
+                  onClick={() => setSelectedAnnotation(segment.annotationIndex)}
+                >
+                  {segment.text}
+                </span>
+              );
+            })}
+          </p>
+        </CardContent>
+      </Card>
+
+      {/* Detail panel */}
+      {selected && selectedAnnotation !== null && (
+        <Card className={ANNOTATION_CLASS[selected.type].replace("/70", "/20")}>
+          <CardHeader>
+            <CardTitle className="flex items-center justify-between text-sm">
+              <span>{ANNOTATION_LABEL[selected.type]}</span>
+              {selected.type !== "positive" && (
+                <Button
+                  size="sm"
+                  variant={addedKeys.has(selectedAnnotation) ? "secondary" : "outline"}
+                  disabled={
+                    addedKeys.has(selectedAnnotation) ||
+                    addingKey === selectedAnnotation
+                  }
+                  onClick={() => handleAddToSrs(selectedAnnotation, selected)}
+                >
+                  {addedKeys.has(selectedAnnotation) ? (
+                    <>
+                      <Check className="h-3.5 w-3.5" />
+                      Added!
+                    </>
+                  ) : (
+                    <>
+                      <Plus className="h-3.5 w-3.5" />
+                      Add to SRS
+                    </>
+                  )}
+                </Button>
+              )}
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-2 text-sm">
+            {selected.type !== "positive" && (
+              <p>
+                <span className="text-muted-foreground line-through">
+                  {selected.original}
+                </span>
+                {" -> "}
+                <span className="font-medium">{selected.replacement}</span>
+              </p>
+            )}
+            <p className="text-muted-foreground">{selected.explanation}</p>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Polished Version */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2 text-base">
+            <Sparkles className="h-4 w-4" />
+            Polished Version
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          <p className="whitespace-pre-wrap text-sm leading-relaxed text-muted-foreground">
+            {review.polishedVersion}
+          </p>
+        </CardContent>
+      </Card>
+
+      {/* Error Patterns */}
+      {review.errorPatterns.length > 0 && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base">Error Patterns</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-2">
+            {review.errorPatterns.map((pattern, i) => (
+              <div key={i} className="rounded-lg border p-3 text-sm">
+                <p className="font-medium">{pattern.category}</p>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  {pattern.description}
+                </p>
+              </div>
+            ))}
+          </CardContent>
+        </Card>
+      )}
+
+      <Button onClick={() => router.push("/writing")}>
+        Start New Writing Task
+      </Button>
+    </div>
+  );
+};
+
+export default WritingEditorPage;
