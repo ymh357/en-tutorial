@@ -11,6 +11,7 @@ import {
   TrendingUp,
   ClipboardCheck,
   Settings,
+  BookOpenText,
   type LucideIcon,
 } from "lucide-react";
 import {
@@ -75,6 +76,15 @@ export const SidebarNav = () => {
       </SidebarContent>
       <SidebarFooter className="p-4">
         <SidebarMenu>
+          <SidebarMenuItem>
+            <SidebarMenuButton
+              isActive={pathname === "/guide"}
+              render={<Link href="/guide" />}
+            >
+              <BookOpenText />
+              <span>Guide</span>
+            </SidebarMenuButton>
+          </SidebarMenuItem>
           <SidebarMenuItem>
             <SidebarMenuButton
               isActive={pathname === "/settings"}
