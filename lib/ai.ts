@@ -7,9 +7,9 @@ const og = createOpenAICompatible({
 });
 
 export const defaultModel = og(
-  process.env.OG_DEFAULT_MODEL ?? "deepseek-ai/DeepSeek-V4-Flash"
+  process.env.OG_DEFAULT_MODEL ?? "deepseek-v4-flash"
 );
 
 export const qualityModel = og(
-  process.env.OG_QUALITY_MODEL ?? "anthropic/claude-sonnet-5"
+  process.env.OG_QUALITY_MODEL ?? "claude-sonnet-5"
 );
