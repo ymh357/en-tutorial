@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import { Providers } from "@/components/providers";
-import { AppShell } from "@/components/app-shell";
+import { OnboardingGuard } from "@/components/onboarding-guard";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -28,7 +28,7 @@ const RootLayout = ({ children }: { children: React.ReactNode }) => {
     >
       <body className="min-h-full antialiased">
         <Providers>
-          <AppShell>{children}</AppShell>
+          <OnboardingGuard>{children}</OnboardingGuard>
         </Providers>
       </body>
     </html>
