@@ -9,6 +9,7 @@ import {
   Mic,
   Play,
   RotateCcw,
+  Sparkles,
   Turtle,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -21,6 +22,8 @@ import {
 } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useProfile } from "@/hooks/use-db";
@@ -137,7 +140,7 @@ const diffWords = (original: string, userText: string): DiffResult => {
   return { accuracy, original: entries };
 };
 
-type Mode = "dictation" | "comprehension" | "shadowing";
+type Mode = "dictation" | "comprehension" | "shadowing" | "prediction";
 
 // Shared post-exercise navigation shown once a result/completion state renders.
 const ExerciseCompletionActions = ({
@@ -355,6 +358,7 @@ interface ComprehensionQuestion {
 
 interface ComprehensionData {
   passage: string;
+  topic: string;
   questions: ComprehensionQuestion[];
 }
 
@@ -364,6 +368,7 @@ const parseComprehensionData = (raw: string): ComprehensionData | null => {
     if (
       !parsed ||
       typeof parsed.passage !== "string" ||
+      typeof parsed.topic !== "string" ||
       !Array.isArray(parsed.questions) ||
       parsed.questions.length === 0 ||
       parsed.questions.some(
@@ -387,6 +392,8 @@ const ComprehensionTab = ({ cefrLevel }: { cefrLevel: string }) => {
   const [error, setError] = useState<string | null>(null);
   const [answers, setAnswers] = useState<Record<number, number>>({});
   const [submitted, setSubmitted] = useState(false);
+  const [prediction, setPrediction] = useState("");
+  const [predictionConfirmed, setPredictionConfirmed] = useState(false);
 
   const generatePassage = async (): Promise<void> => {
     setIsLoading(true);
@@ -394,10 +401,12 @@ const ComprehensionTab = ({ cefrLevel }: { cefrLevel: string }) => {
     setAnswers({});
     setSubmitted(false);
     setData(null);
+    setPrediction("");
+    setPredictionConfirmed(false);
     try {
       const system =
         "You are an English listening test designer. Return ONLY valid JSON (no markdown fences, no explanation).";
-      const prompt = `Generate a 100-150 word English passage at ${cefrLevel} level, followed by 3 multiple-choice comprehension questions. Return as JSON: { "passage": string, "questions": [{ "question": string, "options": string[], "correctIndex": number }] }`;
+      const prompt = `Generate a 100-150 word English passage at ${cefrLevel} level, followed by 3 multiple-choice comprehension questions. Return as JSON: { "passage": string, "topic": "brief topic description", "questions": [{ "question": string, "options": string[], "correctIndex": number }] }`;
       const content = await callReview(prompt, system);
       const parsed = parseComprehensionData(content);
       if (!parsed) {
@@ -439,6 +448,34 @@ const ComprehensionTab = ({ cefrLevel }: { cefrLevel: string }) => {
           <Loader2 className="h-5 w-5 animate-spin mr-2" />
           Generating passage...
         </div>
+      ) : data && !predictionConfirmed ? (
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm font-medium">
+              Before You Listen
+            </CardTitle>
+            <CardDescription className="text-xs">
+              Topic: {data.topic}
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            <div className="space-y-1.5">
+              <Label>What do you think this passage will be about?</Label>
+              <Textarea
+                placeholder="Write a brief prediction based on the topic..."
+                value={prediction}
+                onChange={(e) => setPrediction(e.target.value)}
+                className="min-h-[80px]"
+              />
+            </div>
+            <Button
+              className="w-full min-h-[44px]"
+              onClick={() => setPredictionConfirmed(true)}
+            >
+              Start Listening
+            </Button>
+          </CardContent>
+        </Card>
       ) : data ? (
         <>
           <Card>
@@ -449,6 +486,11 @@ const ComprehensionTab = ({ cefrLevel }: { cefrLevel: string }) => {
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-3">
+              {prediction.trim() && (
+                <p className="text-xs text-muted-foreground border-b pb-2">
+                  Your prediction: &ldquo;{prediction}&rdquo;
+                </p>
+              )}
               <div className="flex flex-wrap gap-2">
                 <Button
                   size="lg"
@@ -791,6 +833,237 @@ const ShadowingTab = ({ cefrLevel }: { cefrLevel: string }) => {
   );
 };
 
+// --- Prediction ---
+
+interface PredictionPassage {
+  firstHalf: string;
+  secondHalf: string;
+  topic: string;
+}
+
+const parsePredictionPassage = (raw: string): PredictionPassage | null => {
+  try {
+    const parsed = JSON.parse(stripFences(raw)) as PredictionPassage;
+    if (
+      !parsed ||
+      typeof parsed.firstHalf !== "string" ||
+      typeof parsed.secondHalf !== "string" ||
+      typeof parsed.topic !== "string"
+    ) {
+      return null;
+    }
+    return parsed;
+  } catch {
+    return null;
+  }
+};
+
+interface PredictionEvaluation {
+  score: number;
+  feedback: string;
+}
+
+const parsePredictionEvaluation = (raw: string): PredictionEvaluation | null => {
+  try {
+    const parsed = JSON.parse(stripFences(raw)) as PredictionEvaluation;
+    if (
+      !parsed ||
+      typeof parsed.score !== "number" ||
+      typeof parsed.feedback !== "string"
+    ) {
+      return null;
+    }
+    return parsed;
+  } catch {
+    return null;
+  }
+};
+
+const PredictionTab = ({ cefrLevel }: { cefrLevel: string }) => {
+  const [passage, setPassage] = useState<PredictionPassage | null>(null);
+  const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [userInput, setUserInput] = useState("");
+  const [isEvaluating, setIsEvaluating] = useState(false);
+  const [evaluation, setEvaluation] = useState<PredictionEvaluation | null>(null);
+
+  const generatePassage = async (): Promise<void> => {
+    setIsLoading(true);
+    setError(null);
+    setPassage(null);
+    setUserInput("");
+    setEvaluation(null);
+    try {
+      const system =
+        "You are an English listening exercise designer. Return ONLY valid JSON (no markdown fences, no explanation).";
+      const prompt = `Generate a short English passage (3-4 sentences) at ${cefrLevel} level that has a clear logical progression where the second half naturally follows from the first half. Return JSON:\n{\n  "firstHalf": "first 1-2 sentences",\n  "secondHalf": "remaining sentences",\n  "topic": "brief topic description"\n}`;
+      const content = await callReview(prompt, system);
+      const parsed = parsePredictionPassage(content);
+      if (!parsed) {
+        throw new Error("Could not parse the passage. Please try again.");
+      }
+      setPassage(parsed);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to generate passage");
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    const timer = setTimeout(() => void generatePassage(), 0);
+    return () => clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const submitPrediction = async (): Promise<void> => {
+    if (!passage || !userInput.trim()) return;
+    setIsEvaluating(true);
+    setError(null);
+    try {
+      const system =
+        "You are an English listening comprehension evaluator. Return ONLY valid JSON (no markdown fences, no explanation).";
+      const prompt = `The original continuation was: "${passage.secondHalf}"\nThe student predicted: "${userInput}"\nEvaluate how well the prediction matches in terms of logical coherence and contextual understanding (not exact wording). Score 1-10. Return JSON:\n{ "score": number, "feedback": "brief feedback on the prediction quality" }`;
+      const content = await callReview(prompt, system);
+      const parsed = parsePredictionEvaluation(content);
+      if (!parsed) {
+        throw new Error("Could not parse the evaluation. Please try again.");
+      }
+      setEvaluation(parsed);
+      await dbHelpers.updateStreak();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to evaluate prediction");
+    } finally {
+      setIsEvaluating(false);
+    }
+  };
+
+  return (
+    <div className="space-y-4">
+      {error && (
+        <Alert variant="destructive">
+          <AlertDescription>{error}</AlertDescription>
+        </Alert>
+      )}
+
+      {isLoading && !passage ? (
+        <div className="flex items-center justify-center py-8 text-muted-foreground">
+          <Loader2 className="h-5 w-5 animate-spin mr-2" />
+          Generating passage...
+        </div>
+      ) : passage ? (
+        <>
+          <Card>
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm font-medium">
+                Listen and Predict
+              </CardTitle>
+              <CardDescription className="text-xs">
+                Topic: {passage.topic}. Listen to the beginning, then write
+                what you think comes next.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="flex flex-wrap gap-2">
+                <Button
+                  size="lg"
+                  className="min-h-[44px] flex-1 sm:flex-none"
+                  onClick={() => void speak(passage.firstHalf)}
+                >
+                  <Play className="h-4 w-4" />
+                  Play
+                </Button>
+                <Button
+                  size="lg"
+                  variant="secondary"
+                  className="min-h-[44px] flex-1 sm:flex-none"
+                  onClick={() => void speak(passage.firstHalf)}
+                >
+                  <RotateCcw className="h-4 w-4" />
+                  Replay
+                </Button>
+                <Button
+                  size="lg"
+                  variant="secondary"
+                  className="min-h-[44px] flex-1 sm:flex-none"
+                  onClick={() => void speak(passage.firstHalf, "-30%")}
+                >
+                  <Turtle className="h-4 w-4" />
+                  Slow
+                </Button>
+              </div>
+
+              {evaluation && (
+                <p className="text-sm leading-relaxed whitespace-pre-wrap border-t pt-3">
+                  {passage.firstHalf}
+                </p>
+              )}
+
+              <Textarea
+                placeholder="What do you think happens next?"
+                value={userInput}
+                onChange={(e) => setUserInput(e.target.value)}
+                disabled={Boolean(evaluation)}
+                className="min-h-[80px]"
+              />
+
+              {!evaluation && (
+                <Button
+                  className="w-full min-h-[44px]"
+                  onClick={() => void submitPrediction()}
+                  disabled={!userInput.trim() || isEvaluating}
+                >
+                  {isEvaluating ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    "Submit Prediction"
+                  )}
+                </Button>
+              )}
+            </CardContent>
+          </Card>
+
+          {evaluation && (
+            <Card>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm font-medium flex items-center justify-between">
+                  Result
+                  <Badge variant={evaluation.score >= 7 ? "default" : "secondary"}>
+                    {evaluation.score}/10
+                  </Badge>
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                <div>
+                  <p className="text-xs font-medium text-muted-foreground mb-1">
+                    Actual continuation:
+                  </p>
+                  <p className="text-sm">{passage.secondHalf}</p>
+                </div>
+                <div>
+                  <p className="text-xs font-medium text-muted-foreground mb-1">
+                    Your prediction:
+                  </p>
+                  <p className="text-sm">{userInput}</p>
+                </div>
+                <p className="text-xs text-muted-foreground border-t pt-2">
+                  {evaluation.feedback}
+                </p>
+              </CardContent>
+            </Card>
+          )}
+
+          {evaluation && (
+            <ExerciseCompletionActions
+              onTryAnother={() => void generatePassage()}
+            />
+          )}
+        </>
+      ) : null}
+    </div>
+  );
+};
+
 // --- Page ---
 
 const ListeningPage = () => {
@@ -806,8 +1079,8 @@ const ListeningPage = () => {
           Listening Practice
         </h1>
         <p className="text-muted-foreground text-sm">
-          Practice dictation, comprehension, and shadowing at your{" "}
-          {cefrLevel} level.
+          Practice dictation, comprehension, shadowing, and prediction at
+          your {cefrLevel} level.
         </p>
       </div>
 
@@ -826,6 +1099,10 @@ const ListeningPage = () => {
               <Mic className="h-4 w-4" />
               Shadowing
             </TabsTrigger>
+            <TabsTrigger value="prediction" className="whitespace-nowrap">
+              <Sparkles className="h-4 w-4" />
+              Prediction
+            </TabsTrigger>
           </TabsList>
         </div>
         <TabsContent value="dictation" className="pt-4">
@@ -833,6 +1110,9 @@ const ListeningPage = () => {
         </TabsContent>
         <TabsContent value="comprehension" className="pt-4">
           <ComprehensionTab cefrLevel={cefrLevel} />
+        </TabsContent>
+        <TabsContent value="prediction" className="pt-4">
+          <PredictionTab cefrLevel={cefrLevel} />
         </TabsContent>
         <TabsContent value="shadowing" className="pt-4">
           <ShadowingTab cefrLevel={cefrLevel} />

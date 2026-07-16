@@ -77,6 +77,48 @@ const createSession = async (
   return id;
 };
 
+interface ComprehensionQuestion {
+  question: string;
+  type: "main-idea" | "inference" | "prediction" | string;
+}
+
+interface GeneratedArticle {
+  title: string;
+  content: string;
+  comprehensionQuestions: ComprehensionQuestion[];
+}
+
+const parseGeneratedArticle = (raw: string, fallbackTitle: string): GeneratedArticle => {
+  let text = raw.trim();
+  const fenceMatch = text.match(/```(?:json)?\s*([\s\S]*?)```/);
+  if (fenceMatch) {
+    text = fenceMatch[1].trim();
+  }
+  try {
+    const parsed = JSON.parse(text) as Partial<GeneratedArticle>;
+    if (
+      typeof parsed.title === "string" &&
+      typeof parsed.content === "string" &&
+      Array.isArray(parsed.comprehensionQuestions)
+    ) {
+      return {
+        title: parsed.title,
+        content: parsed.content,
+        comprehensionQuestions: parsed.comprehensionQuestions,
+      };
+    }
+  } catch {
+    // Fall through to plain-text handling below.
+  }
+
+  // Fallback: treat the response as plain text with the title on the first line.
+  const lines = raw.trim().split("\n");
+  const firstLine = lines[0].trim();
+  const title = firstLine.replace(/^#+\s*/, "") || fallbackTitle;
+  const body = lines.slice(1).join("\n").trim() || raw;
+  return { title, content: body, comprehensionQuestions: [] };
+};
+
 const AiGenerateTab = ({
   onSessionCreated,
 }: {
@@ -85,13 +127,18 @@ const AiGenerateTab = ({
   const [difficulty, setDifficulty] = useState<string>("B1");
   const [topic, setTopic] = useState<string>(TOPICS[0]);
   const [isGenerating, setIsGenerating] = useState(false);
+  const [isStarting, setIsStarting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [generated, setGenerated] = useState<GeneratedArticle | null>(null);
+  const [prediction, setPrediction] = useState("");
 
   const handleGenerate = async () => {
     setIsGenerating(true);
     setError(null);
+    setGenerated(null);
+    setPrediction("");
     try {
-      const system = `You are an English teacher creating reading material. Generate a 300-500 word article about ${topic} at ${difficulty} level. Use vocabulary and grammar appropriate for that level. Include a title on the first line. Write naturally — this should feel like a real article, not a textbook exercise.`;
+      const system = `You are an English teacher creating reading material. Generate a 300-500 word article about ${topic} at ${difficulty} level. Use vocabulary and grammar appropriate for that level. Write naturally — this should feel like a real article, not a textbook exercise. Also generate 3 comprehension questions covering different reading skills: one main-idea question, one inference question, and one prediction question. Return ONLY valid JSON (no markdown fences, no explanation) in this exact format: { "title": "article title", "content": "the full article body", "comprehensionQuestions": [ { "question": "What is the main idea of this passage?", "type": "main-idea" }, { "question": "What does the author mean by '...'?", "type": "inference" }, { "question": "What can you predict will happen next?", "type": "prediction" } ] }`;
       const prompt = `Generate an article about ${topic}`;
 
       const res = await fetch("/api/review", {
@@ -109,18 +156,8 @@ const AiGenerateTab = ({
         throw new Error(data.error || "No content returned");
       }
 
-      const lines = data.content.trim().split("\n");
-      const firstLine = lines[0].trim();
-      const title = firstLine.replace(/^#+\s*/, "") || `AI Generated: ${topic}`;
-      const body = lines.slice(1).join("\n").trim() || data.content;
-
-      const id = await createSession({
-        title,
-        content: body,
-        source: "ai_generated",
-        difficulty,
-      });
-      onSessionCreated(id);
+      const article = parseGeneratedArticle(data.content, `AI Generated: ${topic}`);
+      setGenerated(article);
     } catch (err) {
       setError(
         err instanceof Error
@@ -131,6 +168,78 @@ const AiGenerateTab = ({
       setIsGenerating(false);
     }
   };
+
+  const handleStartReading = async () => {
+    if (!generated) return;
+    setIsStarting(true);
+    try {
+      const id = await createSession({
+        title: generated.title,
+        content: generated.content,
+        source: "ai_generated",
+        difficulty,
+      });
+      if (generated.comprehensionQuestions.length > 0) {
+        localStorage.setItem(
+          `en-tutor-reading-questions-${id}`,
+          JSON.stringify(generated.comprehensionQuestions)
+        );
+      }
+      onSessionCreated(id);
+    } finally {
+      setIsStarting(false);
+    }
+  };
+
+  if (generated) {
+    return (
+      <Card>
+        <CardHeader>
+          <CardTitle>{generated.title}</CardTitle>
+          <CardDescription>
+            Before you start reading, take a moment to predict the content.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="space-y-1.5">
+            <Label>
+              Based on the title &ldquo;{generated.title}&rdquo;, what do you
+              think this article will be about?
+            </Label>
+            <Textarea
+              placeholder="Write a brief prediction..."
+              value={prediction}
+              onChange={(e) => setPrediction(e.target.value)}
+              className="min-h-[100px]"
+            />
+          </div>
+
+          <div className="flex flex-col sm:flex-row gap-2">
+            <Button
+              variant="outline"
+              onClick={() => {
+                setGenerated(null);
+                setPrediction("");
+              }}
+              disabled={isStarting}
+            >
+              Generate a Different Article
+            </Button>
+            <Button onClick={handleStartReading} disabled={isStarting}>
+              {isStarting ? (
+                <>
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  Starting...
+                </>
+              ) : (
+                "Start Reading"
+              )}
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
+    );
+  }
 
   return (
     <Card>
