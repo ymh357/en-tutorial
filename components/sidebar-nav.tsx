@@ -14,6 +14,7 @@ import {
   ClipboardCheck,
   Settings,
   BookOpenText,
+  Map,
   type LucideIcon,
 } from "lucide-react";
 import {
@@ -38,6 +39,7 @@ const NAV_ITEMS: { title: string; href: string; icon: LucideIcon }[] = [
   { title: "Translate", href: "/translate", icon: Languages },
   { title: "Review Cards", href: "/srs", icon: Brain },
   { title: "Profile", href: "/profile", icon: TrendingUp },
+  { title: "Roadmap", href: "/roadmap", icon: Map },
   { title: "Assessment", href: "/assessment", icon: ClipboardCheck },
 ];
 

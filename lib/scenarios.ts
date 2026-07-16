@@ -3,7 +3,7 @@ export interface ScenarioDefinition {
   name: string;
   description: string;
   difficulty: "B1" | "B2" | "C1";
-  category: "daily" | "professional" | "travel" | "social";
+  category: "daily" | "professional" | "travel" | "social" | "pragmatic";
   systemPromptContext: string;
 }
 
@@ -12,6 +12,7 @@ export const CATEGORIES = [
   { key: "professional", label: "Professional" },
   { key: "travel", label: "Travel" },
   { key: "social", label: "Social" },
+  { key: "pragmatic", label: "Language Functions" },
 ] as const;
 
 export const SCENARIOS: ScenarioDefinition[] = [
@@ -178,6 +179,55 @@ export const SCENARIOS: ScenarioDefinition[] = [
     difficulty: "B2",
     category: "social",
     systemPromptContext: "You are an old college friend the user hasn't seen in 2 years. You just bumped into each other. Share updates about your life (new job, moved cities, got a pet) and ask about theirs. Be warm and genuinely interested.",
+  },
+  // Language Functions (Pragmatic Competence)
+  {
+    id: "polite-refusal",
+    name: "Politely Declining",
+    description: "Practice saying no to invitations, requests, and offers without offending.",
+    difficulty: "B2",
+    category: "pragmatic",
+    systemPromptContext: "You are a colleague who keeps inviting the user to things and making requests. The user needs to practice declining politely. Be persistent but not aggressive — make it genuinely hard to say no. Use different types of requests: social invitations, work favors, lending things. React naturally to their refusals — sometimes accept gracefully, sometimes push back gently.",
+  },
+  {
+    id: "indirect-request",
+    name: "Making Indirect Requests",
+    description: "Practice asking for things without being too direct — using hints, hedging, and politeness strategies.",
+    difficulty: "B2",
+    category: "pragmatic",
+    systemPromptContext: "You are a neighbor/colleague. The user needs something from you (a favor, to borrow something, to change behavior like loud music). They should practice being indirect and polite rather than blunt. If they are too direct, respond with slight discomfort. If they hedge appropriately, respond warmly.",
+  },
+  {
+    id: "topic-shifting",
+    name: "Changing the Subject",
+    description: "Practice smoothly transitioning between topics in conversation.",
+    difficulty: "B2",
+    category: "pragmatic",
+    systemPromptContext: "You are a chatty friend who keeps talking about uncomfortable or boring topics (your diet, your ex, office politics). The user needs to practice changing the subject naturally without being rude. Keep returning to your topic unless they transition smoothly. Reward good transitions by engaging with the new topic.",
+  },
+  {
+    id: "giving-bad-news",
+    name: "Delivering Bad News",
+    description: "Practice breaking bad news gently — delays, cancellations, rejections.",
+    difficulty: "C1",
+    category: "pragmatic",
+    systemPromptContext: "You are the user's manager/client/friend. The user has bad news to deliver (project delayed, can't attend wedding, rejecting a proposal). React emotionally but not aggressively. Push the user to explain reasons and offer alternatives. If they are too blunt, show hurt feelings.",
+  },
+  {
+    id: "diplomatic-disagreement",
+    name: "Agreeing to Disagree",
+    description: "Practice expressing disagreement diplomatically while maintaining the relationship.",
+    difficulty: "C1",
+    category: "pragmatic",
+    systemPromptContext: "You hold a strong opinion on a topic (remote work, AI in education, social media effects). Engage the user in debate. They need to practice disagreeing without confrontation — using phrases like 'I see your point, but...', 'That's valid, although...'. If they are too aggressive, become defensive. If they are diplomatic, acknowledge their point while maintaining your position.",
+  },
+  {
+    id: "active-listening",
+    name: "Active Listening Responses",
+    description: "Practice showing you understand and care — paraphrasing, empathizing, asking clarifying questions.",
+    difficulty: "B1",
+    category: "pragmatic",
+    systemPromptContext: "You are a friend going through a difficult time (job loss, relationship issue, family problem). Share your feelings and situation. The user should practice active listening: paraphrasing what you said, expressing empathy, asking follow-up questions. If they just give advice without listening, gently redirect to 'I just need someone to listen right now.'",
   },
 ];
 
