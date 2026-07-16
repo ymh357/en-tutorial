@@ -9,6 +9,7 @@ import {
   Sparkles,
   Trophy,
   Lock,
+  TrendingUp,
 } from "lucide-react";
 import {
   Card,
@@ -347,6 +348,39 @@ const ProfilePage = () => {
     return map;
   }, [profile]);
 
+  // "What you can do now" — concrete ability statements grounded in actual
+  // vocab/conversation/writing data. The intrinsic-motivation anchor: real
+  // capability gains, not badge collection.
+  const abilityStatements = useMemo(() => {
+    const statements: string[] = [];
+    const masteredCount = vocabCounts?.mastered ?? 0;
+    const avgConversationScore =
+      scoredConversations.length > 0
+        ? scoredConversations.reduce((sum, c) => sum + c.review!.scores.fluency, 0) /
+          scoredConversations.length
+        : 0;
+    const reviewedWritingSessions = writingSessions.filter((s) => s.review !== null);
+    const avgWritingScore =
+      reviewedWritingSessions.length > 0
+        ? reviewedWritingSessions.reduce((sum, s) => sum + s.review!.score, 0) /
+          reviewedWritingSessions.length
+        : 0;
+
+    if (masteredCount > 100) {
+      statements.push("You can read most everyday English texts.");
+    }
+    if (masteredCount > 300) {
+      statements.push("You can understand most news articles.");
+    }
+    if (totalConversationsCompleted > 20 && avgConversationScore >= 6) {
+      statements.push("You can hold conversations on familiar topics.");
+    }
+    if (reviewedWritingSessions.length > 10 && avgWritingScore >= 6) {
+      statements.push("You can write clear emails and short essays.");
+    }
+    return statements;
+  }, [vocabCounts, scoredConversations, writingSessions, totalConversationsCompleted]);
+
   const hasData = totalVocab > 0 || conversations.length > 0 || writingSessions.length > 0 || readingSessions.length > 0;
 
   return (
@@ -558,6 +592,28 @@ const ProfilePage = () => {
           </CardContent>
         </Card>
       </div>
+
+      {/* What you can do now — ability gains, shown before the milestones/badges */}
+      {abilityStatements.length > 0 && (
+        <Card>
+          <CardHeader>
+            <CardTitle>What You Can Do Now</CardTitle>
+            <CardDescription>
+              Real capabilities you&apos;ve gained from practice
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <ul className="space-y-2">
+              {abilityStatements.map((statement) => (
+                <li key={statement} className="flex items-start gap-2 text-sm">
+                  <TrendingUp className="size-4 mt-0.5 shrink-0 text-green-600" />
+                  <span>{statement}</span>
+                </li>
+              ))}
+            </ul>
+          </CardContent>
+        </Card>
+      )}
 
       {/* 6. Milestones */}
       <Card>

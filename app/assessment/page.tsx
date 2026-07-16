@@ -307,6 +307,96 @@ const clearAssessmentProgress = (): void => {
   window.sessionStorage.removeItem(ASSESSMENT_PROGRESS_KEY);
 };
 
+// Simple SVG radar chart for the 4 ability dimensions — no external chart lib.
+const RadarChart = ({
+  scores,
+}: {
+  scores: { label: string; value: number }[];
+}) => {
+  const cx = 150;
+  const cy = 150;
+  const r = 120;
+  const n = scores.length;
+
+  const pointFor = (value: number, i: number) => {
+    const angle = (Math.PI * 2 * i) / n - Math.PI / 2;
+    const dist = (value / 100) * r;
+    return { x: cx + dist * Math.cos(angle), y: cy + dist * Math.sin(angle) };
+  };
+
+  const points = scores.map((s, i) => pointFor(s.value, i));
+  const bgPoints = scores.map((_, i) => pointFor(100, i));
+  const polygonPoints = points.map((p) => `${p.x},${p.y}`).join(" ");
+  const bgPolygonPoints = bgPoints.map((p) => `${p.x},${p.y}`).join(" ");
+
+  // Concentric grid rings at 25/50/75/100%
+  const rings = [0.25, 0.5, 0.75, 1];
+
+  return (
+    <svg viewBox="0 0 300 320" className="mx-auto h-64 w-64">
+      {rings.map((ring) => {
+        const ringPoints = scores
+          .map((_, i) => pointFor(100 * ring, i))
+          .map((p) => `${p.x},${p.y}`)
+          .join(" ");
+        return (
+          <polygon
+            key={ring}
+            points={ringPoints}
+            className="fill-none stroke-border"
+            strokeWidth={1}
+          />
+        );
+      })}
+      {/* Axis lines */}
+      {bgPoints.map((p, i) => (
+        <line
+          key={i}
+          x1={cx}
+          y1={cy}
+          x2={p.x}
+          y2={p.y}
+          className="stroke-border"
+          strokeWidth={1}
+        />
+      ))}
+      {/* Background (max) polygon, subtle */}
+      <polygon points={bgPolygonPoints} className="fill-none" />
+      {/* Score polygon */}
+      <polygon
+        points={polygonPoints}
+        className="fill-primary/20 stroke-primary"
+        strokeWidth={2}
+      />
+      {points.map((p, i) => (
+        <circle key={i} cx={p.x} cy={p.y} r={3} className="fill-primary" />
+      ))}
+      {/* Labels */}
+      {scores.map((s, i) => {
+        const labelPoint = pointFor(120, i);
+        const angle = (Math.PI * 2 * i) / n - Math.PI / 2;
+        const anchor =
+          Math.cos(angle) > 0.3
+            ? "start"
+            : Math.cos(angle) < -0.3
+              ? "end"
+              : "middle";
+        return (
+          <text
+            key={s.label}
+            x={labelPoint.x}
+            y={labelPoint.y + 20}
+            textAnchor={anchor}
+            className="fill-foreground text-[11px] font-medium"
+          >
+            {s.label} ({s.value})
+          </text>
+        );
+      })}
+    </svg>
+  );
+};
+
 const SECTION_LABELS = ["Reading", "Cloze", "Writing", "Conversation"] as const;
 
 const PhaseProgress = ({ currentIndex }: { currentIndex: number }) => (
@@ -1061,6 +1151,23 @@ Return ONLY valid JSON (no markdown fences, no explanation) in this exact format
       ? finalResult.overallScore - previousResult.overallScore
       : null;
 
+    const abilityScores = [
+      { label: "Reading", value: finalResult.readingScore },
+      { label: "Listening/Cloze", value: finalResult.clozeScore },
+      { label: "Writing", value: finalResult.writingScore },
+      { label: "Speaking", value: finalResult.conversationScore },
+    ];
+
+    // Per-dimension comparison vs. the previous assessment, if one exists.
+    const dimensionComparisons = previousResult
+      ? [
+          { label: "Reading", prev: previousResult.readingScore, curr: finalResult.readingScore },
+          { label: "Listening/Cloze", prev: previousResult.clozeScore, curr: finalResult.clozeScore },
+          { label: "Writing", prev: previousResult.writingScore, curr: finalResult.writingScore },
+          { label: "Speaking", prev: previousResult.conversationScore, curr: finalResult.conversationScore },
+        ]
+      : null;
+
     return (
       <div className="max-w-2xl space-y-6">
         <div>
@@ -1081,19 +1188,26 @@ Return ONLY valid JSON (no markdown fences, no explanation) in this exact format
               {finalResult.levelBand}
             </Badge>
           </CardHeader>
-          {scoreDelta !== null && (
-            <CardContent className="flex items-center justify-center gap-1 text-sm">
-              {scoreDelta >= 0 ? (
-                <TrendingUp className="h-4 w-4 text-green-600" />
-              ) : (
-                <TrendingDown className="h-4 w-4 text-red-600" />
-              )}
-              <span className={scoreDelta >= 0 ? "text-green-600" : "text-red-600"}>
-                {scoreDelta >= 0 ? "+" : ""}
-                {scoreDelta} vs last assessment
-              </span>
-            </CardContent>
-          )}
+          <CardContent className="space-y-3">
+            {scoreDelta !== null && (
+              <div className="flex items-center justify-center gap-1 text-sm">
+                {scoreDelta >= 0 ? (
+                  <TrendingUp className="h-4 w-4 text-green-600" />
+                ) : (
+                  <TrendingDown className="h-4 w-4 text-red-600" />
+                )}
+                <span className={scoreDelta >= 0 ? "text-green-600" : "text-red-600"}>
+                  {scoreDelta >= 0 ? "+" : ""}
+                  {scoreDelta} vs last assessment
+                </span>
+              </div>
+            )}
+            <RadarChart scores={abilityScores} />
+            <p className="text-xs text-muted-foreground text-center">
+              This is an approximate estimate based on limited test items. For
+              official CEFR certification, take a standardized test.
+            </p>
+          </CardContent>
         </Card>
 
         <div className="space-y-3">
@@ -1117,6 +1231,42 @@ Return ONLY valid JSON (no markdown fences, no explanation) in this exact format
             </Card>
           ))}
         </div>
+
+        {dimensionComparisons && (
+          <div className="space-y-2">
+            <h2 className="text-lg font-semibold">Compared to Last Time</h2>
+            <Card>
+              <CardContent className="pt-6 space-y-2">
+                {dimensionComparisons.map((d) => {
+                  const delta = d.curr - d.prev;
+                  return (
+                    <div
+                      key={d.label}
+                      className="flex items-center justify-between text-sm"
+                    >
+                      <span className="text-muted-foreground">{d.label}</span>
+                      <span className="font-medium">
+                        {d.prev} &rarr; {d.curr}{" "}
+                        <span
+                          className={
+                            delta > 0
+                              ? "text-green-600"
+                              : delta < 0
+                                ? "text-red-600"
+                                : "text-muted-foreground"
+                          }
+                        >
+                          ({delta >= 0 ? "+" : ""}
+                          {delta})
+                        </span>
+                      </span>
+                    </div>
+                  );
+                })}
+              </CardContent>
+            </Card>
+          </div>
+        )}
 
         {writingFeedback && (
           <Card>

@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { useLiveQuery } from "dexie-react-hooks";
 import Link from "next/link";
 import {
   Brain,
@@ -14,6 +15,7 @@ import {
   Sparkles,
   CheckCircle2,
   Circle,
+  TrendingUp,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -25,6 +27,7 @@ import {
 } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
+import { db } from "@/lib/db";
 import { dbHelpers } from "@/lib/db-helpers";
 import {
   useProfile,
@@ -180,9 +183,11 @@ const DashboardPage = () => {
   const dueCards = useDueCards();
   const vocabCounts = useVocabCounts();
   const todayStats = useTodayStats();
-  const conversations = useConversations(1);
+  const conversations = useConversations(5);
   const readingSessions = useReadingSessions(1);
   const writingSessions = useWritingSessions(1);
+  const totalConversationCount = useLiveQuery(() => db.conversations.count()) ?? 0;
+  const totalWritingCount = useLiveQuery(() => db.writingSessions.count()) ?? 0;
 
   useEffect(() => {
     dbHelpers.updateStreak();
@@ -255,6 +260,54 @@ const DashboardPage = () => {
       sessions: thisWeek.sessions - lastWeek.sessions,
     };
   }, [heatmapStats]);
+
+  // Words mastered ~30 days ago, approximated from the current mastered count
+  // minus words learned in the last 30 days (using the already-fetched 180-day
+  // heatmap stats — no extra query needed).
+  const wordsMonthAgo = useMemo(() => {
+    const cutoff = new Date();
+    cutoff.setDate(cutoff.getDate() - 30);
+    const cutoffStr = formatDate(cutoff);
+    const recentWordsLearned = heatmapStats
+      .filter((s) => s.id > cutoffStr)
+      .reduce((sum, s) => sum + s.wordsLearned, 0);
+    const currentMastered = vocabCounts?.mastered ?? 0;
+    return Math.max(0, currentMastered - recentWordsLearned);
+  }, [heatmapStats, vocabCounts]);
+
+  // Conversation fluency trend from the last 5 reviewed conversations.
+  const fluencyTrend = useMemo(() => {
+    const scored = conversations
+      .filter((c) => c.review !== null)
+      .slice(0, 5)
+      .map((c) => c.review!.scores.fluency);
+    if (scored.length < 2) return null;
+    const oldest = scored[scored.length - 1];
+    const newest = scored[0];
+    if (newest > oldest) return "improving" as const;
+    if (newest < oldest) return "declining" as const;
+    return "stable" as const;
+  }, [conversations]);
+
+  // Concrete ability statements based on actual usage data — the intrinsic
+  // motivation anchor, showing tangible capability gains rather than badges.
+  const abilityStatements = useMemo(() => {
+    const statements: string[] = [];
+    const masteredCount = vocabCounts?.mastered ?? 0;
+    if (masteredCount > 100) {
+      statements.push("You can now read most everyday English texts.");
+    }
+    if (masteredCount > 300) {
+      statements.push("You can now understand most news articles.");
+    }
+    if (totalConversationCount > 20) {
+      statements.push("You can hold conversations on familiar topics.");
+    }
+    if (totalWritingCount > 10) {
+      statements.push("You can write clear emails and short essays.");
+    }
+    return statements;
+  }, [vocabCounts, totalConversationCount, totalWritingCount]);
 
   const sessionKey = useMemo(
     () => `${SESSION_STORAGE_PREFIX}${formatDate(new Date())}`,
@@ -456,32 +509,39 @@ const DashboardPage = () => {
 
         <Card>
           <CardHeader>
-            <CardTitle>Stats Overview</CardTitle>
+            <CardTitle>Your Growth</CardTitle>
           </CardHeader>
           <CardContent className="space-y-3 md:space-y-4">
-            <div className="flex items-center gap-2">
-              <Flame className="size-4 text-orange-500 shrink-0 md:size-5" />
-              <div>
-                <p className="text-xs font-medium md:text-sm">
-                  {profile?.streakCurrent ?? 0} day
-                  {(profile?.streakCurrent ?? 0) === 1 ? "" : "s"} streak
-                </p>
-                <p className="text-xs text-muted-foreground">
-                  Best: {profile?.streakLongest ?? 0} days
-                </p>
-              </div>
-            </div>
             <div className="flex items-center gap-2">
               <Trophy className="size-4 text-amber-500 shrink-0 md:size-5" />
               <div>
                 <p className="text-xs font-medium md:text-sm">
-                  {vocabCounts?.mastered ?? 0} words mastered
+                  Words you can use: {vocabCounts?.mastered ?? 0}
+                  {vocabCounts && vocabCounts.mastered !== wordsMonthAgo && (
+                    <span className="text-muted-foreground">
+                      {" "}
+                      (was {wordsMonthAgo} last month)
+                    </span>
+                  )}
                 </p>
                 <p className="text-xs text-muted-foreground">
                   {totalVocab} total words tracked
                 </p>
               </div>
             </div>
+            {fluencyTrend && (
+              <div className="flex items-center gap-2">
+                <Sparkles className="size-4 text-blue-500 shrink-0 md:size-5" />
+                <div>
+                  <p className="text-xs font-medium md:text-sm">
+                    Conversation fluency: {fluencyTrend}
+                  </p>
+                  <p className="text-xs text-muted-foreground">
+                    Based on your last {conversations.filter((c) => c.review !== null).length} reviewed conversations
+                  </p>
+                </div>
+              </div>
+            )}
             <div className="flex items-center gap-2">
               <Sparkles className="size-4 text-blue-500 shrink-0 md:size-5" />
               <div>
@@ -494,9 +554,39 @@ const DashboardPage = () => {
                 <p className="text-xs text-muted-foreground">Current level</p>
               </div>
             </div>
+            <div className="flex items-center gap-2 pt-1 border-t">
+              <Flame className="size-3.5 text-orange-500 shrink-0" />
+              <p className="text-xs text-muted-foreground">
+                {profile?.streakCurrent ?? 0} day
+                {(profile?.streakCurrent ?? 0) === 1 ? "" : "s"} streak · Best:{" "}
+                {profile?.streakLongest ?? 0} days
+              </p>
+            </div>
           </CardContent>
         </Card>
       </div>
+
+      {/* "You can now..." — concrete ability gains, anchoring intrinsic motivation */}
+      {abilityStatements.length > 0 && (
+        <Card>
+          <CardHeader>
+            <CardTitle>You can now...</CardTitle>
+            <CardDescription>
+              Real capabilities you&apos;ve gained from practice
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <ul className="space-y-2">
+              {abilityStatements.map((statement) => (
+                <li key={statement} className="flex items-start gap-2 text-sm">
+                  <TrendingUp className="size-4 mt-0.5 shrink-0 text-green-600" />
+                  <span>{statement}</span>
+                </li>
+              ))}
+            </ul>
+          </CardContent>
+        </Card>
+      )}
 
       {/* Quick Launch */}
       <Card>
