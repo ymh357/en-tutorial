@@ -15,6 +15,8 @@ const NAV_GROUPS = [
       { href: "#conversation", label: "AI 对话练习" },
       { href: "#reader", label: "沉浸式阅读" },
       { href: "#writing", label: "写作练习" },
+      { href: "#listening", label: "听力练习" },
+      { href: "#translate", label: "翻译练习" },
       { href: "#srs", label: "间隔重复复习" },
     ],
   },
@@ -240,7 +242,7 @@ const GuidePage = () => {
             EnTutor 使用指南
           </h1>
           <p className="max-w-[60ch] text-base leading-relaxed text-muted-foreground">
-            EnTutor 是一个 AI 驱动的英语实战学习工具。通过对话、阅读、写作三大练习模块，配合间隔重复记忆系统，帮助你在真实场景中提升英语能力。本指南将带你了解每个功能的详细使用方法。
+            EnTutor 是一个 AI 驱动的英语实战学习工具。通过对话、阅读、写作、听力、翻译五大练习模块，配合间隔重复记忆系统和智能学习引擎，帮助你在真实场景中提升英语能力。本指南将带你了解每个功能的详细使用方法。
           </p>
         </div>
 
@@ -307,27 +309,38 @@ const GuidePage = () => {
             <strong className="text-foreground">&ldquo;今天该做什么？&rdquo;</strong>
           </ModuleCard>
 
-          <h3>今日计划</h3>
-          <p>系统根据你的学习数据自动生成每日待办清单：</p>
+          <h3>智能学习引擎</h3>
+          <p>
+            打开 Dashboard，系统会根据当前时间显示问候语（早安 / 下午好 /
+            晚上好），并自动生成一份个性化的学习计划。你只需要点击一个按钮
+            —— <strong className="text-foreground">&ldquo;Start Full
+            Session&rdquo;</strong> —— 就能开始今天的完整学习流程，无需自己规划做什么。
+          </p>
+
+          <p>计划生成算法：</p>
           <ul>
             <li>
-              <strong className="text-foreground">复习 SRS 卡片</strong> —
-              如果有到期的复习卡片，这是最高优先级
+              <strong className="text-foreground">SRS 复习永远优先</strong>{" "}
+              — 只要有到期的复习卡片，第一步永远是 SRS 复习
             </li>
             <li>
-              <strong className="text-foreground">进行一次对话</strong> —
-              如果距离上次对话超过 1 天
+              <strong className="text-foreground">按闲置时间排序</strong> —
+              其余环节按&ldquo;距离上次练习时间最久&rdquo;排序，优先安排你最久没做的活动类型
             </li>
             <li>
-              <strong className="text-foreground">阅读一篇文章</strong> —
-              如果距离上次阅读超过 1 天
-            </li>
-            <li>
-              <strong className="text-foreground">做一次写作练习</strong> —
-              如果距离上次写作超过 1 天
+              <strong className="text-foreground">单次最多 3 种类型</strong>{" "}
+              — 每次学习计划最多包含 3
+              种不同的练习类型，避免一次塞太多任务
             </li>
           </ul>
-          <p>完成的项目会自动打勾。点击&ldquo;Start Today&apos;s Plan&rdquo;会跳转到第一个未完成的任务。</p>
+
+          <p>
+            每一个步骤旁边都会标注&ldquo;为什么推荐这一步&rdquo;（比如&ldquo;距离上次阅读已经
+            3
+            天&rdquo;），让你清楚计划背后的逻辑，而不是被动接受安排。每个步骤都可以单独开始，也可以跳过。整套计划的目标总时长约
+            20 分钟。
+          </p>
+          <p>完成的项目会自动打勾。点击&ldquo;Start Full Session&rdquo;会跳转到计划中的第一个任务。</p>
 
           <h3>学习热力图</h3>
           <p>
@@ -599,6 +612,101 @@ const GuidePage = () => {
           </Tip>
         </Section>
 
+        {/* 听力练习 */}
+        <Section id="listening" title="听力练习">
+          <ModuleCard icon={<span>&#127911;</span>} title="Listening" path="/listening">
+            用耳朵学英语。AI 生成听力材料，浏览器 TTS
+            朗读，配合语音识别检测你的听写和跟读准确度。
+          </ModuleCard>
+
+          <h3>三种练习模式</h3>
+          <ol>
+            <li>
+              <strong className="text-foreground">听写（Dictation）</strong>{" "}
+              — AI 生成一句话，TTS 朗读出来，你把听到的内容打出来，系统逐词比对准确率。
+            </li>
+            <li>
+              <strong className="text-foreground">听力理解（Listening Comprehension）</strong>{" "}
+              — AI 生成一篇 100-150 词的听力短文，配 3
+              道选择题，音频可以重复播放。
+            </li>
+            <li>
+              <strong className="text-foreground">跟读（Shadowing）</strong>{" "}
+              — AI 提供句子，TTS 分别以正常语速和慢速朗读，你通过语音识别录音跟读，系统比对你的发音与原文的准确度。
+            </li>
+          </ol>
+
+          <Tip label="建议" variant="green">
+            建议佩戴耳机以获得最佳听音体验。语音识别功能在 Chrome 和 Edge
+            浏览器中支持最好，其他浏览器可能无法使用或识别效果不佳。
+          </Tip>
+        </Section>
+
+        {/* 翻译练习 */}
+        <Section id="translate" title="翻译练习">
+          <ModuleCard icon={<span>&#127760;</span>} title="Translate" path="/translate">
+            中译英练习，AI 给出评分、逐句标注和润色版本，帮助你建立中英转换的语感。
+          </ModuleCard>
+
+          <h3>三种练习模式</h3>
+          <ol>
+            <li>
+              <strong className="text-foreground">单句翻译</strong> —
+              给出一句中文，翻译成英文，AI 评估你的译文。
+            </li>
+            <li>
+              <strong className="text-foreground">段落翻译</strong> — 给出
+              3-5 句组成的中文段落，练习结合上下文的整体翻译。
+            </li>
+            <li>
+              <strong className="text-foreground">情境翻译</strong> —
+              针对特定场景的文本（商务邮件、公共告示、日常对话等），练习符合场景语气和用词的翻译。
+            </li>
+          </ol>
+
+          <h3>AI 评估</h3>
+          <p>提交译文后，AI 会给出详细的评估反馈：</p>
+          <ul>
+            <li>
+              <strong className="text-foreground">评分</strong>（1-10）—
+              整体翻译质量
+            </li>
+            <li>
+              <strong className="text-foreground">逐句标注</strong> —
+              用颜色区分：
+              <ul>
+                <li>
+                  <Badge color="red">错误</Badge> 误译或语法错误
+                </li>
+                <li>
+                  <Badge color="amber">生硬</Badge> 意思对但表达不地道
+                </li>
+                <li>
+                  <Badge color="green">优秀</Badge> 译得好的地方
+                </li>
+              </ul>
+            </li>
+            <li>
+              <strong className="text-foreground">润色版本</strong> — 完整的
+              AI 参考译文，方便逐句对比
+            </li>
+            <li>
+              <strong className="text-foreground">关键差异</strong> —
+              你的译文与参考译文之间的核心差异说明
+            </li>
+            <li>
+              <strong className="text-foreground">备选译法</strong> —
+              同一句话的其他合理译法
+            </li>
+            <li>
+              <strong className="text-foreground">语法笔记</strong> —
+              涉及的语法点讲解
+            </li>
+          </ul>
+
+          <p>每个错误标注都有&ldquo;Add to SRS&rdquo;按钮，可以把翻译中暴露的问题加入复习卡片。</p>
+        </Section>
+
         {/* SRS */}
         <Section id="srs" title="间隔重复复习 (SRS)">
           <ModuleCard icon={<span>&#129504;</span>} title="Review Cards" path="/srs">
@@ -785,24 +893,34 @@ const GuidePage = () => {
 
         {/* 高效使用建议 */}
         <Section id="tips" title="高效使用建议">
-          <h3>每日推荐流程（15-30 分钟）</h3>
+          <h3>每日推荐流程（约 20 分钟）</h3>
+          <FlowDiagram
+            steps={["SRS 复习", "听力 / 对话（交替）", "翻译热身", "阅读 / 写作（交替）"]}
+          />
           <StepList>
             <Step index={1} title="先复习 SRS 卡片（5 分钟）">
-              把到期的卡片过一遍。这是保持记忆的关键环节，跳过任何其他步骤都不要跳过这一步。
+              把到期的卡片过一遍。这是保持记忆的关键环节，任何时候都不要跳过这一步。
             </Step>
-            <Step index={2} title="做一次对话或阅读（10 分钟）">
-              对话和阅读交替进行。今天做对话，明天做阅读。完成后别忘了把 Review
-              中的生词/错误加入 SRS。
+            <Step index={2} title="做一次听力或对话（交替进行）">
+              听力和对话交替安排。今天做听写或听力理解，明天做一次对话。完成后别忘了把
+              Review 中的生词/错误加入 SRS。
             </Step>
-            <Step index={3} title="写一段短文（10 分钟）">
-              不需要每天都写长文。快速任务（翻译一句话、改写句子）也很有价值。关键是保持每天都写一点。
+            <Step index={3} title="翻译热身（几分钟）">
+              做一两句单句翻译当作热身，帮助你在中英文之间快速切换语感，为后面的阅读/写作做准备。
             </Step>
-            <Step index={4} title="看看 Dashboard（1 分钟）" isLast>
+            <Step index={4} title="做一次阅读或写作（交替进行）">
+              阅读和写作交替进行。不需要每天都写长文，快速任务也很有价值。关键是保持每天都练一点。
+            </Step>
+            <Step index={5} title="看看 Dashboard（1 分钟）" isLast>
               确认今天的学习计划都完成了，看看连胜天数。这是你坚持的动力。
             </Step>
           </StepList>
 
           <h3>学习策略</h3>
+
+          <Tip label="关于听力和翻译" variant="blue">
+            听力和翻译是很多人容易忽略但收益很大的环节。听力练习（尤其是跟读）能直接改善你的听觉敏感度和发音；翻译练习则能强化你用英文准确表达中文思维的能力。建议把它们穿插进日常流程，而不是只练对话和阅读。
+          </Tip>
 
           <Tip label="关于词汇" variant="green">
             不要刻意去背单词表。通过对话和阅读自然遇到的词汇，加入 SRS
