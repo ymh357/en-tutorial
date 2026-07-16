@@ -71,6 +71,28 @@ const CEFR_LABELS: Record<string, string> = {
 
 const HEATMAP_DAYS = 180;
 
+// --- Cross-module last-activity readers ---
+// Listening and translation stats live in localStorage (not IndexedDB), so
+// the study plan needs its own readers to determine staleness/rotation.
+
+const LISTENING_STATS_KEY = "en-tutor-listening-stats";
+const TRANSLATION_STATS_KEY = "en-tutor-translation-stats";
+
+const readLastDate = (key: string): Date | null => {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = window.localStorage.getItem(key);
+    if (!raw) return null;
+    const stats = JSON.parse(raw) as { lastDate?: string };
+    return stats.lastDate ? new Date(stats.lastDate) : null;
+  } catch {
+    return null;
+  }
+};
+
+const getLastListeningDate = (): Date | null => readLastDate(LISTENING_STATS_KEY);
+const getLastTranslationDate = (): Date | null => readLastDate(TRANSLATION_STATS_KEY);
+
 const formatDate = (date: Date): string => {
   const y = date.getFullYear();
   const m = String(date.getMonth() + 1).padStart(2, "0");
@@ -370,6 +392,8 @@ const DashboardPage = () => {
       lastConversation: conversations[0]?.createdAt ?? null,
       lastReading: readingSessions[0]?.createdAt ?? null,
       lastWriting: writingSessions[0]?.createdAt ?? null,
+      lastListening: getLastListeningDate(),
+      lastTranslation: getLastTranslationDate(),
       profile,
       todayStats,
     });

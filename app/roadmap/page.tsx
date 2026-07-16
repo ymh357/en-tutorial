@@ -18,7 +18,7 @@ import {
 } from "@/components/ui/card";
 import { db } from "@/lib/db";
 import { useProfile } from "@/hooks/use-db";
-import { CATEGORIES, SCENARIOS } from "@/lib/scenarios";
+import { SCENARIOS } from "@/lib/scenarios";
 import type { Conversation, ReadingSession, WritingSession } from "@/lib/types";
 
 // --- CEFR progression + assessment/listening localStorage readers ---

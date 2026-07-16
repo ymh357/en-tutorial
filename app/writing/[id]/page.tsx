@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
+import { useLiveQuery } from "dexie-react-hooks";
 import {
   AlertTriangle,
   ArrowLeft,
@@ -268,6 +269,42 @@ const WritingEditorPage = () => {
   const [addedKeys, setAddedKeys] = useState<Set<number>>(new Set());
   const [addingKey, setAddingKey] = useState<number | null>(null);
   const [startTime] = useState<number>(() => Date.now());
+
+  // Check whether this writing session already exists (e.g. the user
+  // navigated back to a previous session's URL) so we can restore it
+  // instead of starting a blank editor.
+  const existingSession = useLiveQuery(
+    () => db.writingSessions.get(sessionId),
+    [sessionId]
+  );
+  const [restoredSessionId, setRestoredSessionId] = useState<string | null>(
+    null
+  );
+
+  // Restore a previously saved session: if it has a review, jump straight to
+  // the review display; otherwise pre-fill the editor with the saved content.
+  // Adjusting state during render (rather than in a useEffect) avoids an
+  // extra render pass, per https://react.dev/learn/you-might-not-need-an-effect.
+  if (existingSession && restoredSessionId !== existingSession.id) {
+    setRestoredSessionId(existingSession.id);
+    setContent(existingSession.content);
+    if (existingSession.review) {
+      setReview(existingSession.review);
+      setReviewRound(2);
+      setPhase("review");
+      // Round 1 detail isn't persisted, so show a minimal placeholder rather
+      // than blocking the review screen (which requires round1Review).
+      setRound1Review({
+        contentScore: existingSession.review.score,
+        structureFeedback: "",
+        suggestions: [],
+        strengths: [],
+        revisionPriority: "",
+      });
+    } else {
+      setPhase("writing");
+    }
+  }
 
   // Debounced auto-save of the draft to localStorage while writing.
   useEffect(() => {
@@ -579,61 +616,65 @@ const WritingEditorPage = () => {
         <Badge variant="outline">{TASK_TYPE_LABEL[taskType]}</Badge>
       </div>
 
-      {/* Round 1: Content & Structure Review */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex flex-wrap items-center justify-between gap-2 text-base">
-            <span>Round 1 · Content &amp; Structure</span>
-            <span className="text-2xl font-bold">
-              {round1Review.contentScore}
-              <span className="text-sm font-normal text-muted-foreground">
-                {" "}
-                / 10
+      {/* Round 1: Content & Structure Review (not available when a saved
+          session with a final review is restored directly, since only the
+          round 2 review is persisted). */}
+      {round1Review.structureFeedback && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex flex-wrap items-center justify-between gap-2 text-base">
+              <span>Round 1 · Content &amp; Structure</span>
+              <span className="text-2xl font-bold">
+                {round1Review.contentScore}
+                <span className="text-sm font-normal text-muted-foreground">
+                  {" "}
+                  / 10
+                </span>
               </span>
-            </span>
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-4 text-sm">
-          <p className="whitespace-normal break-words">
-            {round1Review.structureFeedback}
-          </p>
-
-          {round1Review.suggestions.length > 0 && (
-            <div className="space-y-1.5">
-              <p className="font-medium">Suggestions</p>
-              <ul className="list-disc space-y-1 pl-5">
-                {round1Review.suggestions.map((s, i) => (
-                  <li key={i} className="whitespace-normal break-words">
-                    {s}
-                  </li>
-                ))}
-              </ul>
-            </div>
-          )}
-
-          {round1Review.strengths.length > 0 && (
-            <div className="space-y-1.5">
-              <p className="font-medium">Strengths</p>
-              <ul className="list-disc space-y-1 pl-5">
-                {round1Review.strengths.map((s, i) => (
-                  <li key={i} className="whitespace-normal break-words">
-                    {s}
-                  </li>
-                ))}
-              </ul>
-            </div>
-          )}
-
-          <div className="rounded-lg border border-primary/30 bg-primary/5 p-3">
-            <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-              Revision Priority
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4 text-sm">
+            <p className="whitespace-normal break-words">
+              {round1Review.structureFeedback}
             </p>
-            <p className="mt-1 whitespace-normal break-words font-medium">
-              {round1Review.revisionPriority}
-            </p>
-          </div>
-        </CardContent>
-      </Card>
+
+            {round1Review.suggestions.length > 0 && (
+              <div className="space-y-1.5">
+                <p className="font-medium">Suggestions</p>
+                <ul className="list-disc space-y-1 pl-5">
+                  {round1Review.suggestions.map((s, i) => (
+                    <li key={i} className="whitespace-normal break-words">
+                      {s}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+
+            {round1Review.strengths.length > 0 && (
+              <div className="space-y-1.5">
+                <p className="font-medium">Strengths</p>
+                <ul className="list-disc space-y-1 pl-5">
+                  {round1Review.strengths.map((s, i) => (
+                    <li key={i} className="whitespace-normal break-words">
+                      {s}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+
+            <div className="rounded-lg border border-primary/30 bg-primary/5 p-3">
+              <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                Revision Priority
+              </p>
+              <p className="mt-1 whitespace-normal break-words font-medium">
+                {round1Review.revisionPriority}
+              </p>
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       {/* After round 1, before round 2: offer revision */}
       {reviewRound === 1 && (

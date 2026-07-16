@@ -39,10 +39,15 @@ const recordListeningExercise = (accuracy: number): void => {
   try {
     const raw = window.localStorage.getItem(LISTENING_STATS_KEY);
     const stats = raw
-      ? (JSON.parse(raw) as { completed: number; totalAccuracy: number })
+      ? (JSON.parse(raw) as {
+          completed: number;
+          totalAccuracy: number;
+          lastDate?: string;
+        })
       : { completed: 0, totalAccuracy: 0 };
     stats.completed += 1;
     stats.totalAccuracy += accuracy;
+    stats.lastDate = new Date().toISOString();
     window.localStorage.setItem(LISTENING_STATS_KEY, JSON.stringify(stats));
   } catch { /* ignore storage errors */ }
 };

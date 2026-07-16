@@ -49,7 +49,7 @@ The JSON must exactly match this schema:
     { "text": string, "reason": string }
   ],
   "newVocabulary": [
-    { "word": string, "lemma": string, "definition": string, "example": string, "collocations": string[] }
+    { "word": string, "lemma": string, "definition": string, "example": string, "collocations": string[], "wordFamily": string }
   ]
 }
 
@@ -60,6 +60,7 @@ Guidelines:
 - "highlights" are things the user genuinely did well (good word choice, correct complex structure, natural phrasing) — be specific and honest, do not invent praise if there is nothing notable.
 - "newVocabulary" are useful words or phrases from the conversation (assistant's or user's) that are worth the learner adding to their vocabulary list — include the dictionary lemma form.
 - For each "newVocabulary" item, include "collocations": 3-5 common collocations/word partnerships for that word (e.g., for "resist": "resist temptation", "resist change", "resist the urge"). Return them as an array of short strings.
+- For each "newVocabulary" item, include "wordFamily": one related word from the same word family (e.g., for "resist": "resistance", for "decide": "decision"). Use an empty string if there is no useful related form.
 - The "example" sentence for each "newVocabulary" item must be a DIFFERENT sentence from how the word was actually used in this conversation — write a fresh example that shows the word in a new context, so the learner sees it used more than one way.
 - Be encouraging in tone, but honest and precise about errors.
 - If there are no errors, improvements, highlights, or new vocabulary, return an empty array for that field — do not omit the field.
@@ -490,6 +491,12 @@ const ReviewPage = () => {
                           {vocab.collocations.join("; ")}
                         </p>
                       )}
+                      {vocab.wordFamily && (
+                        <p className="mt-1 text-xs text-muted-foreground">
+                          <span className="font-medium">Word family: </span>
+                          {vocab.wordFamily}
+                        </p>
+                      )}
                       <Button
                         size="sm"
                         variant={isAdded ? "secondary" : "outline"}
@@ -503,6 +510,7 @@ const ReviewPage = () => {
                             back: vocab.definition,
                             context: vocab.example,
                             collocations: vocab.collocations,
+                            wordFamily: vocab.wordFamily,
                           })
                         }
                       >

@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from "react";
 import Link from "next/link";
-import { Flame, Volume2 } from "lucide-react";
+import { Flame, Library, Volume2 } from "lucide-react";
 import { db } from "@/lib/db";
 import { dbHelpers } from "@/lib/db-helpers";
 import { useDueCards } from "@/hooks/use-db";
@@ -29,6 +29,7 @@ const sourceLabels: Record<CardSource, string> = {
   conversation: "Conversation",
   reading: "Reading",
   writing: "Writing",
+  translate: "Translation",
   manual: "Manual",
 };
 
@@ -122,13 +123,22 @@ const SrsPage = () => {
   if (totalCards === 0 && !sessionDone) {
     return (
       <div className="mx-auto w-full space-y-6 md:max-w-2xl">
-        <h1 className="text-2xl font-bold">Review</h1>
+        <div className="flex items-center justify-between">
+          <h1 className="text-2xl font-bold">Review</h1>
+          <Button variant="outline" size="sm" render={<Link href="/srs/browse" />}>
+            <Library className="h-4 w-4" />
+            Browse & Manage
+          </Button>
+        </div>
         <Card>
-          <CardContent className="flex flex-col items-center gap-2 py-12 text-center">
+          <CardContent className="flex flex-col items-center gap-3 py-12 text-center">
             <p className="text-lg font-medium">All caught up!</p>
             <p className="text-sm text-muted-foreground">
               No cards to review right now.
             </p>
+            <Button variant="outline" render={<Link href="/srs/browse" />}>
+              Browse all cards
+            </Button>
           </CardContent>
         </Card>
       </div>
@@ -176,9 +186,18 @@ const SrsPage = () => {
               Consistent daily review is the key to long-term memory.
             </p>
 
-            <Button className="w-full" render={<Link href="/" />}>
-              Back to Dashboard
-            </Button>
+            <div className="flex flex-col gap-2 sm:flex-row">
+              <Button className="w-full sm:flex-1" render={<Link href="/" />}>
+                Back to Dashboard
+              </Button>
+              <Button
+                variant="outline"
+                className="w-full sm:flex-1"
+                render={<Link href="/srs/browse" />}
+              >
+                Browse all cards
+              </Button>
+            </div>
           </CardContent>
         </Card>
       </div>
@@ -193,11 +212,17 @@ const SrsPage = () => {
   return (
     <div className="mx-auto w-full space-y-6 md:max-w-2xl">
       <div className="space-y-2">
-        <div className="flex items-center justify-between">
+        <div className="flex items-center justify-between gap-2">
           <h1 className="text-2xl font-bold">Review</h1>
-          <span className="text-sm text-muted-foreground">
-            {remaining} card{remaining === 1 ? "" : "s"} remaining
-          </span>
+          <div className="flex items-center gap-2">
+            <span className="text-sm text-muted-foreground">
+              {remaining} card{remaining === 1 ? "" : "s"} remaining
+            </span>
+            <Button variant="outline" size="sm" render={<Link href="/srs/browse" />}>
+              <Library className="h-4 w-4" />
+              Browse
+            </Button>
+          </div>
         </div>
         <Progress value={progressValue}>
           <ProgressTrack>

@@ -27,6 +27,7 @@ const sourceLabels: Record<CardSource, string> = {
   conversation: "Conversation",
   reading: "Reading",
   writing: "Writing",
+  translate: "Translation",
   manual: "Manual",
 };
 

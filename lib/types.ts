@@ -1,5 +1,5 @@
 export type CardType = "vocabulary" | "error" | "expression";
-export type CardSource = "conversation" | "reading" | "writing" | "manual";
+export type CardSource = "conversation" | "reading" | "writing" | "translate" | "manual";
 export type MasteryLevel = "new" | "learning" | "familiar" | "mastered";
 export type ScenarioType = "preset" | "custom" | "free" | "recommended";
 export type WritingTaskType =
@@ -65,6 +65,7 @@ export interface ConversationReview {
     definition: string;
     example: string;
     collocations?: string[];
+    wordFamily?: string;
   }>;
 }
 

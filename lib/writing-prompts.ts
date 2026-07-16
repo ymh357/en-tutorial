@@ -1,6 +1,5 @@
 // Two-round process-writing review prompts.
 // Round 1 focuses on content/structure; round 2 (after revision) focuses on language.
-// Integration into the writing session flow (app/writing/[id]/page.tsx) is a follow-up.
 
 export const WRITING_REVIEW_ROUND1_SYSTEM = `You are an English writing teacher conducting a FIRST-ROUND review.
 In this round, ONLY evaluate content and structure:
