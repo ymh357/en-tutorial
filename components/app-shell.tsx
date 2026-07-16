@@ -10,14 +10,14 @@ export const AppShell = ({ children }: { children: ReactNode }) => {
     <>
       <SidebarNav />
       <SidebarInset>
-        <header className="flex h-14 shrink-0 items-center gap-2 border-b px-4">
-          <SidebarTrigger className="-ml-1" />
+        <header className="flex h-12 shrink-0 items-center gap-2 border-b px-3 md:h-14 md:px-4">
+          <SidebarTrigger className="-ml-1 min-h-[44px] min-w-[44px]" />
           <Separator orientation="vertical" className="mr-2 h-4" />
-          <span className="text-sm text-muted-foreground">
+          <span className="truncate text-xs text-muted-foreground md:text-sm">
             English Learning Tutor
           </span>
         </header>
-        <main className="flex-1 overflow-auto p-6">{children}</main>
+        <main className="flex-1 overflow-auto p-3 md:p-6">{children}</main>
       </SidebarInset>
     </>
   );

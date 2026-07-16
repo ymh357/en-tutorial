@@ -117,7 +117,7 @@ const SrsPage = () => {
   // Empty state: nothing was due at all.
   if (totalCards === 0 && !sessionDone) {
     return (
-      <div className="mx-auto max-w-2xl space-y-6">
+      <div className="mx-auto w-full space-y-6 md:max-w-2xl">
         <h1 className="text-2xl font-bold">Review</h1>
         <Card>
           <CardContent className="flex flex-col items-center gap-2 py-12 text-center">
@@ -135,7 +135,7 @@ const SrsPage = () => {
   if (sessionDone) {
     const timeSpent = finishedAt ? finishedAt - startedAt : 0;
     return (
-      <div className="mx-auto max-w-2xl space-y-6">
+      <div className="mx-auto w-full space-y-6 md:max-w-2xl">
         <h1 className="text-2xl font-bold">Review</h1>
         <Card>
           <CardHeader>
@@ -163,7 +163,7 @@ const SrsPage = () => {
   const progressValue = (index / totalCards) * 100;
 
   return (
-    <div className="mx-auto max-w-2xl space-y-6">
+    <div className="mx-auto w-full space-y-6 md:max-w-2xl">
       <div className="space-y-2">
         <div className="flex items-center justify-between">
           <h1 className="text-2xl font-bold">Review</h1>
@@ -219,10 +219,10 @@ const SrsPage = () => {
                 <Button
                   key={rating}
                   variant={rating === 2 ? "default" : "outline"}
-                  className="flex h-auto flex-col gap-0.5 py-2"
+                  className="flex h-auto min-h-[44px] flex-col gap-0.5 py-3 text-base md:min-h-0 md:py-2 md:text-sm"
                   onClick={() => handleRate(rating)}
                 >
-                  <span className="text-sm">{ratingLabels[rating]}</span>
+                  <span className="text-sm md:text-sm">{ratingLabels[rating]}</span>
                   <span className="text-xs text-muted-foreground">
                     {formatInterval(nextIntervals[rating])}
                   </span>

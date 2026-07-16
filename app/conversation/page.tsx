@@ -96,10 +96,10 @@ const ConversationPage = () => {
       </div>
 
       {/* Quick actions */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+      <div className="flex flex-col sm:grid sm:grid-cols-2 gap-4">
         <Button
           size="lg"
-          className="h-auto py-4 flex flex-col items-start gap-1"
+          className="h-auto py-4 flex flex-col items-start gap-1 min-h-[44px]"
           onClick={handleQuickStart}
         >
           <div className="flex items-center gap-2">
@@ -113,7 +113,7 @@ const ConversationPage = () => {
         <Button
           size="lg"
           variant="outline"
-          className="h-auto py-4 flex flex-col items-start gap-1"
+          className="h-auto py-4 flex flex-col items-start gap-1 min-h-[44px]"
           onClick={handleFreeChat}
         >
           <div className="flex items-center gap-2">
@@ -132,7 +132,7 @@ const ConversationPage = () => {
           <Sparkles className="h-4 w-4" />
           Custom Scenario
         </div>
-        <div className="flex gap-2">
+        <div className="flex flex-col sm:flex-row gap-2">
           <Textarea
             placeholder="Describe a situation you want to practice (e.g., 'I need to complain about a defective product at a store')..."
             value={customScenario}
@@ -142,7 +142,7 @@ const ConversationPage = () => {
           <Button
             onClick={handleCustomScenario}
             disabled={!customScenario.trim()}
-            className="shrink-0"
+            className="shrink-0 min-h-[44px] w-full sm:w-auto"
           >
             <PenLine className="h-4 w-4 mr-1" />
             Start

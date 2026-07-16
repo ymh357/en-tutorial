@@ -68,7 +68,7 @@ const ModuleCard = ({
   path: string;
   children: React.ReactNode;
 }) => (
-  <div className="mb-5 rounded-xl border bg-card p-6 shadow-sm">
+  <div className="mb-5 rounded-xl border bg-card p-4 md:p-6 shadow-sm">
     <div className="mb-3 flex items-center gap-2.5">
       <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-lg">
         {icon}
@@ -209,7 +209,7 @@ const Section = ({
 
 const GuidePage = () => {
   return (
-    <div className="mx-auto flex max-w-[1200px] gap-10">
+    <div className="mx-auto flex max-w-[1200px] gap-10 px-4 md:px-8 lg:px-0">
       {/* Sidebar TOC - desktop only */}
       <nav className="sticky top-0 hidden h-fit w-56 shrink-0 self-start py-2 lg:block">
         <div className="mb-6 text-lg font-bold tracking-tight text-primary">

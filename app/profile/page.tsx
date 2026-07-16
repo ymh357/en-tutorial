@@ -85,7 +85,7 @@ const VocabGrowthChart = ({ data }: { data: { label: string; value: number }[] }
   const max = Math.max(...data.map((d) => d.value), 1);
   const width = data.length * 60;
   return (
-    <svg viewBox={`0 0 ${width} 200`} className="h-48 w-full">
+    <svg viewBox={`0 0 ${width} 200`} className="h-48 w-full min-w-[240px]">
       {data.map((d, i) => {
         const barHeight = (d.value / max) * 160;
         return (
@@ -137,7 +137,7 @@ const ScoreTrendChart = ({ points }: { points: ScorePoint[] }) => {
   const yFor = (score: number) => chartBottom - (score / 10) * chartHeight;
 
   return (
-    <svg viewBox={`0 0 ${width} ${height}`} className="h-52 w-full">
+    <svg viewBox={`0 0 ${width} ${height}`} className="h-52 w-full min-w-[240px]">
       {/* gridlines */}
       {[0, 2.5, 5, 7.5, 10].map((tick) => (
         <line
@@ -381,7 +381,7 @@ const ProfilePage = () => {
           </CardDescription>
         </CardHeader>
         <CardContent>
-          <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
             <div>
               <p className="text-2xl font-bold text-green-600">
                 {vocabCounts?.mastered ?? 0}
@@ -446,7 +446,9 @@ const ProfilePage = () => {
                 No vocabulary cards yet.
               </p>
             ) : (
-              <VocabGrowthChart data={vocabGrowthData} />
+              <div className="min-h-[200px] overflow-x-auto">
+                <VocabGrowthChart data={vocabGrowthData} />
+              </div>
             )}
           </CardContent>
         </Card>
@@ -464,7 +466,9 @@ const ProfilePage = () => {
               </p>
             ) : (
               <>
-                <ScoreTrendChart points={scorePoints} />
+                <div className="min-h-[200px] overflow-x-auto">
+                  <ScoreTrendChart points={scorePoints} />
+                </div>
                 <div className="mt-2 flex flex-wrap gap-3">
                   {SCORE_DIMENSIONS.map((dim) => (
                     <div key={dim.key} className="flex items-center gap-1.5 text-xs text-muted-foreground">

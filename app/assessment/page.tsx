@@ -696,7 +696,7 @@ Return ONLY valid JSON (no markdown fences, no explanation) in this exact format
                         onClick={() =>
                           setReadingAnswers((prev) => ({ ...prev, [qIdx]: optIdx }))
                         }
-                        className={`w-full text-left text-sm rounded-md border px-3 py-2 transition-colors ${
+                        className={`w-full min-h-[44px] text-left text-sm rounded-md border px-3 py-2 transition-colors ${
                           readingAnswers[qIdx] === optIdx
                             ? "border-primary bg-primary/10"
                             : "border-border hover:border-primary/50"
@@ -777,6 +777,7 @@ Return ONLY valid JSON (no markdown fences, no explanation) in this exact format
                         [blank.index]: e.target.value,
                       }))
                     }
+                    className="min-h-[44px]"
                   />
                 </div>
               ))}
@@ -900,7 +901,7 @@ Return ONLY valid JSON (no markdown fences, no explanation) in this exact format
           ))}
         </div>
 
-        <div className="flex gap-2">
+        <div className="flex flex-col sm:flex-row gap-2">
           <Textarea
             placeholder="Type your reply..."
             value={conversationInput}
@@ -911,7 +912,7 @@ Return ONLY valid JSON (no markdown fences, no explanation) in this exact format
           <Button
             onClick={sendConversationTurn}
             disabled={!conversationInput.trim() || isLoading}
-            className="shrink-0"
+            className="w-full sm:w-auto sm:shrink-0 min-h-[44px]"
           >
             {isLoading ? (
               <Loader2 className="h-4 w-4 animate-spin" />

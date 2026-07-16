@@ -379,13 +379,15 @@ const BrowsePage = () => {
           value={masteryFilter}
           onValueChange={(value) => setMasteryFilter(value as MasteryFilter)}
         >
-          <TabsList>
-            {filterTabs.map((tab) => (
-              <TabsTrigger key={tab.value} value={tab.value}>
-                {tab.label}
-              </TabsTrigger>
-            ))}
-          </TabsList>
+          <div className="overflow-x-auto">
+            <TabsList className="w-max flex-nowrap whitespace-nowrap">
+              {filterTabs.map((tab) => (
+                <TabsTrigger key={tab.value} value={tab.value}>
+                  {tab.label}
+                </TabsTrigger>
+              ))}
+            </TabsList>
+          </div>
         </Tabs>
       </div>
 

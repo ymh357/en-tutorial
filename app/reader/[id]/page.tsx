@@ -373,7 +373,7 @@ const ReaderSessionPage = ({
   let globalPosition = 0;
 
   return (
-    <div className="max-w-4xl space-y-4 pb-8">
+    <div className="max-w-4xl space-y-4 pb-8 px-4 md:px-8">
       <div className="flex items-center justify-between gap-4">
         <div className="flex items-center gap-3 min-w-0">
           <Button variant="ghost" size="icon" onClick={() => router.push("/reader")}>
@@ -394,7 +394,7 @@ const ReaderSessionPage = ({
       </div>
 
       <Card>
-        <CardContent className="pt-6 space-y-4 leading-relaxed text-base">
+        <CardContent className="pt-6 space-y-4 leading-relaxed text-base px-4 md:px-6">
           {paragraphs.map((paragraph, pIndex) => {
             const tokens = tokenizeParagraph(paragraph);
             return (
@@ -416,7 +416,7 @@ const ReaderSessionPage = ({
                       role="button"
                       tabIndex={0}
                       onClick={() => void handleWordClick(token.text, position)}
-                      className={`cursor-pointer rounded px-0.5 hover:bg-primary/15 transition-colors ${
+                      className={`cursor-pointer rounded px-0.5 py-0.5 inline-block min-h-[24px] hover:bg-primary/15 transition-colors ${
                         isSelected ? "bg-primary/25" : ""
                       } ${isInSrs ? "underline decoration-dotted decoration-primary/60 underline-offset-4" : ""}`}
                     >
@@ -440,7 +440,7 @@ const ReaderSessionPage = ({
               key={index}
               variant="outline"
               size="sm"
-              className="text-xs h-auto py-1 whitespace-normal text-left"
+              className="text-xs h-auto min-h-[44px] py-2 whitespace-normal text-left"
               onClick={() => void handleSentenceClick(sentence)}
             >
               {sentence.length > 60 ? `${sentence.slice(0, 60)}...` : sentence}

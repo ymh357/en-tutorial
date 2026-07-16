@@ -42,8 +42,11 @@ export const SidebarNav = () => {
 
   return (
     <Sidebar>
-      <SidebarHeader className="p-4">
-        <Link href="/" className="flex items-center gap-2 font-bold text-lg">
+      <SidebarHeader className="p-3 md:p-4">
+        <Link
+          href="/"
+          className="flex min-h-[44px] items-center gap-2 text-lg font-bold"
+        >
           EnTutor
         </Link>
       </SidebarHeader>

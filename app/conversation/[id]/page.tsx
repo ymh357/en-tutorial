@@ -219,9 +219,9 @@ const ConversationPage = () => {
   };
 
   return (
-    <div className="flex h-full flex-col">
+    <div className="flex h-dvh flex-col md:h-full">
       {/* Scenario header */}
-      <div className="shrink-0 space-y-1 pb-4">
+      <div className="shrink-0 space-y-1 p-4 md:p-0 md:pb-4">
         <Button
           variant="ghost"
           size="sm"
@@ -241,7 +241,7 @@ const ConversationPage = () => {
       </div>
 
       {/* Message area */}
-      <div className="min-h-0 flex-1 space-y-4 overflow-y-auto rounded-lg border bg-muted/20 p-4">
+      <div className="min-h-0 flex-1 space-y-4 overflow-y-auto rounded-lg border bg-muted/20 p-4 pb-32 md:pb-4">
         {messages.length === 0 && (
           <p className="text-center text-sm text-muted-foreground">
             Say hello to start the conversation.
@@ -257,7 +257,7 @@ const ConversationPage = () => {
               className={`flex ${isUser ? "justify-end" : "justify-start"}`}
             >
               <div
-                className={`max-w-[80%] rounded-lg px-3 py-2 text-sm ${
+                className={`w-full max-w-[90%] sm:max-w-[80%] rounded-lg px-3 py-2 text-sm ${
                   isUser
                     ? "bg-primary text-primary-foreground"
                     : "bg-card ring-1 ring-foreground/10"
@@ -295,13 +295,14 @@ const ConversationPage = () => {
       </div>
 
       {/* Input area */}
-      <div className="shrink-0 space-y-2 pt-4">
+      <div className="fixed bottom-0 left-0 right-0 z-10 shrink-0 space-y-2 border-t bg-background p-4 md:static md:z-auto md:border-t-0 md:bg-transparent md:p-0 md:pt-4">
         <div className="flex gap-2">
           {voiceSupported && (
             <Button
               type="button"
               variant={isRecording ? "default" : "outline"}
               size="icon"
+              className="min-h-[44px] min-w-[44px]"
               onClick={handleToggleVoiceInput}
               aria-label="Voice input"
             >
@@ -313,16 +314,16 @@ const ConversationPage = () => {
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={handleKeyDown}
             placeholder="Type your message..."
-            className="min-h-[40px] resize-none"
+            className="min-h-[44px] resize-none"
             disabled={isStreaming}
           />
           {isStreaming ? (
-            <Button type="button" variant="outline" onClick={() => stop()}>
+            <Button type="button" variant="outline" className="min-h-[44px]" onClick={() => stop()}>
               <Square className="h-4 w-4" />
               Stop
             </Button>
           ) : (
-            <Button type="button" onClick={handleSend} disabled={!input.trim()}>
+            <Button type="button" className="min-h-[44px]" onClick={handleSend} disabled={!input.trim()}>
               <Send className="h-4 w-4" />
               Send
             </Button>
@@ -330,7 +331,7 @@ const ConversationPage = () => {
         </div>
         <Button
           variant="secondary"
-          className="w-full"
+          className="w-full min-h-[44px]"
           disabled={!canEnd || isEnding}
           onClick={handleEndAndReview}
         >

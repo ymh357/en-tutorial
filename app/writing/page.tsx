@@ -188,9 +188,9 @@ const WritingPage = () => {
   };
 
   return (
-    <div className="max-w-4xl space-y-8">
+    <div className="max-w-4xl space-y-6 p-4 md:space-y-8 md:p-6">
       <div>
-        <h1 className="text-2xl font-bold mb-2">Writing Practice</h1>
+        <h1 className="text-xl font-bold mb-2 md:text-2xl">Writing Practice</h1>
         <p className="text-muted-foreground">
           Choose a task and get AI feedback on your writing.
         </p>
@@ -199,26 +199,26 @@ const WritingPage = () => {
       {/* Guided tasks */}
       <div className="space-y-4">
         <h2 className="text-lg font-semibold">Guided Tasks</h2>
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
           {GUIDED_TASKS.map((task) => {
             const Icon = task.icon;
             return (
               <Card
                 key={task.type}
-                className="cursor-pointer transition-colors hover:border-primary/50"
+                className="cursor-pointer transition-colors hover:border-primary/50 min-h-[44px]"
                 onClick={() => startGuidedTask(task)}
               >
                 <CardHeader className="py-3 px-4 gap-2">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <Icon className="h-4 w-4 text-muted-foreground" />
-                      <CardTitle className="text-sm font-medium">
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <Icon className="h-4 w-4 shrink-0 text-muted-foreground" />
+                      <CardTitle className="text-sm font-medium truncate">
                         {task.name}
                       </CardTitle>
                     </div>
                     <Badge
                       variant="secondary"
-                      className={DIFFICULTY_COLOR[task.difficulty]}
+                      className={`shrink-0 ${DIFFICULTY_COLOR[task.difficulty]}`}
                     >
                       {task.difficulty}
                     </Badge>
@@ -251,17 +251,17 @@ const WritingPage = () => {
         <p className="text-sm text-muted-foreground">
           Short warm-up exercises to get started.
         </p>
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
           {QUICK_TASKS.map((task) => (
             <Card
               key={task.key}
-              className="cursor-pointer transition-colors hover:border-primary/50"
+              className="cursor-pointer transition-colors hover:border-primary/50 min-h-[44px]"
               onClick={() => startQuickTask(task)}
             >
               <CardHeader className="py-3 px-4 gap-1">
-                <div className="flex items-center gap-2">
-                  <Shuffle className="h-4 w-4 text-muted-foreground" />
-                  <CardTitle className="text-sm font-medium">
+                <div className="flex items-center gap-2 min-w-0">
+                  <Shuffle className="h-4 w-4 shrink-0 text-muted-foreground" />
+                  <CardTitle className="text-sm font-medium truncate">
                     {task.name}
                   </CardTitle>
                 </div>
@@ -277,14 +277,14 @@ const WritingPage = () => {
       {/* Free writing */}
       <Button
         size="lg"
-        className="w-full h-auto py-4 flex flex-col items-center gap-1"
+        className="w-full h-auto min-h-[44px] py-4 flex flex-col items-center gap-1"
         onClick={startFreeWriting}
       >
         <div className="flex items-center gap-2">
           <PenLine className="h-5 w-5" />
           <span className="font-semibold">Start Free Writing</span>
         </div>
-        <span className="text-xs opacity-80 font-normal">
+        <span className="text-xs opacity-80 font-normal text-center">
           Write about anything you want, no constraints
         </span>
       </Button>
@@ -298,8 +298,8 @@ const WritingPage = () => {
               <Link key={session.id} href={`/writing/${session.id}`} className="block">
                 <Card className="hover:border-primary/50 transition-colors">
                   <CardHeader className="py-3 px-4">
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-2">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div className="flex flex-wrap items-center gap-2">
                         <Badge variant="outline">
                           {TASK_TYPE_LABEL[session.taskType]}
                         </Badge>

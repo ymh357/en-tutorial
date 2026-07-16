@@ -455,7 +455,7 @@ const ReaderPage = () => {
   };
 
   return (
-    <div className="max-w-4xl space-y-8">
+    <div className="max-w-4xl space-y-8 px-4 md:px-8">
       <div>
         <h1 className="text-2xl font-bold mb-2">Reading Practice</h1>
         <p className="text-muted-foreground">
@@ -465,20 +465,22 @@ const ReaderPage = () => {
       </div>
 
       <Tabs defaultValue="ai">
-        <TabsList>
-          <TabsTrigger value="ai">
-            <Sparkles className="h-4 w-4" />
-            AI Generate
-          </TabsTrigger>
-          <TabsTrigger value="paste">
-            <FileText className="h-4 w-4" />
-            Paste Text
-          </TabsTrigger>
-          <TabsTrigger value="url">
-            <LinkIcon className="h-4 w-4" />
-            Import URL
-          </TabsTrigger>
-        </TabsList>
+        <div className="overflow-x-auto">
+          <TabsList className="w-max min-w-full sm:w-auto">
+            <TabsTrigger value="ai" className="whitespace-nowrap">
+              <Sparkles className="h-4 w-4" />
+              AI Generate
+            </TabsTrigger>
+            <TabsTrigger value="paste" className="whitespace-nowrap">
+              <FileText className="h-4 w-4" />
+              Paste Text
+            </TabsTrigger>
+            <TabsTrigger value="url" className="whitespace-nowrap">
+              <LinkIcon className="h-4 w-4" />
+              Import URL
+            </TabsTrigger>
+          </TabsList>
+        </div>
         <TabsContent value="ai" className="pt-4">
           <AiGenerateTab onSessionCreated={goToSession} />
         </TabsContent>

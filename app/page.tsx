@@ -298,14 +298,16 @@ const DashboardPage = () => {
     : 0;
 
   return (
-    <div className="max-w-6xl space-y-6">
+    <div className="max-w-6xl space-y-4 md:space-y-6">
       <div>
-        <h1 className="text-2xl font-bold">Dashboard</h1>
-        <p className="text-muted-foreground">What should you do right now?</p>
+        <h1 className="text-xl font-bold md:text-2xl">Dashboard</h1>
+        <p className="text-sm text-muted-foreground md:text-base">
+          What should you do right now?
+        </p>
       </div>
 
       {/* Today's Plan + Stats Overview */}
-      <div className="grid gap-4 md:grid-cols-3">
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
         <Card className="md:col-span-2">
           <CardHeader>
             <CardTitle>Today&apos;s Plan</CardTitle>
@@ -325,7 +327,7 @@ const DashboardPage = () => {
                   <li key={item.id}>
                     <Link
                       href={item.href}
-                      className="flex items-center gap-2 rounded-md px-2 py-1.5 -mx-2 transition-colors hover:bg-muted"
+                      className="flex min-h-[44px] items-center gap-2 rounded-md px-2 py-1.5 -mx-2 transition-colors hover:bg-muted"
                     >
                       {item.done ? (
                         <CheckCircle2 className="size-4 text-green-600 shrink-0" />
@@ -361,11 +363,11 @@ const DashboardPage = () => {
           <CardHeader>
             <CardTitle>Stats Overview</CardTitle>
           </CardHeader>
-          <CardContent className="space-y-4">
+          <CardContent className="space-y-3 md:space-y-4">
             <div className="flex items-center gap-2">
-              <Flame className="size-5 text-orange-500 shrink-0" />
+              <Flame className="size-4 text-orange-500 shrink-0 md:size-5" />
               <div>
-                <p className="text-sm font-medium">
+                <p className="text-xs font-medium md:text-sm">
                   {profile?.streakCurrent ?? 0} day
                   {(profile?.streakCurrent ?? 0) === 1 ? "" : "s"} streak
                 </p>
@@ -375,9 +377,9 @@ const DashboardPage = () => {
               </div>
             </div>
             <div className="flex items-center gap-2">
-              <Trophy className="size-5 text-amber-500 shrink-0" />
+              <Trophy className="size-4 text-amber-500 shrink-0 md:size-5" />
               <div>
-                <p className="text-sm font-medium">
+                <p className="text-xs font-medium md:text-sm">
                   {vocabCounts?.mastered ?? 0} words mastered
                 </p>
                 <p className="text-xs text-muted-foreground">
@@ -386,9 +388,9 @@ const DashboardPage = () => {
               </div>
             </div>
             <div className="flex items-center gap-2">
-              <Sparkles className="size-5 text-blue-500 shrink-0" />
+              <Sparkles className="size-4 text-blue-500 shrink-0 md:size-5" />
               <div>
-                <p className="text-sm font-medium">
+                <p className="text-xs font-medium md:text-sm">
                   {profile?.initialCefrLevel
                     ? CEFR_LABELS[profile.initialCefrLevel] ??
                       profile.initialCefrLevel
@@ -407,17 +409,19 @@ const DashboardPage = () => {
           <CardTitle>Quick Launch</CardTitle>
         </CardHeader>
         <CardContent>
-          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+          <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
             {QUICK_LAUNCH.map((item) => {
               const Icon = item.icon;
               return (
-                <Link key={item.href} href={item.href}>
+                <Link key={item.href} href={item.href} className="min-h-[44px]">
                   <Card className="h-full transition-colors hover:border-primary/50">
-                    <CardContent className="flex flex-col items-start gap-2 py-2">
-                      <Icon className="size-6 text-primary" />
+                    <CardContent className="flex flex-col items-start gap-1.5 p-3 md:gap-2 md:py-2">
+                      <Icon className="size-5 text-primary md:size-6" />
                       <div>
-                        <p className="text-sm font-medium">{item.title}</p>
-                        <p className="text-xs text-muted-foreground">
+                        <p className="text-xs font-medium md:text-sm">
+                          {item.title}
+                        </p>
+                        <p className="hidden text-xs text-muted-foreground sm:block">
                           {item.description}
                         </p>
                       </div>
@@ -439,12 +443,12 @@ const DashboardPage = () => {
         <CardContent>
           <div className="flex gap-[3px] overflow-x-auto pb-2">
             {heatmapWeeks.map((week, wi) => (
-              <div key={wi} className="flex flex-col gap-[3px]">
+              <div key={wi} className="flex shrink-0 flex-col gap-[3px]">
                 {week.map((day) => (
                   <div
                     key={day.date}
                     title={`${day.date}: ${day.count} activit${day.count === 1 ? "y" : "ies"}`}
-                    className={`size-3 rounded-sm ${heatmapColor(day.count)}`}
+                    className={`size-3 shrink-0 rounded-sm ${heatmapColor(day.count)}`}
                   />
                 ))}
               </div>
@@ -462,7 +466,7 @@ const DashboardPage = () => {
       </Card>
 
       {/* Weekly Summary + Vocabulary Distribution */}
-      <div className="grid gap-4 md:grid-cols-2">
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
         <Card>
           <CardHeader>
             <CardTitle>Weekly Summary</CardTitle>

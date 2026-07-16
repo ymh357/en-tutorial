@@ -318,12 +318,12 @@ const WritingEditorPage = () => {
   // ---- Phase 1: Writing ----
   if (phase === "writing") {
     return (
-      <div className="mx-auto flex max-w-3xl flex-col gap-6 pb-8">
-        <div className="flex items-center justify-between pt-2">
+      <div className="mx-auto flex w-full max-w-3xl flex-col gap-6 p-4 pb-8 md:p-6">
+        <div className="flex flex-wrap items-center justify-between gap-2 pt-2">
           <Button
             variant="ghost"
             size="sm"
-            className="-ml-2"
+            className="-ml-2 min-h-[44px]"
             onClick={() => router.push("/writing")}
           >
             <ArrowLeft className="h-4 w-4" />
@@ -338,7 +338,9 @@ const WritingEditorPage = () => {
               <CardTitle className="text-base">Task</CardTitle>
             </CardHeader>
             <CardContent>
-              <p className="text-sm text-muted-foreground">{taskPrompt}</p>
+              <p className="whitespace-normal break-words text-sm text-muted-foreground">
+                {taskPrompt}
+              </p>
             </CardContent>
           </Card>
         )}
@@ -347,16 +349,20 @@ const WritingEditorPage = () => {
           value={content}
           onChange={(e) => setContent(e.target.value)}
           placeholder="Start writing here..."
-          className="min-h-[320px] resize-y text-base leading-relaxed"
+          className="min-h-[320px] w-full resize-y text-base leading-relaxed"
           disabled={isReviewing}
         />
 
-        <div className="flex items-center justify-between">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <span className="text-sm text-muted-foreground">
             {wordCount} {wordCount === 1 ? "word" : "words"}
             {wordCount < MIN_WORDS && ` (minimum ${MIN_WORDS})`}
           </span>
-          <Button onClick={handleSubmit} disabled={!canSubmit}>
+          <Button
+            onClick={handleSubmit}
+            disabled={!canSubmit}
+            className="w-full min-h-[44px] sm:w-auto"
+          >
             {isReviewing ? (
               <>
                 <Loader2 className="h-4 w-4 animate-spin" />
@@ -372,10 +378,12 @@ const WritingEditorPage = () => {
           <Card className="border-destructive/30 bg-destructive/5">
             <CardContent className="flex flex-col items-center gap-3 py-6">
               <AlertTriangle className="h-6 w-6 text-destructive" />
-              <p className="text-center text-sm text-muted-foreground">
+              <p className="text-center text-sm text-muted-foreground break-words">
                 {reviewError}
               </p>
-              <Button onClick={handleRetry}>Retry</Button>
+              <Button onClick={handleRetry} className="min-h-[44px]">
+                Retry
+              </Button>
             </CardContent>
           </Card>
         )}
@@ -390,12 +398,12 @@ const WritingEditorPage = () => {
     selectedAnnotation !== null ? review.annotations[selectedAnnotation] : null;
 
   return (
-    <div className="mx-auto flex max-w-3xl flex-col gap-6 pb-8">
-      <div className="flex items-center justify-between pt-2">
+    <div className="mx-auto flex w-full max-w-3xl flex-col gap-6 p-4 pb-8 md:p-6">
+      <div className="flex flex-wrap items-center justify-between gap-2 pt-2">
         <Button
           variant="ghost"
           size="sm"
-          className="-ml-2"
+          className="-ml-2 min-h-[44px]"
           onClick={() => router.push("/writing")}
         >
           <ArrowLeft className="h-4 w-4" />
@@ -415,12 +423,12 @@ const WritingEditorPage = () => {
       </Card>
 
       {/* Annotated Text */}
-      <Card>
+      <Card className="w-full overflow-hidden">
         <CardHeader>
           <CardTitle className="text-base">Your Writing</CardTitle>
         </CardHeader>
         <CardContent>
-          <p className="whitespace-pre-wrap text-sm leading-relaxed">
+          <p className="w-full whitespace-pre-wrap break-words text-sm leading-relaxed">
             {segments.map((segment, i) => {
               if (segment.annotationIndex === null) {
                 return <span key={i}>{segment.text}</span>;
@@ -450,7 +458,7 @@ const WritingEditorPage = () => {
       {selected && selectedAnnotation !== null && (
         <Card className={ANNOTATION_CLASS[selected.type].replace("/70", "/20")}>
           <CardHeader>
-            <CardTitle className="flex items-center justify-between text-sm">
+            <CardTitle className="flex flex-wrap items-center justify-between gap-2 text-sm">
               <span>{ANNOTATION_LABEL[selected.type]}</span>
               {selected.type !== "positive" && (
                 <Button
@@ -461,6 +469,7 @@ const WritingEditorPage = () => {
                     addingKey === selectedAnnotation
                   }
                   onClick={() => handleAddToSrs(selectedAnnotation, selected)}
+                  className="min-h-[44px]"
                 >
                   {addedKeys.has(selectedAnnotation) ? (
                     <>
@@ -479,7 +488,7 @@ const WritingEditorPage = () => {
           </CardHeader>
           <CardContent className="space-y-2 text-sm">
             {selected.type !== "positive" && (
-              <p>
+              <p className="whitespace-normal break-words">
                 <span className="text-muted-foreground line-through">
                   {selected.original}
                 </span>
@@ -487,13 +496,15 @@ const WritingEditorPage = () => {
                 <span className="font-medium">{selected.replacement}</span>
               </p>
             )}
-            <p className="text-muted-foreground">{selected.explanation}</p>
+            <p className="whitespace-normal break-words text-muted-foreground">
+              {selected.explanation}
+            </p>
           </CardContent>
         </Card>
       )}
 
       {/* Polished Version */}
-      <Card>
+      <Card className="w-full overflow-hidden">
         <CardHeader>
           <CardTitle className="flex items-center gap-2 text-base">
             <Sparkles className="h-4 w-4" />
@@ -501,7 +512,7 @@ const WritingEditorPage = () => {
           </CardTitle>
         </CardHeader>
         <CardContent>
-          <p className="whitespace-pre-wrap text-sm leading-relaxed text-muted-foreground">
+          <p className="w-full whitespace-pre-wrap break-words text-sm leading-relaxed text-muted-foreground">
             {review.polishedVersion}
           </p>
         </CardContent>
@@ -515,9 +526,9 @@ const WritingEditorPage = () => {
           </CardHeader>
           <CardContent className="space-y-2">
             {review.errorPatterns.map((pattern, i) => (
-              <div key={i} className="rounded-lg border p-3 text-sm">
-                <p className="font-medium">{pattern.category}</p>
-                <p className="mt-1 text-xs text-muted-foreground">
+              <div key={i} className="w-full rounded-lg border p-3 text-sm">
+                <p className="break-words font-medium">{pattern.category}</p>
+                <p className="mt-1 whitespace-normal break-words text-xs text-muted-foreground">
                   {pattern.description}
                 </p>
               </div>
@@ -526,7 +537,10 @@ const WritingEditorPage = () => {
         </Card>
       )}
 
-      <Button onClick={() => router.push("/writing")}>
+      <Button
+        onClick={() => router.push("/writing")}
+        className="w-full min-h-[44px]"
+      >
         Start New Writing Task
       </Button>
     </div>
