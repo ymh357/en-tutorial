@@ -22,6 +22,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Progress, ProgressTrack, ProgressIndicator } from "@/components/ui/progress";
+import { speak } from "@/lib/tts";
 
 const sourceLabels: Record<CardSource, string> = {
   conversation: "Conversation",
@@ -48,14 +49,6 @@ const formatInterval = (days: number): string => {
   }
   const rounded = Math.round(days);
   return `${rounded}d`;
-};
-
-const speak = (text: string): void => {
-  if (typeof window === "undefined" || !window.speechSynthesis) return;
-  window.speechSynthesis.cancel();
-  const utterance = new SpeechSynthesisUtterance(text);
-  utterance.lang = "en-US";
-  window.speechSynthesis.speak(utterance);
 };
 
 const getNow = (): number => Date.now();
@@ -90,7 +83,7 @@ const SrsPage = () => {
   };
 
   const handleSpeak = (): void => {
-    if (currentCard) speak(currentCard.front);
+    if (currentCard) void speak(currentCard.front);
   };
 
   const handleRate = async (rating: Rating): Promise<void> => {

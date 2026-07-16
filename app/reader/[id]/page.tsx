@@ -11,6 +11,7 @@ import { Separator } from "@/components/ui/separator";
 import { db } from "@/lib/db";
 import { dbHelpers } from "@/lib/db-helpers";
 import { UNKNOWN_DIFFICULTY, type Card as SrsCard, type ReadingLookup } from "@/lib/types";
+import { speak } from "@/lib/tts";
 
 // Splits article text into paragraphs, and each paragraph into tokens
 // (words and separators) so every word can be rendered as a clickable span.
@@ -72,14 +73,6 @@ interface SentencePanelState {
   isLoading: boolean;
   error: string | null;
 }
-
-const speak = (text: string): void => {
-  if (typeof window === "undefined" || !window.speechSynthesis) return;
-  window.speechSynthesis.cancel();
-  const utterance = new SpeechSynthesisUtterance(text);
-  utterance.lang = "en-US";
-  window.speechSynthesis.speak(utterance);
-};
 
 const ReaderSessionPage = ({
   params,
@@ -459,7 +452,7 @@ const ReaderSessionPage = ({
                   variant="ghost"
                   size="icon"
                   className="h-7 w-7"
-                  onClick={() => speak(wordPopup.word)}
+                  onClick={() => void speak(wordPopup.word)}
                 >
                   <Volume2 className="h-4 w-4" />
                 </Button>

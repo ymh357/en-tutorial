@@ -13,6 +13,7 @@ import { dbHelpers } from "@/lib/db-helpers";
 import { useProfile } from "@/hooks/use-db";
 import { getScenarioById } from "@/lib/scenarios";
 import type { Conversation, ConversationMessage, ScenarioType } from "@/lib/types";
+import { speak } from "@/lib/tts";
 
 const MIN_EXCHANGES_TO_END = 3;
 
@@ -56,18 +57,30 @@ const buildSystemPrompt = (params: {
     ? `The user's CEFR level is ${cefrLevel}. Adjust your vocabulary, sentence complexity, and pace to match this level.`
     : "Adjust your vocabulary and sentence complexity to a generally intermediate level.";
 
+  const personality =
+    "You are Alex, a friendly, warm, and genuinely curious conversation partner. You have your own personality — you're easygoing, quick to laugh, and interested in people's stories. You are NOT a language textbook or an AI assistant, and you should never sound like one.";
+
+  const speechPatterns = [
+    "Talk like a real person, not a script. Use contractions naturally (I'm, you're, don't, it's, that's).",
+    "Sprinkle in natural filler words and reactions occasionally — things like \"well,\" \"actually,\" \"you know,\" \"Oh, interesting!,\" \"Right,\" \"I see,\" \"Hmm.\" Don't overdo it, just enough to feel human.",
+    "Vary your sentence length — mix short, punchy reactions with a longer, more elaborated response now and then. Avoid responding with the same rhythm every time.",
+    "Show genuine curiosity: react to what the user actually said, and ask a natural follow-up question about it rather than just moving the conversation along.",
+    "Default to a casual, relaxed register. Only shift to a more formal tone if the scenario itself is professional (e.g., a job interview or business meeting).",
+  ].join(" ");
+
   const baseInstructions = [
     "Stay in character throughout the conversation.",
     levelLine,
     "Do not correct the user's grammar mid-conversation — just respond naturally, as a real person in this situation would. Corrections happen later in a separate review step.",
     "Keep responses conversational and not too long.",
+    speechPatterns,
   ].join(" ");
 
   if (type === "preset" && scenarioParam) {
     const scenario = getScenarioById(scenarioParam);
     if (scenario) {
       return {
-        system: `${scenario.systemPromptContext} ${baseInstructions}`,
+        system: `${personality} ${scenario.systemPromptContext} ${baseInstructions}`,
         title: scenario.name,
         description: scenario.description,
       };
@@ -76,14 +89,14 @@ const buildSystemPrompt = (params: {
 
   if (type === "custom" && scenarioParam) {
     return {
-      system: `You are roleplaying the following scenario described by the user: "${scenarioParam}". Play an appropriate character for this scenario. ${baseInstructions}`,
+      system: `${personality} You are roleplaying the following scenario described by the user: "${scenarioParam}". Play an appropriate character for this scenario. ${baseInstructions}`,
       title: "Custom Scenario",
       description: scenarioParam,
     };
   }
 
   return {
-    system: `You are a friendly English conversation partner having a free-form chat with the user about anything they'd like to discuss. ${baseInstructions}`,
+    system: `${personality} You're having a free-form chat with the user about anything they'd like to discuss. ${baseInstructions}`,
     title: "Free Chat",
     description: "Talk about anything you want.",
   };
@@ -157,11 +170,7 @@ const ConversationPage = () => {
   };
 
   const handleSpeak = (text: string) => {
-    if (typeof window === "undefined" || !window.speechSynthesis) return;
-    window.speechSynthesis.cancel();
-    const utterance = new SpeechSynthesisUtterance(text);
-    utterance.lang = "en-US";
-    window.speechSynthesis.speak(utterance);
+    void speak(text);
   };
 
   const handleToggleVoiceInput = () => {

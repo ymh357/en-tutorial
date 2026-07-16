@@ -24,6 +24,7 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useProfile } from "@/hooks/use-db";
 import { dbHelpers } from "@/lib/db-helpers";
+import { speak } from "@/lib/tts";
 
 // --- Shared helpers ---
 
@@ -51,22 +52,6 @@ const getSpeechRecognitionConstructor = (): SpeechRecognitionConstructor | null 
     webkitSpeechRecognition?: SpeechRecognitionConstructor;
   };
   return w.SpeechRecognition ?? w.webkitSpeechRecognition ?? null;
-};
-
-const speak = (text: string, rate: number = 1): Promise<void> => {
-  return new Promise((resolve) => {
-    if (typeof window === "undefined" || !window.speechSynthesis) {
-      resolve();
-      return;
-    }
-    window.speechSynthesis.cancel();
-    const utterance = new SpeechSynthesisUtterance(text);
-    utterance.lang = "en-US";
-    utterance.rate = rate;
-    utterance.onend = () => resolve();
-    utterance.onerror = () => resolve();
-    window.speechSynthesis.speak(utterance);
-  });
 };
 
 const startListening = (): Promise<string> => {
@@ -224,7 +209,7 @@ const DictationTab = ({ cefrLevel }: { cefrLevel: string }) => {
                 <Button
                   size="lg"
                   className="min-h-[44px] flex-1 sm:flex-none"
-                  onClick={() => void speak(sentence, 1)}
+                  onClick={() => void speak(sentence)}
                   disabled={!sentence}
                 >
                   <Play className="h-4 w-4" />
@@ -234,7 +219,7 @@ const DictationTab = ({ cefrLevel }: { cefrLevel: string }) => {
                   size="lg"
                   variant="secondary"
                   className="min-h-[44px] flex-1 sm:flex-none"
-                  onClick={() => void speak(sentence, 1)}
+                  onClick={() => void speak(sentence)}
                   disabled={!sentence}
                 >
                   <RotateCcw className="h-4 w-4" />
@@ -244,7 +229,7 @@ const DictationTab = ({ cefrLevel }: { cefrLevel: string }) => {
                   size="lg"
                   variant="secondary"
                   className="min-h-[44px] flex-1 sm:flex-none"
-                  onClick={() => void speak(sentence, 0.6)}
+                  onClick={() => void speak(sentence, "-30%")}
                   disabled={!sentence}
                 >
                   <Turtle className="h-4 w-4" />
@@ -441,7 +426,7 @@ const ComprehensionTab = ({ cefrLevel }: { cefrLevel: string }) => {
                 <Button
                   size="lg"
                   className="min-h-[44px] flex-1 sm:flex-none"
-                  onClick={() => void speak(data.passage, 1)}
+                  onClick={() => void speak(data.passage)}
                 >
                   <Play className="h-4 w-4" />
                   Play
@@ -450,7 +435,7 @@ const ComprehensionTab = ({ cefrLevel }: { cefrLevel: string }) => {
                   size="lg"
                   variant="secondary"
                   className="min-h-[44px] flex-1 sm:flex-none"
-                  onClick={() => void speak(data.passage, 1)}
+                  onClick={() => void speak(data.passage)}
                 >
                   <RotateCcw className="h-4 w-4" />
                   Replay
@@ -459,7 +444,7 @@ const ComprehensionTab = ({ cefrLevel }: { cefrLevel: string }) => {
                   size="lg"
                   variant="secondary"
                   className="min-h-[44px] flex-1 sm:flex-none"
-                  onClick={() => void speak(data.passage, 0.6)}
+                  onClick={() => void speak(data.passage, "-30%")}
                 >
                   <Turtle className="h-4 w-4" />
                   Slow
@@ -690,7 +675,7 @@ const ShadowingTab = ({ cefrLevel }: { cefrLevel: string }) => {
                 <Button
                   size="lg"
                   className="min-h-[44px] flex-1 sm:flex-none"
-                  onClick={() => void speak(currentSentence, 1)}
+                  onClick={() => void speak(currentSentence)}
                 >
                   <Play className="h-4 w-4" />
                   Normal Speed
@@ -699,7 +684,7 @@ const ShadowingTab = ({ cefrLevel }: { cefrLevel: string }) => {
                   size="lg"
                   variant="secondary"
                   className="min-h-[44px] flex-1 sm:flex-none"
-                  onClick={() => void speak(currentSentence, 0.6)}
+                  onClick={() => void speak(currentSentence, "-40%")}
                 >
                   <Turtle className="h-4 w-4" />
                   Slow Speed
