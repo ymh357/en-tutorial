@@ -116,11 +116,13 @@ const WORDS_BY_LEVEL: Record<CefrLevel, string[]> = {
 
 export const getKnownWordsForLevel = (level: CefrLevel): string[] => {
   const targetIndex = CEFR_ORDER.indexOf(level);
-  const result: string[] = [];
+  const seen = new Set<string>();
   for (let i = 0; i <= targetIndex; i++) {
-    result.push(...WORDS_BY_LEVEL[CEFR_ORDER[i]]);
+    for (const word of WORDS_BY_LEVEL[CEFR_ORDER[i]]) {
+      seen.add(word);
+    }
   }
-  return result;
+  return Array.from(seen);
 };
 
 const WORD_TO_LEVEL = new Map<string, CefrLevel>();

@@ -45,8 +45,14 @@ export const useStatsRange = (
 
 export const useConversations = (limit: number = 20): Conversation[] => {
   return (
-    useLiveQuery(() =>
-      db.conversations.orderBy("createdAt").reverse().limit(limit).toArray()
+    useLiveQuery(
+      () =>
+        db.conversations
+          .orderBy("createdAt")
+          .reverse()
+          .limit(limit)
+          .toArray(),
+      [limit]
     ) ?? []
   );
 };
@@ -55,8 +61,14 @@ export const useReadingSessions = (
   limit: number = 20
 ): ReadingSession[] => {
   return (
-    useLiveQuery(() =>
-      db.readingSessions.orderBy("createdAt").reverse().limit(limit).toArray()
+    useLiveQuery(
+      () =>
+        db.readingSessions
+          .orderBy("createdAt")
+          .reverse()
+          .limit(limit)
+          .toArray(),
+      [limit]
     ) ?? []
   );
 };
@@ -65,8 +77,14 @@ export const useWritingSessions = (
   limit: number = 20
 ): WritingSession[] => {
   return (
-    useLiveQuery(() =>
-      db.writingSessions.orderBy("createdAt").reverse().limit(limit).toArray()
+    useLiveQuery(
+      () =>
+        db.writingSessions
+          .orderBy("createdAt")
+          .reverse()
+          .limit(limit)
+          .toArray(),
+      [limit]
     ) ?? []
   );
 };

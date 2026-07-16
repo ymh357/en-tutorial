@@ -28,7 +28,8 @@ const DEFAULT_PROFILE: LearningProfile = {
 export const dbHelpers = {
   async getProfile(): Promise<LearningProfile> {
     const profile = await db.learningProfile.get("singleton");
-    return profile ?? DEFAULT_PROFILE;
+    if (profile) return profile;
+    return { ...DEFAULT_PROFILE, milestones: [], knownWordsBase: [] };
   },
 
   async initProfile(
@@ -96,9 +97,26 @@ export const dbHelpers = {
     field: keyof Omit<DailyStats, "id">,
     amount: number = 1
   ): Promise<void> {
-    const stats = await this.getTodayStats();
-    const current = (stats[field] as number) ?? 0;
-    await this.updateTodayStats({ [field]: current + amount });
+    const id = today();
+    await db.transaction("rw", db.dailyStats, async () => {
+      const existing = await db.dailyStats.get(id);
+      if (existing) {
+        const current = (existing[field] as number) ?? 0;
+        await db.dailyStats.update(id, { [field]: current + amount });
+      } else {
+        await db.dailyStats.put({
+          id,
+          wordsLearned: 0,
+          errorsFixed: 0,
+          conversationCount: 0,
+          readingCount: 0,
+          writingCount: 0,
+          srsReviewed: 0,
+          timeSpent: 0,
+          [field]: amount,
+        });
+      }
+    });
   },
 
   async getStatsRange(
@@ -112,16 +130,18 @@ export const dbHelpers = {
   },
 
   async getVocabCounts(): Promise<Record<MasteryLevel, number>> {
-    const counts: Record<MasteryLevel, number> = {
-      new: 0,
-      learning: 0,
-      familiar: 0,
-      mastered: 0,
+    const levels: MasteryLevel[] = ["new", "learning", "familiar", "mastered"];
+    const results = await Promise.all(
+      levels.map((level) =>
+        db.cards.where("masteryLevel").equals(level).count()
+      )
+    );
+    return {
+      new: results[0],
+      learning: results[1],
+      familiar: results[2],
+      mastered: results[3],
     };
-    await db.cards.each((card) => {
-      counts[card.masteryLevel]++;
-    });
-    return counts;
   },
 
   async isWordKnown(lemma: string): Promise<boolean> {
@@ -155,7 +175,8 @@ export const dbHelpers = {
 
     const newLongest = Math.max(newCurrent, profile.streakLongest);
 
-    await db.learningProfile.update("singleton", {
+    await db.learningProfile.put({
+      ...profile,
       streakCurrent: newCurrent,
       streakLongest: newLongest,
       lastActiveDate: todayStr,

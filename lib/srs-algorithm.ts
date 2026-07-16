@@ -11,6 +11,7 @@ export const ratingLabels: Record<Rating, string> = {
 
 const MINIMUM_EASE = 1.3;
 
+// Mastered requires both: interval >= 30 days AND 3+ consecutive successful reviews
 const computeMasteryLevel = (
   interval: number,
   repetitions: number
@@ -37,6 +38,7 @@ export const computeNextReview = (
   if (rating === 0) {
     repetitions = 0;
     interval = 0.0007; // ~1 minute in days
+    easeFactor = Math.max(MINIMUM_EASE, easeFactor - 0.2);
   } else if (rating === 1) {
     // Hard: keep current interval, reduce ease
     easeFactor = Math.max(MINIMUM_EASE, easeFactor - 0.15);
