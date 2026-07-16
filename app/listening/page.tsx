@@ -30,6 +30,23 @@ import { useProfile } from "@/hooks/use-db";
 import { dbHelpers } from "@/lib/db-helpers";
 import { speak } from "@/lib/tts";
 
+// --- Listening stats persistence (for roadmap tracking) ---
+
+const LISTENING_STATS_KEY = "en-tutor-listening-stats";
+
+const recordListeningExercise = (accuracy: number): void => {
+  if (typeof window === "undefined") return;
+  try {
+    const raw = window.localStorage.getItem(LISTENING_STATS_KEY);
+    const stats = raw
+      ? (JSON.parse(raw) as { completed: number; totalAccuracy: number })
+      : { completed: 0, totalAccuracy: 0 };
+    stats.completed += 1;
+    stats.totalAccuracy += accuracy;
+    window.localStorage.setItem(LISTENING_STATS_KEY, JSON.stringify(stats));
+  } catch { /* ignore storage errors */ }
+};
+
 // --- Shared helpers ---
 
 interface SpeechRecognitionResultLike {
@@ -202,6 +219,7 @@ const DictationTab = ({ cefrLevel }: { cefrLevel: string }) => {
     setCompleted((c) => c + 1);
     setTotalAccuracy((sum) => sum + diff.accuracy);
     await dbHelpers.updateStreak();
+    recordListeningExercise(diff.accuracy);
   };
 
   const avgAccuracy = completed > 0 ? Math.round(totalAccuracy / completed) : 0;
@@ -426,14 +444,16 @@ const ComprehensionTab = ({ cefrLevel }: { cefrLevel: string }) => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const submit = async (): Promise<void> => {
-    setSubmitted(true);
-    await dbHelpers.updateStreak();
-  };
-
   const score = data
     ? data.questions.filter((q, idx) => answers[idx] === q.correctIndex).length
     : 0;
+
+  const submit = async (): Promise<void> => {
+    setSubmitted(true);
+    await dbHelpers.updateStreak();
+    const total = data?.questions.length ?? 1;
+    recordListeningExercise(Math.round((score / total) * 100));
+  };
 
   return (
     <div className="space-y-4">
@@ -673,8 +693,10 @@ const ShadowingTab = ({ cefrLevel }: { cefrLevel: string }) => {
     try {
       const text = await startListening();
       setTranscript(text);
-      setResult(diffWords(currentSentence, text));
+      const shadowResult = diffWords(currentSentence, text);
+      setResult(shadowResult);
       await dbHelpers.updateStreak();
+      recordListeningExercise(shadowResult.accuracy);
     } catch (err) {
       setError(
         err instanceof Error ? err.message : "Could not capture your recording"
@@ -931,6 +953,7 @@ const PredictionTab = ({ cefrLevel }: { cefrLevel: string }) => {
       }
       setEvaluation(parsed);
       await dbHelpers.updateStreak();
+      recordListeningExercise(parsed.score * 10);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to evaluate prediction");
     } finally {
