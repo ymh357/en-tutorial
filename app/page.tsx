@@ -1,12 +1,14 @@
 "use client";
 
-import { useEffect, useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import {
   Brain,
   MessageSquare,
   BookOpen,
   PenLine,
+  Headphones,
+  Languages,
   Flame,
   Trophy,
   Sparkles,
@@ -22,6 +24,7 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Progress } from "@/components/ui/progress";
 import { dbHelpers } from "@/lib/db-helpers";
 import {
   useProfile,
@@ -33,7 +36,26 @@ import {
   useReadingSessions,
   useWritingSessions,
 } from "@/hooks/use-db";
+import { generateStudyPlan, type StudyStep, type StudyStepType } from "@/lib/study-engine";
 import type { DailyStats, MasteryLevel } from "@/lib/types";
+
+const STEP_ICONS: Record<StudyStepType, typeof Brain> = {
+  srs: Brain,
+  conversation: MessageSquare,
+  reading: BookOpen,
+  writing: PenLine,
+  listening: Headphones,
+  translate: Languages,
+};
+
+const SESSION_STORAGE_PREFIX = "en-tutor-session-";
+
+const getGreeting = (hour: number): string => {
+  if (hour >= 5 && hour < 12) return "Good morning";
+  if (hour >= 12 && hour < 18) return "Good afternoon";
+  if (hour >= 18 && hour < 24) return "Good evening";
+  return "Burning the midnight oil?";
+};
 
 const CEFR_LABELS: Record<string, string> = {
   A1: "A1 · Beginner",
@@ -222,77 +244,80 @@ const DashboardPage = () => {
     };
   }, [heatmapStats]);
 
-  const daysSince = (createdAt: Date | undefined): number | null => {
-    if (!createdAt) return null;
-    return daysBetween(new Date(), new Date(createdAt));
+  const sessionKey = useMemo(
+    () => `${SESSION_STORAGE_PREFIX}${formatDate(new Date())}`,
+    []
+  );
+
+  // Lazily read today's completed steps from sessionStorage on first render
+  // (resets on page refresh, since sessionStorage is per-tab and the key is
+  // date-scoped rather than persisted across days).
+  const [completedSteps, setCompletedSteps] = useState<Set<StudyStepType>>(
+    () => {
+      if (typeof window === "undefined") return new Set();
+      const raw = window.sessionStorage.getItem(sessionKey);
+      if (!raw) return new Set();
+      try {
+        const parsed = JSON.parse(raw) as string[];
+        return new Set(parsed as StudyStepType[]);
+      } catch {
+        return new Set();
+      }
+    }
+  );
+
+  const markStepCompleted = (type: StudyStepType) => {
+    setCompletedSteps((prev) => {
+      const next = new Set(prev);
+      next.add(type);
+      if (typeof window !== "undefined") {
+        window.sessionStorage.setItem(sessionKey, JSON.stringify([...next]));
+      }
+      return next;
+    });
   };
 
-  const daysSinceConversation = daysSince(conversations[0]?.createdAt);
-  const daysSinceReading = daysSince(readingSessions[0]?.createdAt);
-  const daysSinceWriting = daysSince(writingSessions[0]?.createdAt);
+  const skipStep = (type: StudyStepType) => {
+    markStepCompleted(type);
+  };
 
-  const planItems = useMemo(() => {
-    const items: {
-      id: string;
-      label: string;
-      href: string;
-      done: boolean;
-      priority: number;
-    }[] = [];
-
-    if (dueCards.length > 0) {
-      items.push({
-        id: "review",
-        label: `Review ${dueCards.length} card${dueCards.length === 1 ? "" : "s"}`,
-        href: "/srs",
-        done: false,
-        priority: 0,
-      });
-    }
-
-    const conversationDone = (todayStats?.conversationCount ?? 0) > 0;
-    if (daysSinceConversation === null || daysSinceConversation > 1 || conversationDone) {
-      items.push({
-        id: "conversation",
-        label: "Practice a conversation",
-        href: "/conversation",
-        done: conversationDone,
-        priority: 1,
-      });
-    }
-
-    const readingDone = (todayStats?.readingCount ?? 0) > 0;
-    if (daysSinceReading === null || daysSinceReading > 1 || readingDone) {
-      items.push({
-        id: "reading",
-        label: "Read an article",
-        href: "/reader",
-        done: readingDone,
-        priority: 2,
-      });
-    }
-
-    const writingDone = (todayStats?.writingCount ?? 0) > 0;
-    if (daysSinceWriting === null || daysSinceWriting > 1 || writingDone) {
-      items.push({
-        id: "writing",
-        label: "Write something",
-        href: "/writing",
-        done: writingDone,
-        priority: 3,
-      });
-    }
-
-    return items.sort((a, b) => a.priority - b.priority);
+  const studyPlan = useMemo<StudyStep[]>(() => {
+    if (!profile || !todayStats) return [];
+    return generateStudyPlan({
+      dueCards: dueCards.length,
+      lastConversation: conversations[0]?.createdAt ?? null,
+      lastReading: readingSessions[0]?.createdAt ?? null,
+      lastWriting: writingSessions[0]?.createdAt ?? null,
+      profile,
+      todayStats,
+    });
   }, [
     dueCards.length,
+    conversations,
+    readingSessions,
+    writingSessions,
+    profile,
     todayStats,
-    daysSinceConversation,
-    daysSinceReading,
-    daysSinceWriting,
   ]);
 
-  const firstUnfinished = planItems.find((item) => !item.done);
+  const totalPlanMinutes = studyPlan.reduce(
+    (sum, step) => sum + step.estimatedMinutes,
+    0
+  );
+  const completedPlanMinutes = studyPlan
+    .filter((step) => completedSteps.has(step.type))
+    .reduce((sum, step) => sum + step.estimatedMinutes, 0);
+  const planProgressPct =
+    totalPlanMinutes > 0
+      ? Math.min(100, Math.round((completedPlanMinutes / totalPlanMinutes) * 100))
+      : 0;
+
+  const firstUnfinishedStep = studyPlan.find(
+    (step) => !completedSteps.has(step.type)
+  );
+
+  const greeting = useMemo(() => getGreeting(new Date().getHours()), []);
+
   const totalVocab = vocabCounts
     ? vocabCounts.new + vocabCounts.learning + vocabCounts.familiar + vocabCounts.mastered
     : 0;
@@ -300,9 +325,11 @@ const DashboardPage = () => {
   return (
     <div className="max-w-6xl space-y-4 md:space-y-6">
       <div>
-        <h1 className="text-xl font-bold md:text-2xl">Dashboard</h1>
+        <h1 className="text-xl font-bold md:text-2xl">
+          {greeting}! Ready for today&apos;s practice?
+        </h1>
         <p className="text-sm text-muted-foreground md:text-base">
-          What should you do right now?
+          One button. A scientifically structured session.
         </p>
       </div>
 
@@ -312,48 +339,87 @@ const DashboardPage = () => {
           <CardHeader>
             <CardTitle>Today&apos;s Plan</CardTitle>
             <CardDescription>
-              A quick checklist to keep your momentum going
+              {totalPlanMinutes > 0
+                ? `${totalPlanMinutes} min session`
+                : "Nothing pending right now"}
             </CardDescription>
           </CardHeader>
-          <CardContent className="space-y-3">
-            {planItems.length === 0 ? (
+          <CardContent className="space-y-4">
+            {totalPlanMinutes > 0 && (
+              <Progress value={planProgressPct}>
+                <span className="sr-only">Session progress</span>
+              </Progress>
+            )}
+
+            {studyPlan.length === 0 ? (
               <p className="text-sm text-muted-foreground">
                 Nothing pending right now. Nice work! Explore Quick Launch below
                 if you want extra practice.
               </p>
             ) : (
-              <ul className="space-y-2">
-                {planItems.map((item) => (
-                  <li key={item.id}>
-                    <Link
-                      href={item.href}
-                      className="flex min-h-[44px] items-center gap-2 rounded-md px-2 py-1.5 -mx-2 transition-colors hover:bg-muted"
+              <ol className="space-y-3">
+                {studyPlan.map((step, index) => {
+                  const Icon = STEP_ICONS[step.type];
+                  const done = completedSteps.has(step.type);
+                  return (
+                    <li
+                      key={step.type}
+                      className={`rounded-md border p-3 transition-colors ${
+                        done ? "bg-muted/50" : "bg-card"
+                      }`}
                     >
-                      {item.done ? (
-                        <CheckCircle2 className="size-4 text-green-600 shrink-0" />
-                      ) : (
-                        <Circle className="size-4 text-muted-foreground shrink-0" />
-                      )}
-                      <span
-                        className={
-                          item.done
-                            ? "text-sm text-muted-foreground line-through"
-                            : "text-sm"
-                        }
-                      >
-                        {item.label}
-                      </span>
-                    </Link>
-                  </li>
-                ))}
-              </ul>
+                      <div className="flex items-start gap-3">
+                        {done ? (
+                          <CheckCircle2 className="size-5 text-green-600 shrink-0 mt-0.5" />
+                        ) : (
+                          <Circle className="size-5 text-muted-foreground shrink-0 mt-0.5" />
+                        )}
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center gap-2">
+                            <Icon className="size-4 text-primary shrink-0" />
+                            <span
+                              className={`text-sm font-medium ${
+                                done ? "text-muted-foreground line-through" : ""
+                              }`}
+                            >
+                              {index + 1}. {step.title} ({step.estimatedMinutes} min)
+                            </span>
+                          </div>
+                          <p className="mt-1 text-xs text-muted-foreground">
+                            &ldquo;{step.reason}&rdquo;
+                          </p>
+                          {!done && (
+                            <div className="mt-2 flex items-center gap-2">
+                              <Button
+                                size="sm"
+                                render={<Link href={step.href} />}
+                                onClick={() => markStepCompleted(step.type)}
+                              >
+                                Start
+                              </Button>
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                onClick={() => skipStep(step.type)}
+                              >
+                                Skip
+                              </Button>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    </li>
+                  );
+                })}
+              </ol>
             )}
-            {firstUnfinished && (
+            {firstUnfinishedStep && (
               <Button
-                className="mt-2"
-                render={<Link href={firstUnfinished.href} />}
+                className="mt-2 w-full sm:w-auto"
+                render={<Link href={firstUnfinishedStep.href} />}
+                onClick={() => markStepCompleted(firstUnfinishedStep.type)}
               >
-                Start Today&apos;s Plan
+                Start Full Session &rarr;
               </Button>
             )}
           </CardContent>
