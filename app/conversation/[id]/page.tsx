@@ -19,8 +19,21 @@ import { speak, stopSpeaking } from "@/lib/tts";
 const MIN_EXCHANGES_TO_END = 3;
 
 // Minimal ambient typing for the Web Speech API — not in lib.dom.d.ts.
+interface SpeechRecognitionAlternative {
+  transcript: string;
+  confidence: number;
+}
+interface SpeechRecognitionResult {
+  readonly length: number;
+  readonly isFinal: boolean;
+  [index: number]: SpeechRecognitionAlternative;
+}
+interface SpeechRecognitionResultList {
+  readonly length: number;
+  [index: number]: SpeechRecognitionResult;
+}
 interface SpeechRecognitionResultLike {
-  results: { [index: number]: { [index: number]: { transcript: string } } };
+  results: SpeechRecognitionResultList;
 }
 interface SpeechRecognitionLike extends EventTarget {
   lang: string;
@@ -174,22 +187,57 @@ const ConversationPage = () => {
   const exchangeCount = messages.filter((m) => m.role === "user").length;
   const canEnd = exchangeCount >= MIN_EXCHANGES_TO_END && !isStreaming;
 
-  // Starts a single-utterance speech recognition session. Used both for the
-  // initial voice-mode activation and to resume listening after each AI
-  // reply finishes playing.
+  // Accumulates interim transcription and waits for the user to finish
+  // speaking (1.5s silence) before sending. Uses continuous mode so the
+  // mic stays open and doesn't cut off mid-sentence.
+  const pendingTranscriptRef = useRef("");
+  const silenceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const SILENCE_DELAY = 1500; // ms of silence before auto-sending
+
   const startContinuousListening = () => {
     const SpeechRecognitionCtor = getSpeechRecognition();
     if (!SpeechRecognitionCtor) return;
 
     const recognition = new SpeechRecognitionCtor();
     recognition.lang = "en-US";
-    recognition.interimResults = false;
-    recognition.continuous = false;
+    recognition.interimResults = true;
+    recognition.continuous = true;
+
+    pendingTranscriptRef.current = "";
 
     recognition.onresult = (event) => {
-      const transcript = event.results[0]?.[0]?.transcript ?? "";
-      if (transcript.trim() && voiceModeRef.current) {
-        sendMessage({ text: transcript.trim() });
+      // Build the full transcript from all results
+      let finalTranscript = "";
+      let interimTranscript = "";
+      const results = event.results;
+      for (let i = 0; i < results.length; i++) {
+        const result = results[i];
+        if (result.isFinal) {
+          finalTranscript += result[0].transcript;
+        } else {
+          interimTranscript += result[0].transcript;
+        }
+      }
+
+      const fullText = (finalTranscript + interimTranscript).trim();
+      pendingTranscriptRef.current = fullText;
+
+      // Reset the silence timer each time we get new speech
+      if (silenceTimerRef.current) {
+        clearTimeout(silenceTimerRef.current);
+      }
+
+      // If we have final results, start the silence countdown
+      if (finalTranscript.trim()) {
+        silenceTimerRef.current = setTimeout(() => {
+          const toSend = pendingTranscriptRef.current.trim();
+          if (toSend && voiceModeRef.current) {
+            // Stop recognition before sending, will restart after AI replies
+            recognitionRef.current?.stop();
+            sendMessage({ text: toSend });
+            pendingTranscriptRef.current = "";
+          }
+        }, SILENCE_DELAY);
       }
     };
 
@@ -200,12 +248,21 @@ const ConversationPage = () => {
           if (voiceModeRef.current && !isSpeakingRef.current) {
             startContinuousListening();
           }
-        }, 500);
+        }, 1000);
       }
     };
 
     recognition.onend = () => {
       setIsRecording(false);
+      // Auto-restart if voice mode is still on and we're not waiting for AI
+      const currentlyStreaming = previousStatusRef.current === "streaming" || previousStatusRef.current === "submitted";
+      if (voiceModeRef.current && !isSpeakingRef.current && !currentlyStreaming) {
+        setTimeout(() => {
+          if (voiceModeRef.current && !isSpeakingRef.current) {
+            startContinuousListening();
+          }
+        }, 300);
+      }
     };
 
     recognitionRef.current = recognition;
@@ -232,6 +289,8 @@ const ConversationPage = () => {
       voiceModeRef.current = false;
       setVoiceMode(false);
       recognitionRef.current?.stop();
+      if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
+      pendingTranscriptRef.current = "";
       stopSpeaking();
       isSpeakingRef.current = false;
       setIsSpeaking(false);
