@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { useChat, type UIMessage } from "@ai-sdk/react";
 import { DefaultChatTransport } from "ai";
-import { ArrowLeft, Mic, MicOff, Send, Square, Volume2 } from "lucide-react";
+import { ArrowLeft, Loader2, Mic, Send, Square, Volume2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
@@ -17,42 +17,33 @@ import type { Conversation, ConversationMessage, ScenarioType } from "@/lib/type
 import { speak, stopSpeaking } from "@/lib/tts";
 
 const MIN_EXCHANGES_TO_END = 3;
+// Recordings shorter than this are treated as noise/silence, not sent to Whisper.
+const MIN_RECORDING_BYTES = 1000;
 
-// Minimal ambient typing for the Web Speech API — not in lib.dom.d.ts.
-interface SpeechRecognitionAlternative {
-  transcript: string;
-  confidence: number;
-}
-interface SpeechRecognitionResult {
-  readonly length: number;
-  readonly isFinal: boolean;
-  [index: number]: SpeechRecognitionAlternative;
-}
-interface SpeechRecognitionResultList {
-  readonly length: number;
-  [index: number]: SpeechRecognitionResult;
-}
-interface SpeechRecognitionResultLike {
-  results: SpeechRecognitionResultList;
-}
-interface SpeechRecognitionLike extends EventTarget {
-  lang: string;
-  interimResults: boolean;
-  continuous: boolean;
-  start: () => void;
-  stop: () => void;
-  onresult: ((event: SpeechRecognitionResultLike) => void) | null;
-  onerror: (() => void) | null;
-  onend: (() => void) | null;
-}
-
-const getSpeechRecognition = (): (new () => SpeechRecognitionLike) | undefined => {
-  if (typeof window === "undefined") return undefined;
-  const w = window as unknown as {
-    SpeechRecognition?: new () => SpeechRecognitionLike;
-    webkitSpeechRecognition?: new () => SpeechRecognitionLike;
-  };
-  return w.SpeechRecognition ?? w.webkitSpeechRecognition;
+// Sends a recorded audio blob to the Whisper STT endpoint and returns the
+// transcribed text (empty string on failure). Records a zero-cost usage
+// entry on success — Whisper is billed per-audio-second server-side, not
+// tracked here in tokens, but the entry keeps the module breakdown visible.
+const transcribeAudio = async (audioBlob: Blob): Promise<string> => {
+  try {
+    const formData = new FormData();
+    formData.append("audio", audioBlob, "recording.webm");
+    const res = await fetch("/api/stt", { method: "POST", body: formData });
+    if (!res.ok) return "";
+    const data = await res.json();
+    const text = typeof data.text === "string" ? data.text : "";
+    if (text) {
+      recordCost({
+        model: "whisper-large-v3",
+        inputTokens: 0,
+        outputTokens: 0,
+        module: "conversation",
+      });
+    }
+    return text;
+  } catch {
+    return "";
+  }
 };
 
 const getMessageText = (parts: Array<{ type: string; text?: string }>): string =>
@@ -169,8 +160,10 @@ const ConversationPage = () => {
 
   const [input, setInput] = useState("");
   const [isRecording, setIsRecording] = useState(false);
+  const [isTranscribing, setIsTranscribing] = useState(false);
   const [isEnding, setIsEnding] = useState(false);
-  const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const audioChunksRef = useRef<Blob[]>([]);
   const bottomRef = useRef<HTMLDivElement>(null);
   const [startTime] = useState<number>(() => Date.now());
   const previousStatusRef = useRef(status);
@@ -181,86 +174,72 @@ const ConversationPage = () => {
 
   const isStreaming = status === "streaming" || status === "submitted";
   const voiceSupported =
-    typeof window !== "undefined" &&
-    ("webkitSpeechRecognition" in window || "SpeechRecognition" in window);
+    typeof window !== "undefined" && !!navigator.mediaDevices?.getUserMedia;
 
   const exchangeCount = messages.filter((m) => m.role === "user").length;
   const canEnd = exchangeCount >= MIN_EXCHANGES_TO_END && !isStreaming;
 
-  // Voice mode uses continuous recognition that accumulates a live
-  // transcript. The user speaks freely, sees their words appear in
-  // real-time, and taps "Send" when they're done — no auto-send, no
-  // sentence truncation. After AI replies and TTS finishes, recording
-  // resumes automatically.
-  const [liveTranscript, setLiveTranscript] = useState("");
+  // Starts capturing microphone audio via MediaRecorder. Recording and TTS
+  // playback never overlap: this is only ever called while the mic is idle
+  // and no audio is playing, so there is no feedback loop into the mic.
+  const startRecording = async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const recorder = new MediaRecorder(stream, { mimeType: "audio/webm" });
+      audioChunksRef.current = [];
 
-  const startContinuousListening = () => {
-    const SpeechRecognitionCtor = getSpeechRecognition();
-    if (!SpeechRecognitionCtor) return;
+      recorder.ondataavailable = (e) => {
+        if (e.data.size > 0) audioChunksRef.current.push(e.data);
+      };
 
-    const recognition = new SpeechRecognitionCtor();
-    recognition.lang = "en-US";
-    recognition.interimResults = true;
-    recognition.continuous = true;
+      mediaRecorderRef.current = recorder;
+      recorder.start();
+      setIsRecording(true);
+    } catch {
+      // Mic permission denied or not available.
+      setIsRecording(false);
+    }
+  };
 
-    recognition.onresult = (event) => {
-      let finalTranscript = "";
-      let interimTranscript = "";
-      const results = event.results;
-      for (let i = 0; i < results.length; i++) {
-        const result = results[i];
-        if (result.isFinal) {
-          finalTranscript += result[0].transcript;
-        } else {
-          interimTranscript += result[0].transcript;
+  // Stops the active recording, releases the mic, and transcribes the
+  // captured audio via Whisper. Resolves with the transcribed text (empty
+  // string if there was nothing to transcribe or the recording was too short).
+  const stopAndTranscribe = (): Promise<string> => {
+    const recorder = mediaRecorderRef.current;
+    if (!recorder || recorder.state !== "recording") return Promise.resolve("");
+
+    return new Promise<string>((resolve) => {
+      recorder.onstop = async () => {
+        recorder.stream.getTracks().forEach((t) => t.stop());
+        setIsRecording(false);
+
+        const audioBlob = new Blob(audioChunksRef.current, { type: "audio/webm" });
+        audioChunksRef.current = [];
+        if (audioBlob.size < MIN_RECORDING_BYTES) {
+          resolve("");
+          return;
         }
-      }
-      const fullText = (finalTranscript + interimTranscript).trim();
-      setLiveTranscript(fullText);
-    };
 
-    recognition.onerror = () => {
-      setIsRecording(false);
-      if (voiceModeRef.current && !isSpeakingRef.current) {
-        setTimeout(() => {
-          if (voiceModeRef.current && !isSpeakingRef.current) {
-            startContinuousListening();
-          }
-        }, 1000);
-      }
-    };
-
-    recognition.onend = () => {
-      setIsRecording(false);
-      const currentlyStreaming =
-        previousStatusRef.current === "streaming" ||
-        previousStatusRef.current === "submitted";
-      if (voiceModeRef.current && !isSpeakingRef.current && !currentlyStreaming) {
-        setTimeout(() => {
-          if (voiceModeRef.current && !isSpeakingRef.current) {
-            startContinuousListening();
-          }
-        }, 300);
-      }
-    };
-
-    recognitionRef.current = recognition;
-    setIsRecording(true);
-    setLiveTranscript("");
-    recognition.start();
+        setIsTranscribing(true);
+        const text = await transcribeAudio(audioBlob);
+        setIsTranscribing(false);
+        resolve(text);
+      };
+      recorder.stop();
+    });
   };
 
-  const handleVoiceSend = () => {
-    const text = liveTranscript.trim();
-    if (!text || isStreaming) return;
-    recognitionRef.current?.stop();
-    sendMessage({ text });
-    setLiveTranscript("");
+  const handleVoiceSend = async () => {
+    const text = await stopAndTranscribe();
+    if (text.trim() && !isStreaming) {
+      sendMessage({ text: text.trim() });
+    }
   };
 
-  // Speaks the given text via TTS, then resumes listening for the user's
-  // next utterance once playback finishes. Used to auto-play AI replies
-  // and auto-resume the mic in voice mode.
+  // Speaks the given text via TTS, then resumes recording for the user's
+  // next utterance once playback finishes. The mic is guaranteed to be off
+  // for the entire duration of playback, so TTS audio can never be picked
+  // up as false user input.
   const speakAndResumeListening = async (text: string) => {
     isSpeakingRef.current = true;
     setIsSpeaking(true);
@@ -268,7 +247,7 @@ const ConversationPage = () => {
     isSpeakingRef.current = false;
     setIsSpeaking(false);
     if (voiceModeRef.current) {
-      startContinuousListening();
+      void startRecording();
     }
   };
 
@@ -276,15 +255,20 @@ const ConversationPage = () => {
     if (voiceMode) {
       voiceModeRef.current = false;
       setVoiceMode(false);
-      recognitionRef.current?.stop();
-      setLiveTranscript("");
+      if (mediaRecorderRef.current?.state === "recording") {
+        mediaRecorderRef.current.onstop = () => {
+          mediaRecorderRef.current?.stream.getTracks().forEach((t) => t.stop());
+        };
+        mediaRecorderRef.current.stop();
+      }
+      setIsRecording(false);
       stopSpeaking();
       isSpeakingRef.current = false;
       setIsSpeaking(false);
     } else {
       voiceModeRef.current = true;
       setVoiceMode(true);
-      startContinuousListening();
+      void startRecording();
     }
   };
 
@@ -370,10 +354,13 @@ const ConversationPage = () => {
     return () => window.removeEventListener("beforeunload", handleBeforeUnload);
   }, [messages.length]);
 
-  // Stop any active recognition/TTS if the page unmounts while voice mode is on.
+  // Stop any active recording/TTS if the page unmounts while voice mode is on.
   useEffect(() => {
     return () => {
-      recognitionRef.current?.stop();
+      if (mediaRecorderRef.current?.state === "recording") {
+        mediaRecorderRef.current.stream.getTracks().forEach((t) => t.stop());
+        mediaRecorderRef.current.stop();
+      }
       stopSpeaking();
     };
   }, []);
@@ -396,29 +383,17 @@ const ConversationPage = () => {
     void speak(text);
   };
 
-  const handleToggleVoiceInput = () => {
+  // Simplified record/transcribe flow for the text-mode mic button: fills
+  // the transcribed text into the input field instead of auto-sending it.
+  const handleToggleVoiceInput = async () => {
     if (isRecording) {
-      recognitionRef.current?.stop();
+      const text = await stopAndTranscribe();
+      if (text.trim()) {
+        setInput((prev) => (prev ? `${prev} ${text.trim()}` : text.trim()));
+      }
       return;
     }
-    const SpeechRecognitionCtor = getSpeechRecognition();
-    if (!SpeechRecognitionCtor) return;
-
-    const recognition = new SpeechRecognitionCtor();
-    recognition.lang = "en-US";
-    recognition.interimResults = false;
-    recognition.continuous = false;
-
-    recognition.onresult = (event) => {
-      const transcript = event.results[0]?.[0]?.transcript ?? "";
-      setInput((prev) => (prev ? `${prev} ${transcript}` : transcript));
-    };
-    recognition.onerror = () => setIsRecording(false);
-    recognition.onend = () => setIsRecording(false);
-
-    recognitionRef.current = recognition;
-    setIsRecording(true);
-    recognition.start();
+    await startRecording();
   };
 
   const handleEndAndReview = async () => {
@@ -428,7 +403,11 @@ const ConversationPage = () => {
     if (voiceModeRef.current) {
       voiceModeRef.current = false;
       setVoiceMode(false);
-      recognitionRef.current?.stop();
+      if (mediaRecorderRef.current?.state === "recording") {
+        mediaRecorderRef.current.stream.getTracks().forEach((t) => t.stop());
+        mediaRecorderRef.current.stop();
+      }
+      setIsRecording(false);
       stopSpeaking();
       isSpeakingRef.current = false;
     }
@@ -557,7 +536,7 @@ const ConversationPage = () => {
             className="w-full min-h-[44px]"
             onClick={toggleVoiceMode}
           >
-            {voiceMode ? <MicOff className="h-4 w-4" /> : <Mic className="h-4 w-4" />}
+            <Mic className="h-4 w-4" />
             Voice Mode: {voiceMode ? "ON" : "OFF"}
           </Button>
         )}
@@ -569,45 +548,55 @@ const ConversationPage = () => {
               <div
                 className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-full ${
                   isRecording
-                    ? "animate-pulse bg-primary text-primary-foreground"
+                    ? "animate-pulse bg-red-500 text-white"
                     : isSpeaking
                       ? "bg-green-500 text-white"
                       : "bg-muted text-muted-foreground"
                 }`}
               >
-                <Mic className="h-5 w-5" />
-              </div>
-              <div className="min-w-0 flex-1">
-                <p className="text-xs font-medium text-muted-foreground">
-                  {isStreaming
-                    ? "AI is thinking..."
-                    : isSpeaking
-                      ? "AI is speaking..."
-                      : isRecording
-                        ? "Listening... tap Send when done"
-                        : "Starting..."}
-                </p>
-                {liveTranscript && (
-                  <p className="mt-1 text-sm text-foreground truncate">
-                    {liveTranscript}
-                  </p>
+                {isTranscribing ? (
+                  <Loader2 className="h-5 w-5 animate-spin" />
+                ) : (
+                  <Mic className="h-5 w-5" />
                 )}
               </div>
-            </div>
-            {/* Live transcript preview + send */}
-            {liveTranscript && (
-              <div className="rounded-lg border bg-card p-3">
-                <p className="text-sm text-foreground whitespace-pre-wrap mb-2">{liveTranscript}</p>
-                <Button
-                  type="button"
-                  className="w-full min-h-[44px]"
-                  onClick={handleVoiceSend}
-                  disabled={isStreaming}
-                >
-                  <Send className="h-4 w-4" />
-                  Send
-                </Button>
+              <div className="min-w-0 flex-1">
+                <p className="text-sm font-medium">
+                  {isTranscribing
+                    ? "Transcribing..."
+                    : isStreaming
+                      ? "AI is thinking..."
+                      : isSpeaking
+                        ? "AI is speaking..."
+                        : isRecording
+                          ? "Recording..."
+                          : "Ready"}
+                </p>
+                <p className="text-xs text-muted-foreground">
+                  {isRecording && "Your voice will be transcribed by Whisper AI"}
+                </p>
               </div>
+            </div>
+            {/* Recording controls */}
+            {isRecording && (
+              <Button
+                type="button"
+                className="w-full min-h-[44px]"
+                onClick={() => void handleVoiceSend()}
+              >
+                <Square className="h-4 w-4" />
+                Stop &amp; Send
+              </Button>
+            )}
+            {!isRecording && !isTranscribing && !isSpeaking && !isStreaming && (
+              <Button
+                type="button"
+                className="w-full min-h-[44px]"
+                onClick={() => void startRecording()}
+              >
+                <Mic className="h-4 w-4" />
+                Record Next
+              </Button>
             )}
           </div>
         ) : (
@@ -618,10 +607,15 @@ const ConversationPage = () => {
                 variant={isRecording ? "default" : "outline"}
                 size="icon"
                 className="min-h-[44px] min-w-[44px]"
-                onClick={handleToggleVoiceInput}
+                onClick={() => void handleToggleVoiceInput()}
+                disabled={isTranscribing}
                 aria-label="Voice input"
               >
-                <Mic className="h-4 w-4" />
+                {isTranscribing ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <Mic className="h-4 w-4" />
+                )}
               </Button>
             )}
             <Textarea
