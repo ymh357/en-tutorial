@@ -336,37 +336,51 @@ const ReaderSessionPage = ({
     });
 
     try {
-      const res = await fetch("/api/review", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          prompt: `Define the word "${word}" as used in this context: "${sentence}". Give a brief, contextual definition (not a dictionary definition). If the word has a specific meaning in this context that differs from its most common meaning, explain that. Then, on a new line, provide 2-3 common collocations for this word in the format "Collocations: collocation one, collocation two, collocation three". Then, on another new line, provide one related word from the same word family in the format "Word family: relatedword". Response format: definition (1-2 sentences max), then the Collocations line, then the Word family line. No markdown, no extra commentary.`,
-        }),
-      });
+      // Use free Dictionary API instead of AI — zero cost, instant
+      const res = await fetch(
+        `https://api.dictionaryapi.dev/api/v2/entries/en/${encodeURIComponent(lemma)}`
+      );
 
-      if (!res.ok) throw new Error(`Request failed: ${res.status}`);
-      const data: { content?: string; error?: string; usage?: ReviewUsage } =
-        await res.json();
-      if (data.error || !data.content) throw new Error(data.error || "No definition returned");
+      let definition = "";
+      let collocations: string[] = [];
+      let wordFamily: string | null = null;
 
-      if (data.usage) {
-        recordCost({
-          model: "claude-sonnet-5",
-          inputTokens: data.usage.promptTokens ?? 0,
-          outputTokens: data.usage.completionTokens ?? 0,
-          module: "reader",
-        });
+      if (res.ok) {
+        const entries = (await res.json()) as Array<{
+          meanings?: Array<{
+            partOfSpeech?: string;
+            definitions?: Array<{ definition?: string; example?: string }>;
+            synonyms?: string[];
+          }>;
+        }>;
+
+        // Extract first definition
+        for (const entry of entries) {
+          for (const meaning of entry.meanings ?? []) {
+            const def = meaning.definitions?.[0];
+            if (def?.definition) {
+              definition = def.definition;
+              if (def.example) definition += ` (e.g., "${def.example}")`;
+              // Use synonyms as pseudo-collocations
+              collocations = (meaning.synonyms ?? []).slice(0, 5);
+              break;
+            }
+          }
+          if (definition) break;
+        }
       }
 
-      const parsed = parseWordLookupResponse(data.content);
+      if (!definition) {
+        definition = `No dictionary entry found for "${word}".`;
+      }
 
       setWordPopup((prev) =>
         prev && prev.word === word && prev.position === position
           ? {
               ...prev,
-              definition: parsed.definition,
-              collocations: parsed.collocations,
-              wordFamily: parsed.wordFamily,
+              definition,
+              collocations: collocations.length > 0 ? collocations : null,
+              wordFamily,
               isLoading: false,
             }
           : prev
@@ -376,7 +390,7 @@ const ReaderSessionPage = ({
         const lookup: ReadingLookup = {
           word,
           lemma,
-          definition: parsed.definition,
+          definition,
           position,
         };
         const existingLookups = session.lookups.filter(
