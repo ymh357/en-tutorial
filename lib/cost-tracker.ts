@@ -3,6 +3,7 @@
 // Values below are pre-converted to A0GI per token.
 const MODEL_PRICING: Record<string, { input: number; output: number }> = {
   "deepseek-v4-flash": { input: 6.44e-7, output: 1.28e-6 },
+  "deepseek-v4-pro": { input: 7.7e-6, output: 1.542e-5 },
   "claude-sonnet-5": { input: 1.008e-5, output: 5.043e-5 },
 };
 

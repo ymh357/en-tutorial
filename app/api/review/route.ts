@@ -28,17 +28,25 @@ export const POST = async (req: Request): Promise<Response> => {
     return Response.json({ error: "system must be a string" }, { status: 400 });
   }
 
-  const result = await generateText({
-    model: qualityModel,
-    system,
-    prompt,
-  });
+  try {
+    const result = await generateText({
+      model: qualityModel,
+      system,
+      prompt,
+    });
 
-  return Response.json({
-    content: result.text,
-    usage: {
-      promptTokens: result.usage.inputTokens ?? 0,
-      completionTokens: result.usage.outputTokens ?? 0,
-    },
-  });
+    return Response.json({
+      content: result.text,
+      usage: {
+        promptTokens: result.usage?.inputTokens ?? 0,
+        completionTokens: result.usage?.outputTokens ?? 0,
+      },
+    });
+  } catch (error) {
+    console.error("Review API error:", error);
+    return Response.json(
+      { error: error instanceof Error ? error.message : "AI generation failed" },
+      { status: 502 }
+    );
+  }
 };

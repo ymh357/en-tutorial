@@ -30,11 +30,19 @@ export const POST = async (req: Request): Promise<Response> => {
 
   const model = useQualityModel ? qualityModel : defaultModel;
 
-  const result = streamText({
-    model,
-    system,
-    messages: await convertToModelMessages(messages),
-  });
+  try {
+    const result = streamText({
+      model,
+      system,
+      messages: await convertToModelMessages(messages),
+    });
 
-  return result.toUIMessageStreamResponse();
+    return result.toUIMessageStreamResponse();
+  } catch (error) {
+    console.error("Chat API error:", error);
+    return Response.json(
+      { error: error instanceof Error ? error.message : "AI streaming failed" },
+      { status: 502 }
+    );
+  }
 };

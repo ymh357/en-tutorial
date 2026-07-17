@@ -11,5 +11,5 @@ export const defaultModel = og(
 );
 
 export const qualityModel = og(
-  process.env.OG_QUALITY_MODEL ?? "claude-sonnet-5"
+  process.env.OG_QUALITY_MODEL ?? "deepseek-v4-pro"
 );
