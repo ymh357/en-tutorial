@@ -42,7 +42,6 @@ import {
 } from "@/hooks/use-db";
 import { generateStudyPlan, type StudyStep, type StudyStepType } from "@/lib/study-engine";
 import { getCostSummary, type CostSummary } from "@/lib/cost-tracker";
-import { generatePoolTasks, getPoolStatus } from "@/lib/task-pool";
 import type { DailyStats, MasteryLevel } from "@/lib/types";
 
 const STEP_ICONS: Record<StudyStepType, typeof Brain> = {
@@ -55,7 +54,6 @@ const STEP_ICONS: Record<StudyStepType, typeof Brain> = {
 };
 
 const SESSION_STORAGE_PREFIX = "en-tutor-session-";
-const POOL_REFILL_COUNT = 42; // 1 week of tasks
 
 const getGreeting = (hour: number): string => {
   if (hour >= 5 && hour < 12) return "Good morning";
@@ -220,16 +218,34 @@ const DashboardPage = () => {
     dbHelpers.updateStreak();
   }, []);
 
-  // Silent background pool refill
+  // Pull today's pre-generated tasks from server (Vercel Blob) into local IndexedDB
   useEffect(() => {
-    const refillPool = async () => {
-      const { needsRefill } = await getPoolStatus();
-      if (!needsRefill) return;
-      const prof = await dbHelpers.getProfile();
-      const level = prof.initialCefrLevel || "B1";
-      await generatePoolTasks(level, POOL_REFILL_COUNT);
+    const pullTasks = async () => {
+      try {
+        const res = await fetch("/api/tasks/today");
+        if (!res.ok) return;
+        const data = await res.json();
+        if (!data.tasks?.length) return;
+
+        for (const task of data.tasks) {
+          const existing = await db.poolTasks.get(task.id);
+          if (!existing) {
+            await db.poolTasks.add({
+              id: task.id,
+              type: task.type,
+              difficulty: task.difficulty,
+              content: task.content,
+              assignedDate: data.date,
+              completed: false,
+              createdAt: new Date(),
+            });
+          }
+        }
+      } catch {
+        // Silent fail — modules will fallback to real-time generation
+      }
     };
-    void refillPool();
+    void pullTasks();
   }, []);
 
   const heatmapRange = useMemo(() => {
