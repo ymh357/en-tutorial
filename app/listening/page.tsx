@@ -32,6 +32,7 @@ import { dbHelpers } from "@/lib/db-helpers";
 import { recordCost } from "@/lib/cost-tracker";
 import { completeTask } from "@/lib/task-pool";
 import { speak } from "@/lib/tts";
+import type { PoolTaskType } from "@/lib/types";
 
 // --- Listening stats persistence (for roadmap tracking) ---
 
@@ -1233,10 +1234,42 @@ const PredictionTab = ({ cefrLevel }: { cefrLevel: string }) => {
 
 // --- Page ---
 
+// Pool task type has no dedicated "shadowing" entry, so only these three
+// modes can be auto-selected based on ready pool content.
+const POOL_CHECK_MODES: readonly Mode[] = [
+  "dictation",
+  "comprehension",
+  "prediction",
+];
+
 const ListeningPage = () => {
   const profile = useProfile();
   const cefrLevel = profile?.initialCefrLevel || "B1";
   const [mode, setMode] = useState<Mode>("dictation");
+  const [readyMode, setReadyMode] = useState<Mode | null>(null);
+  const [checkedPool, setCheckedPool] = useState(false);
+
+  useEffect(() => {
+    const pickTab = async () => {
+      try {
+        for (const m of POOL_CHECK_MODES) {
+          const type = `listening-${m}` as PoolTaskType;
+          const task = await db.poolTasks
+            .where("type").equals(type)
+            .and((t) => !t.completed && t.assignedDate !== "")
+            .first();
+          if (task) {
+            setMode(m);
+            setReadyMode(m);
+            break;
+          }
+        }
+      } finally {
+        setCheckedPool(true);
+      }
+    };
+    void pickTab();
+  }, []);
 
   return (
     <div className="max-w-3xl space-y-6 p-4 md:space-y-8 md:p-6">
@@ -1249,6 +1282,13 @@ const ListeningPage = () => {
           Practice dictation, comprehension, shadowing, and prediction at
           your {cefrLevel} level.
         </p>
+        {checkedPool && (
+          <p className="text-xs text-muted-foreground mt-1">
+            {readyMode
+              ? "Today's exercise is ready."
+              : "Generating..."}
+          </p>
+        )}
       </div>
 
       <Tabs value={mode} onValueChange={(value) => setMode(value as Mode)}>

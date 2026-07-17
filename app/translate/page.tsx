@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import {
   ArrowRight,
@@ -405,6 +405,35 @@ const TranslatePage = () => {
       setIsGenerating(false);
     }
   };
+
+  // On mount, check which translation pool task type (if any) has ready
+  // content and auto-select + auto-generate that mode so the user lands on
+  // ready content instead of having to choose a mode first.
+  useEffect(() => {
+    const pickMode = async () => {
+      try {
+        const poolTypeByMode: Record<"sentence" | "paragraph", string> = {
+          sentence: "translation-sentence",
+          paragraph: "translation-paragraph",
+        };
+        for (const m of ["sentence", "paragraph"] as const) {
+          const task = await db.poolTasks
+            .where("type").equals(poolTypeByMode[m])
+            .and((t) => !t.completed && t.assignedDate !== "")
+            .first();
+          if (task) {
+            setMode(m);
+            void generateExercise(m);
+            return;
+          }
+        }
+      } catch {
+        // Silently ignore pool errors
+      }
+    };
+    void pickMode();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const handleModeChange = (value: string): void => {
     const nextMode = value as ExerciseMode;

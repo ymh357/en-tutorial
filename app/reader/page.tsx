@@ -1,8 +1,8 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Sparkles, FileText, Link as LinkIcon, Loader2 } from "lucide-react";
+import { Sparkles, FileText, Link as LinkIcon, Loader2, BookOpen } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -538,6 +538,83 @@ const ImportUrlTab = ({
   );
 };
 
+interface TodayArticle {
+  title: string;
+  content: string;
+  comprehensionQuestions: ComprehensionQuestion[];
+  taskId: string;
+  difficulty: string;
+}
+
+const TodayArticleCard = ({
+  article,
+  onSessionCreated,
+}: {
+  article: TodayArticle;
+  onSessionCreated: (id: string) => void;
+}) => {
+  const [isStarting, setIsStarting] = useState(false);
+
+  const handleStart = async () => {
+    setIsStarting(true);
+    try {
+      const id = await createSession({
+        title: article.title,
+        content: article.content,
+        source: "ai_generated",
+        difficulty: article.difficulty,
+      });
+      if (article.comprehensionQuestions.length > 0) {
+        localStorage.setItem(
+          `en-tutor-reading-questions-${id}`,
+          JSON.stringify(article.comprehensionQuestions)
+        );
+      }
+      await completeTask(article.taskId);
+      onSessionCreated(id);
+    } finally {
+      setIsStarting(false);
+    }
+  };
+
+  const preview = article.content.slice(0, 100).trim();
+
+  return (
+    <Card className="border-primary/40">
+      <CardHeader>
+        <div className="flex items-center justify-between gap-2">
+          <CardTitle className="flex items-center gap-2 text-base">
+            <BookOpen className="h-4 w-4 text-primary" />
+            Today&apos;s Article
+          </CardTitle>
+          <Badge variant="outline">{article.difficulty}</Badge>
+        </div>
+        <CardDescription>{article.title}</CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        <p className="text-sm text-muted-foreground line-clamp-3">
+          {preview}
+          {article.content.length > 100 ? "..." : ""}
+        </p>
+        <Button
+          className="w-full min-h-[44px]"
+          onClick={() => void handleStart()}
+          disabled={isStarting}
+        >
+          {isStarting ? (
+            <>
+              <Loader2 className="h-4 w-4 animate-spin" />
+              Starting...
+            </>
+          ) : (
+            "Start Reading"
+          )}
+        </Button>
+      </CardContent>
+    </Card>
+  );
+};
+
 const ReadingHistory = ({
   sessions,
   onSelect,
@@ -585,6 +662,37 @@ const ReadingHistory = ({
 const ReaderPage = () => {
   const router = useRouter();
   const recentSessions = useReadingSessions(10);
+  const [todayArticle, setTodayArticle] = useState<TodayArticle | null>(null);
+
+  useEffect(() => {
+    const loadPoolArticle = async () => {
+      try {
+        const task = await db.poolTasks
+          .where("type").equals("reading-article")
+          .and((t) => !t.completed && t.assignedDate !== "")
+          .first();
+        if (task) {
+          const content = task.content as {
+            title: string;
+            content: string;
+            comprehensionQuestions?: ComprehensionQuestion[];
+          };
+          if (content.title && content.content) {
+            setTodayArticle({
+              title: content.title,
+              content: content.content,
+              comprehensionQuestions: content.comprehensionQuestions ?? [],
+              taskId: task.id,
+              difficulty: task.difficulty,
+            });
+          }
+        }
+      } catch {
+        // Silently ignore pool errors
+      }
+    };
+    void loadPoolArticle();
+  }, []);
 
   const goToSession = (id: string) => {
     router.push(`/reader/${id}`);
@@ -595,10 +703,19 @@ const ReaderPage = () => {
       <div>
         <h1 className="text-2xl font-bold mb-2">Reading Practice</h1>
         <p className="text-muted-foreground">
-          Choose content to read — generate an article, paste your own text,
-          or import from a URL.
+          {todayArticle
+            ? "Your reading material for today is ready."
+            : "Choose content to read — generate an article, paste your own text, or import from a URL."}
         </p>
       </div>
+
+      {todayArticle && (
+        <TodayArticleCard article={todayArticle} onSessionCreated={goToSession} />
+      )}
+
+      {todayArticle && (
+        <p className="text-sm text-muted-foreground">Or choose your own content:</p>
+      )}
 
       <Tabs defaultValue="ai">
         <div className="overflow-x-auto">
