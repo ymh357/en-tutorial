@@ -2,6 +2,7 @@
 
 import { type ReactNode } from "react";
 import { SidebarNav } from "./sidebar-nav";
+import { DictionaryPanel } from "./dictionary-panel";
 import { SidebarInset, SidebarTrigger } from "@/components/ui/sidebar";
 import { Separator } from "@/components/ui/separator";
 
@@ -19,6 +20,7 @@ export const AppShell = ({ children }: { children: ReactNode }) => {
         </header>
         <main className="flex-1 overflow-auto p-3 md:p-6">{children}</main>
       </SidebarInset>
+      <DictionaryPanel />
     </>
   );
 };
