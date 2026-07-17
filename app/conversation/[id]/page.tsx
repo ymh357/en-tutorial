@@ -231,6 +231,7 @@ const ConversationPage = () => {
   const isSpeakingRef = useRef(false);
   const [isSpeaking, setIsSpeaking] = useState(false);
   const [transcribedText, setTranscribedText] = useState<string | null>(null);
+  const [recordingBlobUrl, setRecordingBlobUrl] = useState<string | null>(null);
   const [recordingDuration, setRecordingDuration] = useState(0);
   const recordingTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -311,6 +312,10 @@ const ConversationPage = () => {
           return;
         }
 
+        // Keep the raw recording URL so the user can replay it
+        if (recordingBlobUrl) URL.revokeObjectURL(recordingBlobUrl);
+        setRecordingBlobUrl(URL.createObjectURL(audioBlob));
+
         setIsTranscribing(true);
         const text = await transcribeAudio(audioBlob);
         setIsTranscribing(false);
@@ -353,6 +358,7 @@ const ConversationPage = () => {
     if (transcribedText && !isStreaming) {
       sendMessage({ text: transcribedText });
       setTranscribedText(null);
+      if (recordingBlobUrl) { URL.revokeObjectURL(recordingBlobUrl); setRecordingBlobUrl(null); }
     }
   };
 
@@ -733,7 +739,21 @@ const ConversationPage = () => {
             {/* Transcription preview */}
             {transcribedText && (
               <div className="space-y-2 rounded-lg border bg-muted/20 px-4 py-3">
-                <p className="text-xs font-medium text-muted-foreground">Whisper heard:</p>
+                <div className="flex items-center justify-between">
+                  <p className="text-xs font-medium text-muted-foreground">Whisper heard:</p>
+                  {recordingBlobUrl && (
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      className="h-7 text-xs"
+                      onClick={() => new Audio(recordingBlobUrl).play()}
+                    >
+                      <Volume2 className="h-3 w-3 mr-1" />
+                      Replay my recording
+                    </Button>
+                  )}
+                </div>
                 <p className="text-sm">&ldquo;{transcribedText}&rdquo;</p>
                 <div className="flex flex-col gap-2 sm:flex-row">
                   <Button

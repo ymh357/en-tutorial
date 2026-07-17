@@ -30,6 +30,12 @@ export const POST = async (req: Request): Promise<Response> => {
   apiFormData.append("model", "whisper-large-v3");
   apiFormData.append("language", "en");
   apiFormData.append("response_format", "json");
+  // Prompt guides Whisper toward faithful transcription of non-native speech,
+  // preserving grammatical errors rather than auto-correcting them.
+  apiFormData.append(
+    "prompt",
+    "Transcribe exactly what the speaker says, including any grammar mistakes, hesitations, or mispronunciations. Do not correct or rephrase. This is a non-native English speaker practicing conversation."
+  );
 
   try {
     const res = await fetch(
