@@ -27,6 +27,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useProfile } from "@/hooks/use-db";
+import { db } from "@/lib/db";
 import { dbHelpers } from "@/lib/db-helpers";
 import { recordCost } from "@/lib/cost-tracker";
 import { speak } from "@/lib/tts";
@@ -51,6 +52,23 @@ const recordListeningExercise = (accuracy: number): void => {
     stats.lastDate = new Date().toISOString();
     window.localStorage.setItem(LISTENING_STATS_KEY, JSON.stringify(stats));
   } catch { /* ignore storage errors */ }
+};
+
+// Persist a completed listening exercise to the local DB for the history page.
+const saveListeningExercise = async (
+  mode: Mode,
+  prompt: string,
+  userAnswer: string,
+  accuracy: number
+): Promise<void> => {
+  await db.listeningExercises.add({
+    id: crypto.randomUUID(),
+    mode,
+    prompt,
+    userAnswer,
+    accuracy,
+    createdAt: new Date(),
+  });
 };
 
 // --- Shared helpers ---
@@ -238,6 +256,7 @@ const DictationTab = ({ cefrLevel }: { cefrLevel: string }) => {
     setTotalAccuracy((sum) => sum + diff.accuracy);
     await dbHelpers.updateStreak();
     recordListeningExercise(diff.accuracy);
+    await saveListeningExercise("dictation", sentence, userInput, diff.accuracy);
   };
 
   const avgAccuracy = completed > 0 ? Math.round(totalAccuracy / completed) : 0;
@@ -470,7 +489,19 @@ const ComprehensionTab = ({ cefrLevel }: { cefrLevel: string }) => {
     setSubmitted(true);
     await dbHelpers.updateStreak();
     const total = data?.questions.length ?? 1;
-    recordListeningExercise(Math.round((score / total) * 100));
+    const accuracy = Math.round((score / total) * 100);
+    recordListeningExercise(accuracy);
+    if (data) {
+      const userAnswer = data.questions
+        .map((q, idx) => q.options[answers[idx]] ?? "(no answer)")
+        .join("; ");
+      await saveListeningExercise(
+        "comprehension",
+        data.passage,
+        userAnswer,
+        accuracy
+      );
+    }
   };
 
   return (
@@ -715,6 +746,12 @@ const ShadowingTab = ({ cefrLevel }: { cefrLevel: string }) => {
       setResult(shadowResult);
       await dbHelpers.updateStreak();
       recordListeningExercise(shadowResult.accuracy);
+      await saveListeningExercise(
+        "shadowing",
+        currentSentence,
+        text,
+        shadowResult.accuracy
+      );
     } catch (err) {
       setError(
         err instanceof Error ? err.message : "Could not capture your recording"
@@ -972,6 +1009,12 @@ const PredictionTab = ({ cefrLevel }: { cefrLevel: string }) => {
       setEvaluation(parsed);
       await dbHelpers.updateStreak();
       recordListeningExercise(parsed.score * 10);
+      await saveListeningExercise(
+        "prediction",
+        `${passage.firstHalf} ${passage.secondHalf}`,
+        userInput,
+        parsed.score * 10
+      );
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to evaluate prediction");
     } finally {

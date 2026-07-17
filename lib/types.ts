@@ -149,3 +149,23 @@ export interface DailyStats {
   srsReviewed: number;
   timeSpent: number;
 }
+
+export interface ListeningExercise {
+  id: string;
+  mode: "dictation" | "comprehension" | "shadowing" | "prediction";
+  prompt: string; // the sentence/passage that was played
+  userAnswer: string; // what the user typed/said
+  accuracy: number; // 0-100
+  createdAt: Date;
+}
+
+export interface TranslationExercise {
+  id: string;
+  mode: "sentence" | "paragraph" | "situational";
+  chinese: string; // original Chinese text
+  userTranslation: string; // what the user wrote
+  referenceTranslation: string; // AI's reference
+  score: number; // 1-10
+  feedback: string; // AI's evaluation summary
+  createdAt: Date;
+}

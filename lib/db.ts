@@ -6,6 +6,8 @@ import type {
   WritingSession,
   LearningProfile,
   DailyStats,
+  ListeningExercise,
+  TranslationExercise,
 } from "./types";
 
 const db = new Dexie("EnTutorDB") as Dexie & {
@@ -15,6 +17,8 @@ const db = new Dexie("EnTutorDB") as Dexie & {
   writingSessions: EntityTable<WritingSession, "id">;
   learningProfile: EntityTable<LearningProfile, "id">;
   dailyStats: EntityTable<DailyStats, "id">;
+  listeningExercises: EntityTable<ListeningExercise, "id">;
+  translationExercises: EntityTable<TranslationExercise, "id">;
 };
 
 db.version(1).stores({
@@ -24,6 +28,17 @@ db.version(1).stores({
   writingSessions: "id, taskType, createdAt",
   learningProfile: "id",
   dailyStats: "id",
+});
+
+db.version(2).stores({
+  cards: "id, type, lemma, source, sourceId, nextReview, masteryLevel, createdAt",
+  conversations: "id, scenarioType, createdAt",
+  readingSessions: "id, source, createdAt",
+  writingSessions: "id, taskType, createdAt",
+  learningProfile: "id",
+  dailyStats: "id",
+  listeningExercises: "id, mode, createdAt",
+  translationExercises: "id, mode, createdAt",
 });
 
 export { db };

@@ -31,7 +31,10 @@ import { useProfile } from "@/hooks/use-db";
 import { db } from "@/lib/db";
 import { dbHelpers } from "@/lib/db-helpers";
 import { recordCost } from "@/lib/cost-tracker";
-import type { Card as SrsCard } from "@/lib/types";
+import type {
+  Card as SrsCard,
+  TranslationExercise as TranslationExerciseRecord,
+} from "@/lib/types";
 
 type ExerciseMode = "sentence" | "paragraph" | "situational";
 
@@ -422,6 +425,18 @@ const TranslatePage = () => {
 
       recordTranslation();
       await dbHelpers.updateStreak();
+
+      const record: TranslationExerciseRecord = {
+        id: crypto.randomUUID(),
+        mode,
+        chinese: exercise.chinese,
+        userTranslation,
+        referenceTranslation: exercise.referenceTranslation,
+        score: parsed.score,
+        feedback: parsed.keyDifferences.join(" "),
+        createdAt: new Date(),
+      };
+      await db.translationExercises.add(record);
     } catch (err) {
       setEvalError(
         err instanceof Error ? err.message : "Failed to evaluate translation"
