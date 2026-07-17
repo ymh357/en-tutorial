@@ -19,6 +19,14 @@ import { speak, stopSpeaking } from "@/lib/tts";
 const MIN_EXCHANGES_TO_END = 3;
 // Recordings shorter than this are treated as noise/silence, not sent to Whisper.
 const MIN_RECORDING_BYTES = 1000;
+// Recordings auto-stop and transcribe once they hit this length.
+const MAX_RECORDING_SECONDS = 60;
+
+const formatDuration = (seconds: number): string => {
+  const m = Math.floor(seconds / 60);
+  const s = seconds % 60;
+  return `${m}:${String(s).padStart(2, "0")}`;
+};
 
 // Sends a recorded audio blob to the Whisper STT endpoint and returns the
 // transcribed text (empty string on failure). Records a zero-cost usage
@@ -91,6 +99,7 @@ const buildSystemPrompt = (params: {
 
   const baseInstructions = [
     "Stay in character throughout the conversation.",
+    "If the user's first message is exactly \"[Start the conversation]\", treat this as a signal to open the conversation yourself: greet the user naturally and ask an opening question appropriate to the scenario, as if you were the one initiating the chat. Never mention or quote this bracketed instruction back to the user.",
     levelLine,
     "Do not explicitly correct the user's grammar mid-conversation — no direct callouts, no \"you should have said X.\" Detailed corrections happen later in a separate review step. Your only in-conversation error-correction tool is the recast technique described below.",
     "Keep responses conversational and not too long.",
@@ -171,13 +180,33 @@ const ConversationPage = () => {
   const voiceModeRef = useRef(false);
   const isSpeakingRef = useRef(false);
   const [isSpeaking, setIsSpeaking] = useState(false);
+  const [transcribedText, setTranscribedText] = useState<string | null>(null);
+  const [recordingDuration, setRecordingDuration] = useState(0);
+  const recordingTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const isStreaming = status === "streaming" || status === "submitted";
   const voiceSupported =
     typeof window !== "undefined" && !!navigator.mediaDevices?.getUserMedia;
 
-  const exchangeCount = messages.filter((m) => m.role === "user").length;
+  // The hidden greeting trigger sent to make the AI speak first in voice
+  // mode; it's a real message for the API but shouldn't count as a user
+  // exchange or be persisted/reviewed as something the user actually said.
+  const isGreetingTrigger = (m: UIMessage): boolean =>
+    m.role === "user" && getMessageText(m.parts) === "[Start the conversation]";
+
+  const exchangeCount = messages.filter(
+    (m) => m.role === "user" && !isGreetingTrigger(m)
+  ).length;
   const canEnd = exchangeCount >= MIN_EXCHANGES_TO_END && !isStreaming;
+
+  // Clears the recording duration timer, if any, and resets the displayed duration.
+  const clearRecordingTimer = () => {
+    if (recordingTimerRef.current) {
+      clearInterval(recordingTimerRef.current);
+      recordingTimerRef.current = null;
+    }
+    setRecordingDuration(0);
+  };
 
   // Starts capturing microphone audio via MediaRecorder. Recording and TTS
   // playback never overlap: this is only ever called while the mic is idle
@@ -195,6 +224,17 @@ const ConversationPage = () => {
       mediaRecorderRef.current = recorder;
       recorder.start();
       setIsRecording(true);
+
+      clearRecordingTimer();
+      recordingTimerRef.current = setInterval(() => {
+        setRecordingDuration((d) => {
+          const next = d + 1;
+          if (next >= MAX_RECORDING_SECONDS) {
+            void handleVoiceStopAndTranscribe();
+          }
+          return next;
+        });
+      }, 1000);
     } catch {
       // Mic permission denied or not available.
       setIsRecording(false);
@@ -206,6 +246,7 @@ const ConversationPage = () => {
   // string if there was nothing to transcribe or the recording was too short).
   const stopAndTranscribe = (): Promise<string> => {
     const recorder = mediaRecorderRef.current;
+    clearRecordingTimer();
     if (!recorder || recorder.state !== "recording") return Promise.resolve("");
 
     return new Promise<string>((resolve) => {
@@ -229,11 +270,52 @@ const ConversationPage = () => {
     });
   };
 
-  const handleVoiceSend = async () => {
-    const text = await stopAndTranscribe();
-    if (text.trim() && !isStreaming) {
-      sendMessage({ text: text.trim() });
+  // Discards the in-progress recording without transcribing it, leaving
+  // voice mode in the ready state so the user can start over.
+  const handleCancelRecording = () => {
+    clearRecordingTimer();
+    const recorder = mediaRecorderRef.current;
+    if (recorder?.state === "recording") {
+      recorder.onstop = () => {
+        recorder.stream.getTracks().forEach((t) => t.stop());
+      };
+      recorder.stop();
+      audioChunksRef.current = [];
     }
+    setIsRecording(false);
+  };
+
+  // Stops recording and transcribes it, but doesn't auto-send — the
+  // transcription is shown to the user for confirmation/edit/retry first.
+  const handleVoiceStopAndTranscribe = async () => {
+    const text = await stopAndTranscribe();
+    if (text.trim()) {
+      setTranscribedText(text.trim());
+    }
+    // Empty transcription (too short/failed): stay in the ready state.
+  };
+
+  const handleConfirmSend = () => {
+    if (transcribedText && !isStreaming) {
+      sendMessage({ text: transcribedText });
+      setTranscribedText(null);
+    }
+  };
+
+  // Drops out of voice mode and hands the transcription to the text input
+  // so the user can fix it up before sending.
+  const handleEditTranscription = () => {
+    if (transcribedText) {
+      setInput(transcribedText);
+      setTranscribedText(null);
+      voiceModeRef.current = false;
+      setVoiceMode(false);
+    }
+  };
+
+  const handleRetryRecording = () => {
+    setTranscribedText(null);
+    void startRecording();
   };
 
   // Speaks the given text via TTS, then resumes recording for the user's
@@ -261,14 +343,23 @@ const ConversationPage = () => {
         };
         mediaRecorderRef.current.stop();
       }
+      clearRecordingTimer();
       setIsRecording(false);
+      setTranscribedText(null);
       stopSpeaking();
       isSpeakingRef.current = false;
       setIsSpeaking(false);
     } else {
       voiceModeRef.current = true;
       setVoiceMode(true);
-      void startRecording();
+      if (messages.length === 0) {
+        // Let the AI open the conversation instead of prompting the user to
+        // speak first. The greeting reply is spoken via the auto-play effect,
+        // which resumes recording once TTS finishes.
+        sendMessage({ text: "[Start the conversation]" });
+      } else {
+        void startRecording();
+      }
     }
   };
 
@@ -297,7 +388,7 @@ const ConversationPage = () => {
       previousStatusRef.current === "submitted";
     if (wasStreaming && status === "ready") {
       const conversationMessages: ConversationMessage[] = messages
-        .filter((m) => m.role === "user" || m.role === "assistant")
+        .filter((m) => (m.role === "user" || m.role === "assistant") && !isGreetingTrigger(m))
         .map((m) => ({
           role: m.role as "user" | "assistant",
           content: getMessageText(m.parts),
@@ -361,6 +452,9 @@ const ConversationPage = () => {
         mediaRecorderRef.current.stream.getTracks().forEach((t) => t.stop());
         mediaRecorderRef.current.stop();
       }
+      if (recordingTimerRef.current) {
+        clearInterval(recordingTimerRef.current);
+      }
       stopSpeaking();
     };
   }, []);
@@ -407,13 +501,15 @@ const ConversationPage = () => {
         mediaRecorderRef.current.stream.getTracks().forEach((t) => t.stop());
         mediaRecorderRef.current.stop();
       }
+      clearRecordingTimer();
       setIsRecording(false);
+      setTranscribedText(null);
       stopSpeaking();
       isSpeakingRef.current = false;
     }
 
     const conversationMessages: ConversationMessage[] = messages
-      .filter((m) => m.role === "user" || m.role === "assistant")
+      .filter((m) => (m.role === "user" || m.role === "assistant") && !isGreetingTrigger(m))
       .map((m) => ({
         role: m.role as "user" | "assistant",
         content: getMessageText(m.parts),
@@ -482,7 +578,7 @@ const ConversationPage = () => {
         )}
         {messages.map((message) => {
           const text = getMessageText(message.parts);
-          if (!text) return null;
+          if (!text || text === "[Start the conversation]") return null;
           const isUser = message.role === "user";
           return (
             <div
@@ -563,60 +659,118 @@ const ConversationPage = () => {
               <div className="min-w-0 flex-1">
                 <p className="text-sm font-medium">
                   {isTranscribing
-                    ? "Transcribing..."
+                    ? "Transcribing with Whisper..."
                     : isStreaming
                       ? "AI is thinking..."
                       : isSpeaking
                         ? "AI is speaking..."
                         : isRecording
-                          ? "Recording..."
-                          : "Ready"}
+                          ? `Recording... ${formatDuration(recordingDuration)} / ${formatDuration(MAX_RECORDING_SECONDS)}`
+                          : transcribedText
+                            ? "Review your message"
+                            : "Ready"}
                 </p>
                 <p className="text-xs text-muted-foreground">
                   {isRecording && "Your voice will be transcribed by Whisper AI"}
                 </p>
               </div>
             </div>
+
+            {/* Transcription preview */}
+            {transcribedText && (
+              <div className="space-y-2 rounded-lg border bg-muted/20 px-4 py-3">
+                <p className="text-xs font-medium text-muted-foreground">Whisper heard:</p>
+                <p className="text-sm">&ldquo;{transcribedText}&rdquo;</p>
+                <div className="flex flex-col gap-2 sm:flex-row">
+                  <Button
+                    type="button"
+                    className="w-full min-h-[44px]"
+                    onClick={handleConfirmSend}
+                    disabled={isStreaming}
+                  >
+                    Send
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="w-full min-h-[44px]"
+                    onClick={handleEditTranscription}
+                  >
+                    Edit
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    className="w-full min-h-[44px]"
+                    onClick={handleRetryRecording}
+                  >
+                    Retry
+                  </Button>
+                </div>
+              </div>
+            )}
+
             {/* Recording controls */}
             {isRecording && (
-              <Button
-                type="button"
-                className="w-full min-h-[44px]"
-                onClick={() => void handleVoiceSend()}
-              >
-                <Square className="h-4 w-4" />
-                Stop &amp; Send
-              </Button>
+              <div className="flex flex-col gap-2 sm:flex-row">
+                <Button
+                  type="button"
+                  className="w-full min-h-[44px]"
+                  onClick={() => void handleVoiceStopAndTranscribe()}
+                >
+                  <Square className="h-4 w-4" />
+                  Stop &amp; Send
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="w-full min-h-[44px]"
+                  onClick={handleCancelRecording}
+                >
+                  Cancel &amp; Retry
+                </Button>
+              </div>
             )}
-            {!isRecording && !isTranscribing && !isSpeaking && !isStreaming && (
-              <Button
-                type="button"
-                className="w-full min-h-[44px]"
-                onClick={() => void startRecording()}
-              >
-                <Mic className="h-4 w-4" />
-                Record Next
-              </Button>
-            )}
+            {!isRecording &&
+              !isTranscribing &&
+              !isSpeaking &&
+              !isStreaming &&
+              !transcribedText && (
+                <Button
+                  type="button"
+                  className="w-full min-h-[44px]"
+                  onClick={() => void startRecording()}
+                >
+                  <Mic className="h-4 w-4" />
+                  Record Next
+                </Button>
+              )}
           </div>
         ) : (
           <div className="flex gap-2">
             {voiceSupported && (
-              <Button
-                type="button"
-                variant={isRecording ? "default" : "outline"}
-                size="icon"
-                className="min-h-[44px] min-w-[44px]"
-                onClick={() => void handleToggleVoiceInput()}
-                disabled={isTranscribing}
-                aria-label="Voice input"
-              >
-                {isTranscribing ? (
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                ) : (
-                  <Mic className="h-4 w-4" />
+              <div className="flex flex-col items-center gap-1">
+                <Button
+                  type="button"
+                  variant={isRecording ? "default" : "outline"}
+                  size="icon"
+                  className={`min-h-[44px] min-w-[44px] ${isRecording ? "animate-pulse bg-red-500 text-white hover:bg-red-500" : ""}`}
+                  onClick={() => void handleToggleVoiceInput()}
+                  disabled={isTranscribing}
+                  aria-label={isRecording ? "Stop recording" : "Voice input"}
+                >
+                  {isTranscribing ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <Mic className="h-4 w-4" />
+                  )}
+                </Button>
+                {(isRecording || isTranscribing) && (
+                  <span className="whitespace-nowrap text-[10px] text-muted-foreground">
+                    {isTranscribing ? "Transcribing..." : "Recording..."}
+                  </span>
                 )}
-              </Button>
+              </div>
             )}
             <Textarea
               value={input}
