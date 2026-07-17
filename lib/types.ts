@@ -169,3 +169,23 @@ export interface TranslationExercise {
   feedback: string; // AI's evaluation summary
   createdAt: Date;
 }
+
+export type PoolTaskType =
+  | "listening-dictation"
+  | "listening-comprehension"
+  | "listening-prediction"
+  | "translation-sentence"
+  | "translation-paragraph"
+  | "translation-situational"
+  | "reading-article"
+  | "writing-prompt";
+
+export interface PoolTask {
+  id: string;
+  type: PoolTaskType;
+  difficulty: string; // CEFR level
+  content: Record<string, unknown>; // type-specific generated content
+  assignedDate: string | null; // YYYY-MM-DD or null if unassigned
+  completed: boolean;
+  createdAt: Date;
+}
