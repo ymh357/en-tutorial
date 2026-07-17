@@ -175,7 +175,7 @@ const ReaderSessionPage = ({
   const { id } = use(params);
   const router = useRouter();
 
-  const session = useLiveQuery(() => db.readingSessions.get(id), [id]);
+  const session = useLiveQuery(() => db.readingSessions.get(id) ?? null, [id]);
   const profile = useLiveQuery(() => dbHelpers.getProfile());
   const srsLemmas = useLiveQuery(() => db.cards.toArray(), []);
 
@@ -708,6 +708,25 @@ const ReaderSessionPage = ({
       )}
     </div>
   );
+
+  if (session === undefined) {
+    return (
+      <div className="flex items-center justify-center py-20">
+        <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+      </div>
+    );
+  }
+
+  if (session === null) {
+    return (
+      <div className="max-w-md mx-auto py-20 text-center space-y-4">
+        <p className="text-muted-foreground">Reading session not found.</p>
+        <Button variant="outline" onClick={() => router.push("/reader")}>
+          Back to Reader
+        </Button>
+      </div>
+    );
+  }
 
   return (
     <div className="flex flex-col lg:flex-row lg:items-start gap-4 pb-24 lg:pb-8 px-4 md:px-8">
