@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { useChat, type UIMessage } from "@ai-sdk/react";
 import { DefaultChatTransport } from "ai";
-import { ArrowLeft, Mic, Send, Square, Volume2 } from "lucide-react";
+import { ArrowLeft, Mic, MicOff, Send, Square, Volume2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
@@ -14,7 +14,7 @@ import { recordCost } from "@/lib/cost-tracker";
 import { useProfile } from "@/hooks/use-db";
 import { getScenarioById } from "@/lib/scenarios";
 import type { Conversation, ConversationMessage, ScenarioType } from "@/lib/types";
-import { speak } from "@/lib/tts";
+import { speak, stopSpeaking } from "@/lib/tts";
 
 const MIN_EXCHANGES_TO_END = 3;
 
@@ -161,6 +161,10 @@ const ConversationPage = () => {
   const bottomRef = useRef<HTMLDivElement>(null);
   const [startTime] = useState<number>(() => Date.now());
   const previousStatusRef = useRef(status);
+  const [voiceMode, setVoiceMode] = useState(false);
+  const voiceModeRef = useRef(false);
+  const isSpeakingRef = useRef(false);
+  const [isSpeaking, setIsSpeaking] = useState(false);
 
   const isStreaming = status === "streaming" || status === "submitted";
   const voiceSupported =
@@ -169,6 +173,74 @@ const ConversationPage = () => {
 
   const exchangeCount = messages.filter((m) => m.role === "user").length;
   const canEnd = exchangeCount >= MIN_EXCHANGES_TO_END && !isStreaming;
+
+  // Starts a single-utterance speech recognition session. Used both for the
+  // initial voice-mode activation and to resume listening after each AI
+  // reply finishes playing.
+  const startContinuousListening = () => {
+    const SpeechRecognitionCtor = getSpeechRecognition();
+    if (!SpeechRecognitionCtor) return;
+
+    const recognition = new SpeechRecognitionCtor();
+    recognition.lang = "en-US";
+    recognition.interimResults = false;
+    recognition.continuous = false;
+
+    recognition.onresult = (event) => {
+      const transcript = event.results[0]?.[0]?.transcript ?? "";
+      if (transcript.trim() && voiceModeRef.current) {
+        sendMessage({ text: transcript.trim() });
+      }
+    };
+
+    recognition.onerror = () => {
+      setIsRecording(false);
+      if (voiceModeRef.current) {
+        setTimeout(() => {
+          if (voiceModeRef.current && !isSpeakingRef.current) {
+            startContinuousListening();
+          }
+        }, 500);
+      }
+    };
+
+    recognition.onend = () => {
+      setIsRecording(false);
+    };
+
+    recognitionRef.current = recognition;
+    setIsRecording(true);
+    recognition.start();
+  };
+
+  // Speaks the given text via TTS, then resumes listening for the user's
+  // next utterance once playback finishes. Used to auto-play AI replies
+  // and auto-resume the mic in voice mode.
+  const speakAndResumeListening = async (text: string) => {
+    isSpeakingRef.current = true;
+    setIsSpeaking(true);
+    await speak(text);
+    isSpeakingRef.current = false;
+    setIsSpeaking(false);
+    if (voiceModeRef.current) {
+      startContinuousListening();
+    }
+  };
+
+  const toggleVoiceMode = () => {
+    if (voiceMode) {
+      voiceModeRef.current = false;
+      setVoiceMode(false);
+      recognitionRef.current?.stop();
+      stopSpeaking();
+      isSpeakingRef.current = false;
+      setIsSpeaking(false);
+    } else {
+      voiceModeRef.current = true;
+      setVoiceMode(true);
+      startContinuousListening();
+    }
+  };
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -217,6 +289,32 @@ const ConversationPage = () => {
     previousStatusRef.current = status;
   }, [status, messages, conversationId, type, scenarioParam, title, startTime]);
 
+  // In voice mode, once the assistant finishes replying, speak the reply
+  // aloud and then resume listening for the user's next utterance.
+  useEffect(() => {
+    const wasStreaming =
+      previousStatusRef.current === "streaming" ||
+      previousStatusRef.current === "submitted";
+
+    if (wasStreaming && status === "ready" && voiceModeRef.current) {
+      const lastMessage = messages[messages.length - 1];
+      if (lastMessage?.role === "assistant") {
+        const text = getMessageText(lastMessage.parts);
+        if (text) {
+          // Deferred via setTimeout so the state update inside
+          // speakAndResumeListening doesn't run synchronously within this
+          // effect's call stack (matches pattern used elsewhere, e.g.
+          // app/listening/page.tsx).
+          const timer = setTimeout(() => void speakAndResumeListening(text), 0);
+          return () => clearTimeout(timer);
+        }
+      }
+    }
+    // previousStatusRef is updated by the persistence effect above, which
+    // runs in the same commit for the same status/messages dependency change.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [status, messages]);
+
   // Warn before leaving the tab if the conversation hasn't been ended/reviewed yet.
   useEffect(() => {
     const handleBeforeUnload = (e: BeforeUnloadEvent) => {
@@ -227,6 +325,14 @@ const ConversationPage = () => {
     window.addEventListener("beforeunload", handleBeforeUnload);
     return () => window.removeEventListener("beforeunload", handleBeforeUnload);
   }, [messages.length]);
+
+  // Stop any active recognition/TTS if the page unmounts while voice mode is on.
+  useEffect(() => {
+    return () => {
+      recognitionRef.current?.stop();
+      stopSpeaking();
+    };
+  }, []);
 
   const handleSend = () => {
     const text = input.trim();
@@ -274,6 +380,14 @@ const ConversationPage = () => {
   const handleEndAndReview = async () => {
     if (!canEnd || isEnding) return;
     setIsEnding(true);
+
+    if (voiceModeRef.current) {
+      voiceModeRef.current = false;
+      setVoiceMode(false);
+      recognitionRef.current?.stop();
+      stopSpeaking();
+      isSpeakingRef.current = false;
+    }
 
     const conversationMessages: ConversationMessage[] = messages
       .filter((m) => m.role === "user" || m.role === "assistant")
@@ -392,39 +506,75 @@ const ConversationPage = () => {
 
       {/* Input area */}
       <div className="fixed bottom-0 left-0 right-0 z-10 shrink-0 space-y-2 border-t bg-background p-4 md:static md:z-auto md:border-t-0 md:bg-transparent md:p-0 md:pt-4">
-        <div className="flex gap-2">
-          {voiceSupported && (
-            <Button
-              type="button"
-              variant={isRecording ? "default" : "outline"}
-              size="icon"
-              className="min-h-[44px] min-w-[44px]"
-              onClick={handleToggleVoiceInput}
-              aria-label="Voice input"
+        {voiceSupported && (
+          <Button
+            type="button"
+            variant={voiceMode ? "default" : "outline"}
+            className="w-full min-h-[44px]"
+            onClick={toggleVoiceMode}
+          >
+            {voiceMode ? <MicOff className="h-4 w-4" /> : <Mic className="h-4 w-4" />}
+            Voice Mode: {voiceMode ? "ON" : "OFF"}
+          </Button>
+        )}
+
+        {voiceMode ? (
+          <div className="flex flex-col items-center gap-2 rounded-lg border bg-muted/20 py-6">
+            <div
+              className={`flex h-16 w-16 items-center justify-center rounded-full ${
+                isRecording
+                  ? "animate-pulse bg-primary text-primary-foreground"
+                  : "bg-muted text-muted-foreground"
+              }`}
             >
-              <Mic className="h-4 w-4" />
-            </Button>
-          )}
-          <Textarea
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            onKeyDown={handleKeyDown}
-            placeholder="Type your message..."
-            className="min-h-[44px] resize-none"
-            disabled={isStreaming}
-          />
-          {isStreaming ? (
-            <Button type="button" variant="outline" className="min-h-[44px]" onClick={() => stop()}>
-              <Square className="h-4 w-4" />
-              Stop
-            </Button>
-          ) : (
-            <Button type="button" className="min-h-[44px]" onClick={handleSend} disabled={!input.trim()}>
-              <Send className="h-4 w-4" />
-              Send
-            </Button>
-          )}
-        </div>
+              <Mic className="h-7 w-7" />
+            </div>
+            <p className="text-sm font-medium text-muted-foreground">
+              {isStreaming
+                ? "AI is thinking..."
+                : isSpeaking
+                  ? "AI is speaking..."
+                  : isRecording
+                    ? "Listening..."
+                    : "Processing..."}
+            </p>
+          </div>
+        ) : (
+          <div className="flex gap-2">
+            {voiceSupported && (
+              <Button
+                type="button"
+                variant={isRecording ? "default" : "outline"}
+                size="icon"
+                className="min-h-[44px] min-w-[44px]"
+                onClick={handleToggleVoiceInput}
+                aria-label="Voice input"
+              >
+                <Mic className="h-4 w-4" />
+              </Button>
+            )}
+            <Textarea
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              onKeyDown={handleKeyDown}
+              placeholder="Type your message..."
+              className="min-h-[44px] resize-none"
+              disabled={isStreaming}
+            />
+            {isStreaming ? (
+              <Button type="button" variant="outline" className="min-h-[44px]" onClick={() => stop()}>
+                <Square className="h-4 w-4" />
+                Stop
+              </Button>
+            ) : (
+              <Button type="button" className="min-h-[44px]" onClick={handleSend} disabled={!input.trim()}>
+                <Send className="h-4 w-4" />
+                Send
+              </Button>
+            )}
+          </div>
+        )}
+
         <Button
           variant="secondary"
           className="w-full min-h-[44px]"
