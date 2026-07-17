@@ -337,27 +337,25 @@ const ConversationPage = () => {
 
   // In voice mode, once the assistant finishes replying, speak the reply
   // aloud and then resume listening for the user's next utterance.
+  // Uses its own ref to track the previous status independently of the
+  // persistence effect (which updates previousStatusRef before this runs).
+  const voiceAutoPlayPrevStatusRef = useRef(status);
   useEffect(() => {
     const wasStreaming =
-      previousStatusRef.current === "streaming" ||
-      previousStatusRef.current === "submitted";
+      voiceAutoPlayPrevStatusRef.current === "streaming" ||
+      voiceAutoPlayPrevStatusRef.current === "submitted";
+    voiceAutoPlayPrevStatusRef.current = status;
 
     if (wasStreaming && status === "ready" && voiceModeRef.current) {
       const lastMessage = messages[messages.length - 1];
       if (lastMessage?.role === "assistant") {
         const text = getMessageText(lastMessage.parts);
         if (text) {
-          // Deferred via setTimeout so the state update inside
-          // speakAndResumeListening doesn't run synchronously within this
-          // effect's call stack (matches pattern used elsewhere, e.g.
-          // app/listening/page.tsx).
           const timer = setTimeout(() => void speakAndResumeListening(text), 0);
           return () => clearTimeout(timer);
         }
       }
     }
-    // previousStatusRef is updated by the persistence effect above, which
-    // runs in the same commit for the same status/messages dependency change.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [status, messages]);
 
