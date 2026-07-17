@@ -175,7 +175,17 @@ const ReaderSessionPage = ({
   const { id } = use(params);
   const router = useRouter();
 
-  const session = useLiveQuery(() => db.readingSessions.get(id) ?? null, [id]);
+  const sessionResult = useLiveQuery(
+    async () => {
+      const s = await db.readingSessions.get(id);
+      return s === undefined ? ("not-found" as const) : s;
+    },
+    [id]
+  );
+  // undefined = still loading, "not-found" = ID doesn't exist, otherwise = session data
+  const session = sessionResult === undefined || sessionResult === "not-found" ? null : sessionResult;
+  const isLoading = sessionResult === undefined;
+  const isNotFound = sessionResult === "not-found";
   const profile = useLiveQuery(() => dbHelpers.getProfile());
   const srsLemmas = useLiveQuery(() => db.cards.toArray(), []);
 
@@ -709,7 +719,7 @@ const ReaderSessionPage = ({
     </div>
   );
 
-  if (session === undefined) {
+  if (isLoading) {
     return (
       <div className="flex items-center justify-center py-20">
         <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
@@ -717,7 +727,7 @@ const ReaderSessionPage = ({
     );
   }
 
-  if (session === null) {
+  if (isNotFound || !session) {
     return (
       <div className="max-w-md mx-auto py-20 text-center space-y-4">
         <p className="text-muted-foreground">Reading session not found.</p>
