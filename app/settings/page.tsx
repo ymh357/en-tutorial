@@ -1,11 +1,9 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { useProfile } from "@/hooks/use-db";
 import { db } from "@/lib/db";
-import { dbHelpers } from "@/lib/db-helpers";
 import { getCostSummary, clearCostHistory, type CostSummary } from "@/lib/cost-tracker";
-import { generatePoolTasks, getPoolStatus } from "@/lib/task-pool";
 import {
   Card,
   CardContent,
@@ -37,9 +35,6 @@ import {
 const CEFR_LEVELS = ["A2", "B1", "B2", "C1"] as const;
 const DAILY_GOAL_STORAGE_KEY = "en-tutor-daily-goal";
 const DEFAULT_DAILY_GOAL_MINUTES = 20;
-const TASKS_PER_DAY = 6;
-const POOL_TARGET_DAYS = 7;
-
 const loadDailyGoal = (): number => {
   if (typeof window === "undefined") return DEFAULT_DAILY_GOAL_MINUTES;
   const raw = window.localStorage.getItem(DAILY_GOAL_STORAGE_KEY);
@@ -64,45 +59,9 @@ const SettingsPage = () => {
 
   const [costSummary, setCostSummary] = useState<CostSummary>(() => getCostSummary());
 
-  const [poolStatus, setPoolStatus] = useState<{
-    unassigned: number;
-    todayTotal: number;
-    todayCompleted: number;
-    needsRefill: boolean;
-  } | null>(null);
-  const [isGenerating, setIsGenerating] = useState(false);
-  const [genProgress, setGenProgress] = useState({ done: 0, total: 0 });
-
-  const refreshPoolStatus = async () => {
-    setPoolStatus(await getPoolStatus());
-  };
-
-  useEffect(() => {
-    const loadPoolStatus = async () => {
-      setPoolStatus(await getPoolStatus());
-    };
-    void loadPoolStatus();
-  }, []);
-
   const handleClearCostHistory = () => {
     clearCostHistory();
     setCostSummary(getCostSummary());
-  };
-
-  const handleGeneratePool = async () => {
-    setIsGenerating(true);
-    setGenProgress({ done: 0, total: 0 });
-    try {
-      const profile = await dbHelpers.getProfile();
-      const level = profile.initialCefrLevel || "B1";
-      const count = TASKS_PER_DAY * POOL_TARGET_DAYS; // 1 week
-      await generatePoolTasks(level, count, (done, total) => {
-        setGenProgress({ done, total });
-      });
-      await refreshPoolStatus();
-    } finally {
-      setIsGenerating(false);
-    }
   };
 
   const handleSaveCefrLevel = async () => {
@@ -275,51 +234,6 @@ const SettingsPage = () => {
               value={dailyGoal}
               onChange={(e) => handleDailyGoalChange(e.target.value)}
             />
-          </div>
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardHeader>
-          <CardTitle>Task Pool</CardTitle>
-          <CardDescription>
-            Pre-generate practice content so exercises load instantly instead
-            of waiting on the AI each time.
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="grid grid-cols-2 gap-3 sm:max-w-sm">
-            <div>
-              <p className="text-lg font-semibold">
-                {poolStatus ? poolStatus.unassigned : "-"}
-              </p>
-              <p className="text-xs text-muted-foreground">
-                Tasks ready ({poolStatus ? Math.floor(poolStatus.unassigned / TASKS_PER_DAY) : 0} days of content)
-              </p>
-            </div>
-            <div>
-              <p className="text-lg font-semibold">
-                {poolStatus ? `${poolStatus.todayCompleted}/${poolStatus.todayTotal}` : "-"}
-              </p>
-              <p className="text-xs text-muted-foreground">Today&apos;s tasks done</p>
-            </div>
-          </div>
-
-          {poolStatus?.needsRefill && !isGenerating && (
-            <p className="text-sm text-amber-600">
-              Pool is running low — generate more to keep exercises loading instantly.
-            </p>
-          )}
-
-          <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-            <Button onClick={() => void handleGeneratePool()} disabled={isGenerating}>
-              {isGenerating ? "Generating..." : "Generate 1 Week of Tasks"}
-            </Button>
-            {isGenerating && (
-              <span className="text-sm text-muted-foreground">
-                Generating... {genProgress.done}/{genProgress.total || TASKS_PER_DAY * POOL_TARGET_DAYS} tasks ready
-              </span>
-            )}
           </div>
         </CardContent>
       </Card>

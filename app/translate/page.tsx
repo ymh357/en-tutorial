@@ -31,6 +31,7 @@ import { useProfile } from "@/hooks/use-db";
 import { db } from "@/lib/db";
 import { dbHelpers } from "@/lib/db-helpers";
 import { recordCost } from "@/lib/cost-tracker";
+import { completeTask } from "@/lib/task-pool";
 import type {
   Card as SrsCard,
   TranslationExercise as TranslationExerciseRecord,
@@ -315,6 +316,48 @@ const TranslatePage = () => {
     resetExerciseState();
     setExercise(null);
 
+    // Map mode to pool task type
+    const poolTypeMap: Record<ExerciseMode, string> = {
+      sentence: "translation-sentence",
+      paragraph: "translation-paragraph",
+      situational: "translation-situational",
+    };
+
+    // Try pool first
+    try {
+      const poolTask = await db.poolTasks
+        .where("type").equals(poolTypeMap[targetMode])
+        .and(t => !t.completed && t.assignedDate !== "")
+        .first();
+
+      if (poolTask) {
+        const content = poolTask.content as Record<string, unknown>;
+
+        if (targetMode === "sentence") {
+          // Sentence pool has { items: [{ chinese, referenceTranslation, keyPoints }] }
+          const items = content.items as TranslationExercise[] | undefined;
+          if (items && items.length > 0) {
+            setExercise(items[0]);
+            await completeTask(poolTask.id);
+            setIsGenerating(false);
+            return;
+          }
+        } else {
+          // Paragraph and situational have { chinese, referenceTranslation, keyPoints }
+          const parsed = parseExercise(JSON.stringify(content));
+          if (parsed) {
+            setExercise(parsed);
+            await completeTask(poolTask.id);
+            setIsGenerating(false);
+            return;
+          }
+        }
+      }
+    } catch {
+      // Fall through to real-time generation
+    }
+
+    // Fallback to real-time generation
     try {
       const { system, prompt } = buildGenerationPrompt(
         targetMode,

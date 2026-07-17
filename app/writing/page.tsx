@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import {
@@ -9,6 +10,7 @@ import {
   ClipboardList,
   Shuffle,
   PenLine,
+  Sparkles,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -19,7 +21,9 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { db } from "@/lib/db";
 import { useWritingSessions } from "@/hooks/use-db";
+import { completeTask } from "@/lib/task-pool";
 import type { WritingSession, WritingTaskType } from "@/lib/types";
 
 type GuidedTask = {
@@ -165,9 +169,46 @@ const QUICK_TASKS: QuickTask[] = [
 const getRandomPrompt = (pool: string[]): string =>
   pool[Math.floor(Math.random() * pool.length)];
 
+interface PoolWritingPrompt {
+  taskType: string;
+  prompt: string;
+  targetWords: number;
+  keyPhrases: string[];
+  scaffolding: string;
+  poolTaskId: string;
+}
+
 const WritingPage = () => {
   const router = useRouter();
   const recentWritings = useWritingSessions(5);
+  const [todayPrompt, setTodayPrompt] = useState<PoolWritingPrompt | null>(null);
+
+  useEffect(() => {
+    const loadPoolPrompt = async () => {
+      try {
+        const poolTask = await db.poolTasks
+          .where("type").equals("writing-prompt")
+          .and(t => !t.completed && t.assignedDate !== "")
+          .first();
+
+        if (poolTask) {
+          const content = poolTask.content as {
+            taskType: string;
+            prompt: string;
+            targetWords: number;
+            keyPhrases: string[];
+            scaffolding: string;
+          };
+          if (content.prompt) {
+            setTodayPrompt({ ...content, poolTaskId: poolTask.id });
+          }
+        }
+      } catch {
+        // Silently ignore pool errors
+      }
+    };
+    void loadPoolPrompt();
+  }, []);
 
   const startGuidedTask = (task: GuidedTask): void => {
     const id = crypto.randomUUID();
@@ -187,6 +228,16 @@ const WritingPage = () => {
     router.push(`/writing/${id}?type=free`);
   };
 
+  const startPoolTask = async (): Promise<void> => {
+    if (!todayPrompt) return;
+    const id = crypto.randomUUID();
+    const taskType = (todayPrompt.taskType || "email") as WritingTaskType;
+    await completeTask(todayPrompt.poolTaskId);
+    router.push(
+      `/writing/${id}?type=${taskType}&prompt=${encodeURIComponent(todayPrompt.prompt)}`
+    );
+  };
+
   return (
     <div className="max-w-4xl space-y-6 p-4 md:space-y-8 md:p-6">
       <div>
@@ -195,6 +246,41 @@ const WritingPage = () => {
           Choose a task and get AI feedback on your writing.
         </p>
       </div>
+
+      {/* Today's Writing Task from pool */}
+      {todayPrompt && (
+        <Card className="border-primary/40">
+          <CardHeader>
+            <div className="flex items-center justify-between gap-2">
+              <CardTitle className="flex items-center gap-2 text-base">
+                <Sparkles className="h-4 w-4 text-primary" />
+                Today&apos;s Writing Task
+              </CardTitle>
+              <Badge variant="outline">{todayPrompt.taskType}</Badge>
+            </div>
+            <CardDescription>{todayPrompt.prompt}</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            <div className="flex flex-wrap gap-1">
+              {todayPrompt.keyPhrases.map((phrase) => (
+                <Badge key={phrase} variant="secondary" className="text-xs">
+                  {phrase}
+                </Badge>
+              ))}
+            </div>
+            <p className="text-xs text-muted-foreground">
+              Target: ~{todayPrompt.targetWords} words
+              {todayPrompt.scaffolding && ` | ${todayPrompt.scaffolding}`}
+            </p>
+            <Button
+              className="w-full min-h-[44px]"
+              onClick={() => void startPoolTask()}
+            >
+              Start This Task
+            </Button>
+          </CardContent>
+        </Card>
+      )}
 
       {/* Guided tasks */}
       <div className="space-y-4">

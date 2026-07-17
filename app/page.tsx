@@ -44,7 +44,6 @@ import { generateStudyPlan, type StudyStep, type StudyStepType } from "@/lib/stu
 import { getCostSummary, type CostSummary } from "@/lib/cost-tracker";
 import { generatePoolTasks, getPoolStatus } from "@/lib/task-pool";
 import type { DailyStats, MasteryLevel } from "@/lib/types";
-import { Zap, Loader2 } from "lucide-react";
 
 const STEP_ICONS: Record<StudyStepType, typeof Brain> = {
   srs: Brain,
@@ -56,9 +55,7 @@ const STEP_ICONS: Record<StudyStepType, typeof Brain> = {
 };
 
 const SESSION_STORAGE_PREFIX = "en-tutor-session-";
-const SKIP_POOL_PROMPT_KEY = "en-tutor-skip-pool-prompt";
-const TASKS_PER_DAY = 6;
-const POOL_TARGET_DAYS = 7;
+const POOL_REFILL_COUNT = 42; // 1 week of tasks
 
 const getGreeting = (hour: number): string => {
   if (hour >= 5 && hour < 12) return "Good morning";
@@ -219,56 +216,21 @@ const DashboardPage = () => {
   const totalWritingCount = useLiveQuery(() => db.writingSessions.count()) ?? 0;
   const [costSummary] = useState<CostSummary>(() => getCostSummary());
 
-  const [poolStatus, setPoolStatus] = useState<{
-    unassigned: number;
-    todayTotal: number;
-    todayCompleted: number;
-    needsRefill: boolean;
-  } | null>(null);
-  const [showPoolPrompt, setShowPoolPrompt] = useState(false);
-  const [isGeneratingPool, setIsGeneratingPool] = useState(false);
-  const [poolGenProgress, setPoolGenProgress] = useState({ done: 0, total: 0 });
-
   useEffect(() => {
     dbHelpers.updateStreak();
   }, []);
 
+  // Silent background pool refill
   useEffect(() => {
-    const loadPoolStatus = async () => {
-      const status = await getPoolStatus();
-      setPoolStatus(status);
-      const skipPrompt =
-        typeof window !== "undefined" &&
-        window.localStorage.getItem(SKIP_POOL_PROMPT_KEY) === "true";
-      if (status.unassigned === 0 && status.todayTotal === 0 && !skipPrompt) {
-        setShowPoolPrompt(true);
-      }
+    const refillPool = async () => {
+      const { needsRefill } = await getPoolStatus();
+      if (!needsRefill) return;
+      const prof = await dbHelpers.getProfile();
+      const level = prof.initialCefrLevel || "B1";
+      await generatePoolTasks(level, POOL_REFILL_COUNT);
     };
-    void loadPoolStatus();
+    void refillPool();
   }, []);
-
-  const handleGeneratePoolFromPrompt = async () => {
-    setIsGeneratingPool(true);
-    setPoolGenProgress({ done: 0, total: 0 });
-    try {
-      const level = profile?.initialCefrLevel || "B1";
-      const count = TASKS_PER_DAY * POOL_TARGET_DAYS;
-      await generatePoolTasks(level, count, (done, total) => {
-        setPoolGenProgress({ done, total });
-      });
-      setPoolStatus(await getPoolStatus());
-      setShowPoolPrompt(false);
-    } finally {
-      setIsGeneratingPool(false);
-    }
-  };
-
-  const handleSkipPoolPrompt = () => {
-    if (typeof window !== "undefined") {
-      window.localStorage.setItem(SKIP_POOL_PROMPT_KEY, "true");
-    }
-    setShowPoolPrompt(false);
-  };
 
   const heatmapRange = useMemo(() => {
     const end = new Date();
@@ -494,40 +456,6 @@ const DashboardPage = () => {
         </p>
       </div>
 
-      {/* First-visit pool generation prompt */}
-      {showPoolPrompt && (
-        <Card className="border-primary/40">
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2 text-base">
-              <Zap className="size-4 text-amber-500" />
-              Pre-generate this week&apos;s practice content?
-            </CardTitle>
-            <CardDescription>
-              So exercises load instantly instead of waiting for the AI each
-              time. Takes a couple of minutes now, saves waiting later.
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            {isGeneratingPool ? (
-              <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                <Loader2 className="size-4 animate-spin" />
-                Generating... {poolGenProgress.done}/
-                {poolGenProgress.total || TASKS_PER_DAY * POOL_TARGET_DAYS} tasks ready
-              </div>
-            ) : (
-              <div className="flex flex-col gap-2 sm:flex-row">
-                <Button onClick={() => void handleGeneratePoolFromPrompt()}>
-                  Generate Now
-                </Button>
-                <Button variant="ghost" onClick={handleSkipPoolPrompt}>
-                  Skip — I&apos;ll wait each time
-                </Button>
-              </div>
-            )}
-          </CardContent>
-        </Card>
-      )}
-
       {/* Today's Plan + Stats Overview */}
       <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
         <Card className="md:col-span-2">
@@ -538,12 +466,6 @@ const DashboardPage = () => {
                 ? `${totalPlanMinutes} min session`
                 : "Nothing pending right now"}
             </CardDescription>
-            <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
-              <Zap className="size-3.5 shrink-0" />
-              {poolStatus && poolStatus.todayTotal > 0
-                ? "Today's content is pre-loaded"
-                : "Content will be generated on-the-fly"}
-            </p>
           </CardHeader>
           <CardContent className="space-y-4">
             {totalPlanMinutes > 0 && (

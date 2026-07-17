@@ -30,6 +30,7 @@ import { useProfile } from "@/hooks/use-db";
 import { db } from "@/lib/db";
 import { dbHelpers } from "@/lib/db-helpers";
 import { recordCost } from "@/lib/cost-tracker";
+import { completeTask } from "@/lib/task-pool";
 import { speak } from "@/lib/tts";
 
 // --- Listening stats persistence (for roadmap tracking) ---
@@ -225,15 +226,52 @@ const DictationTab = ({ cefrLevel }: { cefrLevel: string }) => {
   const [result, setResult] = useState<DiffResult | null>(null);
   const [completed, setCompleted] = useState(0);
   const [totalAccuracy, setTotalAccuracy] = useState(0);
+  const [poolSentences, setPoolSentences] = useState<string[]>([]);
+  const [sentenceIndex, setSentenceIndex] = useState(0);
 
   const generateSentence = async (): Promise<void> => {
     setIsLoading(true);
     setError(null);
     setResult(null);
     setUserInput("");
+
+    // If we have remaining pool sentences, use the next one
+    if (sentenceIndex + 1 < poolSentences.length) {
+      const nextIdx = sentenceIndex + 1;
+      setSentenceIndex(nextIdx);
+      setSentence(poolSentences[nextIdx]);
+      setIsLoading(false);
+      return;
+    }
+
+    // Try pool first
+    try {
+      const poolTask = await db.poolTasks
+        .where("type").equals("listening-dictation")
+        .and(t => !t.completed && t.assignedDate !== "")
+        .first();
+
+      if (poolTask) {
+        const content = poolTask.content as { sentences: string[] };
+        if (content.sentences && content.sentences.length > 0) {
+          setPoolSentences(content.sentences);
+          setSentenceIndex(0);
+          setSentence(content.sentences[0]);
+          await completeTask(poolTask.id);
+          setIsLoading(false);
+          return;
+        }
+      }
+    } catch {
+      // Fall through to real-time generation
+    }
+
+    // Fallback to real-time generation
     try {
       const prompt = `Generate a single English sentence at ${cefrLevel} level. Just the sentence, nothing else.`;
       const content = await callReview(prompt, "You are an English teacher creating dictation practice sentences.");
+      setPoolSentences([]);
+      setSentenceIndex(0);
       setSentence(stripFences(content).replace(/^["']|["']$/g, "").trim());
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to generate sentence");
@@ -458,6 +496,30 @@ const ComprehensionTab = ({ cefrLevel }: { cefrLevel: string }) => {
     setData(null);
     setPrediction("");
     setPredictionConfirmed(false);
+
+    // Try pool first
+    try {
+      const poolTask = await db.poolTasks
+        .where("type").equals("listening-comprehension")
+        .and(t => !t.completed && t.assignedDate !== "")
+        .first();
+
+      if (poolTask) {
+        const content = poolTask.content as { passage: string; questions: ComprehensionQuestion[]; topic?: string };
+        if (content.passage && Array.isArray(content.questions)) {
+          const parsed = parseComprehensionData(JSON.stringify(content));
+          if (parsed) {
+            setData(parsed);
+            await completeTask(poolTask.id);
+            setIsLoading(false);
+            return;
+          }
+        }
+      }
+    } catch {
+      // Fall through to real-time generation
+    }
+
     try {
       const system =
         "You are an English listening test designer. Return ONLY valid JSON (no markdown fences, no explanation).";
@@ -970,6 +1032,27 @@ const PredictionTab = ({ cefrLevel }: { cefrLevel: string }) => {
     setPassage(null);
     setUserInput("");
     setEvaluation(null);
+
+    // Try pool first
+    try {
+      const poolTask = await db.poolTasks
+        .where("type").equals("listening-prediction")
+        .and(t => !t.completed && t.assignedDate !== "")
+        .first();
+
+      if (poolTask) {
+        const content = poolTask.content as { firstHalf: string; secondHalf: string; topic: string };
+        if (content.firstHalf && content.secondHalf && content.topic) {
+          setPassage(content);
+          await completeTask(poolTask.id);
+          setIsLoading(false);
+          return;
+        }
+      }
+    } catch {
+      // Fall through to real-time generation
+    }
+
     try {
       const system =
         "You are an English listening exercise designer. Return ONLY valid JSON (no markdown fences, no explanation).";

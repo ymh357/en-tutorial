@@ -26,6 +26,7 @@ import {
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { db } from "@/lib/db";
 import { useReadingSessions } from "@/hooks/use-db";
+import { completeTask } from "@/lib/task-pool";
 import { UNKNOWN_DIFFICULTY, type ReadingSession } from "@/lib/types";
 
 const DIFFICULTIES = ["A2", "B1", "B2", "C1"] as const;
@@ -137,6 +138,32 @@ const AiGenerateTab = ({
     setError(null);
     setGenerated(null);
     setPrediction("");
+
+    // Try pool first
+    try {
+      const poolTask = await db.poolTasks
+        .where("type").equals("reading-article")
+        .and(t => !t.completed && t.assignedDate !== "")
+        .first();
+
+      if (poolTask) {
+        const content = poolTask.content as { title: string; content: string; comprehensionQuestions: ComprehensionQuestion[] };
+        if (content.title && content.content) {
+          setGenerated({
+            title: content.title,
+            content: content.content,
+            comprehensionQuestions: content.comprehensionQuestions ?? [],
+          });
+          await completeTask(poolTask.id);
+          setIsGenerating(false);
+          return;
+        }
+      }
+    } catch {
+      // Fall through to real-time generation
+    }
+
+    // Fallback to real-time generation
     try {
       const system = `You are an English teacher creating reading material. Generate a 300-500 word article about ${topic} at ${difficulty} level. Use vocabulary and grammar appropriate for that level. Write naturally — this should feel like a real article, not a textbook exercise. Also generate 3 comprehension questions covering different reading skills: one main-idea question, one inference question, and one prediction question. Return ONLY valid JSON (no markdown fences, no explanation) in this exact format: { "title": "article title", "content": "the full article body", "comprehensionQuestions": [ { "question": "What is the main idea of this passage?", "type": "main-idea" }, { "question": "What does the author mean by '...'?", "type": "inference" }, { "question": "What can you predict will happen next?", "type": "prediction" } ] }`;
       const prompt = `Generate an article about ${topic}`;
