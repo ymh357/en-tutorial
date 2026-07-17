@@ -58,7 +58,8 @@ export const generatePoolTasks = async (
   level: string,
   count: number
 ): Promise<void> => {
-  const typesToGenerate = TASK_TYPES.slice(0, Math.min(count, TASK_TYPES.length));
+  // Always generate all types so every module tab has pre-loaded content
+  const typesToGenerate = TASK_TYPES;
   const today = new Date().toISOString().split("T")[0];
 
   for (const type of typesToGenerate) {
