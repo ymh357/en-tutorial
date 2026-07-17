@@ -17,6 +17,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { db } from "@/lib/db";
 import { dbHelpers } from "@/lib/db-helpers";
+import { recordCost } from "@/lib/cost-tracker";
 import type { Card as SrsCard, ConversationReview } from "@/lib/types";
 
 const SCORE_LABELS: Array<{ key: keyof ConversationReview["scores"]; label: string }> = [
@@ -145,9 +146,21 @@ const ReviewPage = () => {
         throw new Error(`Review request failed (${res.status})`);
       }
 
-      const data = (await res.json()) as { content?: string };
+      const data = (await res.json()) as {
+        content?: string;
+        usage?: { promptTokens: number; completionTokens: number };
+      };
       if (!data.content) {
         throw new Error("Empty response from review service");
+      }
+
+      if (data.usage) {
+        recordCost({
+          model: "claude-sonnet-5",
+          inputTokens: data.usage.promptTokens ?? 0,
+          outputTokens: data.usage.completionTokens ?? 0,
+          module: "conversation",
+        });
       }
 
       const review = parseReviewResponse(data.content);

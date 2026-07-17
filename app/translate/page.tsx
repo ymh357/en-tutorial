@@ -30,6 +30,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useProfile } from "@/hooks/use-db";
 import { db } from "@/lib/db";
 import { dbHelpers } from "@/lib/db-helpers";
+import { recordCost } from "@/lib/cost-tracker";
 import type { Card as SrsCard } from "@/lib/types";
 
 type ExerciseMode = "sentence" | "paragraph" | "situational";
@@ -327,9 +328,21 @@ const TranslatePage = () => {
         throw new Error(`Generation request failed (${res.status})`);
       }
 
-      const data = (await res.json()) as { content?: string };
+      const data = (await res.json()) as {
+        content?: string;
+        usage?: { promptTokens: number; completionTokens: number };
+      };
       if (!data.content) {
         throw new Error("Empty response from generation service");
+      }
+
+      if (data.usage) {
+        recordCost({
+          model: "claude-sonnet-5",
+          inputTokens: data.usage.promptTokens ?? 0,
+          outputTokens: data.usage.completionTokens ?? 0,
+          module: "translate",
+        });
       }
 
       const parsed = parseExercise(data.content);
@@ -381,9 +394,21 @@ const TranslatePage = () => {
         throw new Error(`Evaluation request failed (${res.status})`);
       }
 
-      const data = (await res.json()) as { content?: string };
+      const data = (await res.json()) as {
+        content?: string;
+        usage?: { promptTokens: number; completionTokens: number };
+      };
       if (!data.content) {
         throw new Error("Empty response from evaluation service");
+      }
+
+      if (data.usage) {
+        recordCost({
+          model: "claude-sonnet-5",
+          inputTokens: data.usage.promptTokens ?? 0,
+          outputTokens: data.usage.completionTokens ?? 0,
+          module: "translate",
+        });
       }
 
       const parsed = parseEvaluation(data.content);

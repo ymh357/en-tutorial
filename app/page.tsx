@@ -16,6 +16,7 @@ import {
   CheckCircle2,
   Circle,
   TrendingUp,
+  Coins,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -40,6 +41,7 @@ import {
   useWritingSessions,
 } from "@/hooks/use-db";
 import { generateStudyPlan, type StudyStep, type StudyStepType } from "@/lib/study-engine";
+import { getCostSummary, type CostSummary } from "@/lib/cost-tracker";
 import type { DailyStats, MasteryLevel } from "@/lib/types";
 
 const STEP_ICONS: Record<StudyStepType, typeof Brain> = {
@@ -210,6 +212,7 @@ const DashboardPage = () => {
   const writingSessions = useWritingSessions(1);
   const totalConversationCount = useLiveQuery(() => db.conversations.count()) ?? 0;
   const totalWritingCount = useLiveQuery(() => db.writingSessions.count()) ?? 0;
+  const [costSummary] = useState<CostSummary>(() => getCostSummary());
 
   useEffect(() => {
     dbHelpers.updateStreak();
@@ -731,6 +734,36 @@ const DashboardPage = () => {
           </CardContent>
         </Card>
       </div>
+
+      {/* AI Cost — compact usage-cost snapshot, details live in Settings */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2 text-base">
+            <Coins className="size-4 text-amber-500" />
+            AI Cost
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="grid grid-cols-3 gap-3 text-center">
+            <div>
+              <p className="text-lg font-semibold">
+                {costSummary.todayCostA0GI.toFixed(4)}
+              </p>
+              <p className="text-xs text-muted-foreground">Today (A0GI)</p>
+            </div>
+            <div>
+              <p className="text-lg font-semibold">
+                {costSummary.totalCostA0GI.toFixed(4)}
+              </p>
+              <p className="text-xs text-muted-foreground">Total (A0GI)</p>
+            </div>
+            <div>
+              <p className="text-lg font-semibold">{costSummary.totalCalls}</p>
+              <p className="text-xs text-muted-foreground">API calls</p>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
     </div>
   );
 };

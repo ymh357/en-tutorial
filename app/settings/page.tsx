@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { useProfile } from "@/hooks/use-db";
 import { db } from "@/lib/db";
+import { getCostSummary, clearCostHistory, type CostSummary } from "@/lib/cost-tracker";
 import {
   Card,
   CardContent,
@@ -56,6 +57,13 @@ const SettingsPage = () => {
 
   const [dailyGoal, setDailyGoal] = useState<number>(() => loadDailyGoal());
   const [isClearingData, setIsClearingData] = useState(false);
+
+  const [costSummary, setCostSummary] = useState<CostSummary>(() => getCostSummary());
+
+  const handleClearCostHistory = () => {
+    clearCostHistory();
+    setCostSummary(getCostSummary());
+  };
 
   const handleSaveCefrLevel = async () => {
     if (!selectedCefrLevel) return;
@@ -228,6 +236,101 @@ const SettingsPage = () => {
               onChange={(e) => handleDailyGoalChange(e.target.value)}
             />
           </div>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Cost Tracking</CardTitle>
+          <CardDescription>
+            Estimated AI usage cost, priced in A0GI (0G&apos;s native token).
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="grid grid-cols-3 gap-3 text-center sm:max-w-sm">
+            <div>
+              <p className="text-lg font-semibold">
+                {costSummary.todayCostA0GI.toFixed(4)}
+              </p>
+              <p className="text-xs text-muted-foreground">Today (A0GI)</p>
+            </div>
+            <div>
+              <p className="text-lg font-semibold">
+                {costSummary.totalCostA0GI.toFixed(4)}
+              </p>
+              <p className="text-xs text-muted-foreground">Total (A0GI)</p>
+            </div>
+            <div>
+              <p className="text-lg font-semibold">{costSummary.totalCalls}</p>
+              <p className="text-xs text-muted-foreground">Total calls</p>
+            </div>
+          </div>
+
+          <div className="grid gap-4 sm:grid-cols-2">
+            <div>
+              <p className="mb-2 text-sm font-medium">By module</p>
+              {Object.keys(costSummary.byModule).length > 0 ? (
+                <div className="overflow-x-auto rounded-md border">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="border-b bg-muted/50 text-left text-xs text-muted-foreground">
+                        <th className="px-3 py-2 font-medium">Module</th>
+                        <th className="px-3 py-2 font-medium">Calls</th>
+                        <th className="px-3 py-2 font-medium">Cost (A0GI)</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {Object.entries(costSummary.byModule)
+                        .sort(([, a], [, b]) => b.costA0GI - a.costA0GI)
+                        .map(([module, stats]) => (
+                          <tr key={module} className="border-b last:border-0">
+                            <td className="px-3 py-2 capitalize">{module}</td>
+                            <td className="px-3 py-2">{stats.calls}</td>
+                            <td className="px-3 py-2">{stats.costA0GI.toFixed(4)}</td>
+                          </tr>
+                        ))}
+                    </tbody>
+                  </table>
+                </div>
+              ) : (
+                <p className="text-sm text-muted-foreground">No usage recorded yet.</p>
+              )}
+            </div>
+
+            <div>
+              <p className="mb-2 text-sm font-medium">By model</p>
+              {Object.keys(costSummary.byModel).length > 0 ? (
+                <div className="overflow-x-auto rounded-md border">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="border-b bg-muted/50 text-left text-xs text-muted-foreground">
+                        <th className="px-3 py-2 font-medium">Model</th>
+                        <th className="px-3 py-2 font-medium">Calls</th>
+                        <th className="px-3 py-2 font-medium">Cost (A0GI)</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {Object.entries(costSummary.byModel)
+                        .sort(([, a], [, b]) => b.costA0GI - a.costA0GI)
+                        .map(([model, stats]) => (
+                          <tr key={model} className="border-b last:border-0">
+                            <td className="px-3 py-2">{model}</td>
+                            <td className="px-3 py-2">{stats.calls}</td>
+                            <td className="px-3 py-2">{stats.costA0GI.toFixed(4)}</td>
+                          </tr>
+                        ))}
+                    </tbody>
+                  </table>
+                </div>
+              ) : (
+                <p className="text-sm text-muted-foreground">No usage recorded yet.</p>
+              )}
+            </div>
+          </div>
+
+          <Button variant="outline" onClick={handleClearCostHistory}>
+            Clear cost history
+          </Button>
         </CardContent>
       </Card>
 

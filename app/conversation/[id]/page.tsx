@@ -10,6 +10,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { db } from "@/lib/db";
 import { dbHelpers } from "@/lib/db-helpers";
+import { recordCost } from "@/lib/cost-tracker";
 import { useProfile } from "@/hooks/use-db";
 import { getScenarioById } from "@/lib/scenarios";
 import type { Conversation, ConversationMessage, ScenarioType } from "@/lib/types";
@@ -295,6 +296,20 @@ const ConversationPage = () => {
     await db.conversations.put(conversation);
     await dbHelpers.incrementTodayStat("conversationCount");
     await dbHelpers.updateStreak();
+
+    // Streaming responses don't expose token usage on the client, so estimate
+    // from character count (roughly 1 token per 4 chars of English).
+    const totalChars = conversationMessages.reduce(
+      (sum, m) => sum + m.content.length,
+      0
+    );
+    const estimatedTokens = Math.ceil(totalChars / 4);
+    recordCost({
+      model: "deepseek-v4-flash",
+      inputTokens: Math.ceil(estimatedTokens * 0.6),
+      outputTokens: Math.ceil(estimatedTokens * 0.4),
+      module: "conversation",
+    });
 
     router.push(`/conversation/${conversationId}/review`);
   };

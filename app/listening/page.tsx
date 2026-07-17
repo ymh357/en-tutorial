@@ -28,6 +28,7 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useProfile } from "@/hooks/use-db";
 import { dbHelpers } from "@/lib/db-helpers";
+import { recordCost } from "@/lib/cost-tracker";
 import { speak } from "@/lib/tts";
 
 // --- Listening stats persistence (for roadmap tracking) ---
@@ -114,9 +115,21 @@ const callReview = async (prompt: string, system: string): Promise<string> => {
   if (!res.ok) {
     throw new Error(`Request failed: ${res.status}`);
   }
-  const data = (await res.json()) as { content?: string; error?: string };
+  const data = (await res.json()) as {
+    content?: string;
+    error?: string;
+    usage?: { promptTokens: number; completionTokens: number };
+  };
   if (data.error || !data.content) {
     throw new Error(data.error || "No content returned");
+  }
+  if (data.usage) {
+    recordCost({
+      model: "claude-sonnet-5",
+      inputTokens: data.usage.promptTokens ?? 0,
+      outputTokens: data.usage.completionTokens ?? 0,
+      module: "listening",
+    });
   }
   return data.content;
 };

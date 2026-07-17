@@ -17,6 +17,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { db } from "@/lib/db";
 import { dbHelpers } from "@/lib/db-helpers";
+import { recordCost } from "@/lib/cost-tracker";
 import {
   WRITING_REVIEW_ROUND1_SYSTEM,
   WRITING_REVIEW_ROUND2_SYSTEM,
@@ -358,9 +359,21 @@ const WritingEditorPage = () => {
         throw new Error(`Review request failed (${res.status})`);
       }
 
-      const data = (await res.json()) as { content?: string };
+      const data = (await res.json()) as {
+        content?: string;
+        usage?: { promptTokens: number; completionTokens: number };
+      };
       if (!data.content) {
         throw new Error("Empty response from review service");
+      }
+
+      if (data.usage) {
+        recordCost({
+          model: "claude-sonnet-5",
+          inputTokens: data.usage.promptTokens ?? 0,
+          outputTokens: data.usage.completionTokens ?? 0,
+          module: "writing",
+        });
       }
 
       const parsedRound1 = parseRound1Response(data.content);
@@ -399,9 +412,21 @@ const WritingEditorPage = () => {
         throw new Error(`Review request failed (${res.status})`);
       }
 
-      const data = (await res.json()) as { content?: string };
+      const data = (await res.json()) as {
+        content?: string;
+        usage?: { promptTokens: number; completionTokens: number };
+      };
       if (!data.content) {
         throw new Error("Empty response from review service");
+      }
+
+      if (data.usage) {
+        recordCost({
+          model: "claude-sonnet-5",
+          inputTokens: data.usage.promptTokens ?? 0,
+          outputTokens: data.usage.completionTokens ?? 0,
+          module: "writing",
+        });
       }
 
       const parsedReview = parseReviewResponse(data.content);

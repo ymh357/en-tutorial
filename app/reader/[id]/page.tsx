@@ -11,8 +11,14 @@ import { Separator } from "@/components/ui/separator";
 import { Input } from "@/components/ui/input";
 import { db } from "@/lib/db";
 import { dbHelpers } from "@/lib/db-helpers";
+import { recordCost } from "@/lib/cost-tracker";
 import { UNKNOWN_DIFFICULTY, type Card as SrsCard, type ReadingLookup } from "@/lib/types";
 import { speak } from "@/lib/tts";
+
+interface ReviewUsage {
+  promptTokens: number;
+  completionTokens: number;
+}
 
 interface ComprehensionQuestion {
   question: string;
@@ -237,8 +243,18 @@ const ReaderSessionPage = ({
       });
 
       if (!res.ok) throw new Error(`Request failed: ${res.status}`);
-      const data: { content?: string; error?: string } = await res.json();
+      const data: { content?: string; error?: string; usage?: ReviewUsage } =
+        await res.json();
       if (data.error || !data.content) throw new Error(data.error || "No evaluation returned");
+
+      if (data.usage) {
+        recordCost({
+          model: "claude-sonnet-5",
+          inputTokens: data.usage.promptTokens ?? 0,
+          outputTokens: data.usage.completionTokens ?? 0,
+          module: "reader",
+        });
+      }
 
       const evaluations = parseEvaluationResponse(data.content);
       if (!evaluations) {
@@ -329,8 +345,18 @@ const ReaderSessionPage = ({
       });
 
       if (!res.ok) throw new Error(`Request failed: ${res.status}`);
-      const data: { content?: string; error?: string } = await res.json();
+      const data: { content?: string; error?: string; usage?: ReviewUsage } =
+        await res.json();
       if (data.error || !data.content) throw new Error(data.error || "No definition returned");
+
+      if (data.usage) {
+        recordCost({
+          model: "claude-sonnet-5",
+          inputTokens: data.usage.promptTokens ?? 0,
+          outputTokens: data.usage.completionTokens ?? 0,
+          module: "reader",
+        });
+      }
 
       const parsed = parseWordLookupResponse(data.content);
 
@@ -387,8 +413,18 @@ const ReaderSessionPage = ({
       });
 
       if (!res.ok) throw new Error(`Request failed: ${res.status}`);
-      const data: { content?: string; error?: string } = await res.json();
+      const data: { content?: string; error?: string; usage?: ReviewUsage } =
+        await res.json();
       if (data.error || !data.content) throw new Error(data.error || "No analysis returned");
+
+      if (data.usage) {
+        recordCost({
+          model: "claude-sonnet-5",
+          inputTokens: data.usage.promptTokens ?? 0,
+          outputTokens: data.usage.completionTokens ?? 0,
+          module: "reader",
+        });
+      }
 
       setSentencePanel((prev) =>
         prev && prev.sentence === sentence

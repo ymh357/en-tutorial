@@ -34,5 +34,11 @@ export const POST = async (req: Request): Promise<Response> => {
     prompt,
   });
 
-  return Response.json({ content: result.text });
+  return Response.json({
+    content: result.text,
+    usage: {
+      promptTokens: result.usage.inputTokens ?? 0,
+      completionTokens: result.usage.outputTokens ?? 0,
+    },
+  });
 };
