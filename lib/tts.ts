@@ -26,12 +26,19 @@ export const speak = async (text: string, rate?: string): Promise<void> => {
     const audio = new Audio(url);
     currentAudio = audio;
 
-    audio.onended = () => {
-      URL.revokeObjectURL(url);
-      currentAudio = null;
-    };
-
-    await audio.play();
+    await new Promise<void>((resolve, reject) => {
+      audio.onended = () => {
+        URL.revokeObjectURL(url);
+        currentAudio = null;
+        resolve();
+      };
+      audio.onerror = () => {
+        URL.revokeObjectURL(url);
+        currentAudio = null;
+        reject(new Error("Audio playback failed"));
+      };
+      audio.play().catch(reject);
+    });
   } catch {
     fallbackSpeak(text);
   }

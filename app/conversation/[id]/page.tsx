@@ -287,12 +287,16 @@ const ConversationPage = () => {
 
   // Stops recording and transcribes it, but doesn't auto-send — the
   // transcription is shown to the user for confirmation/edit/retry first.
+  const [transcriptionError, setTranscriptionError] = useState<string | null>(null);
+
   const handleVoiceStopAndTranscribe = async () => {
+    setTranscriptionError(null);
     const text = await stopAndTranscribe();
     if (text.trim()) {
       setTranscribedText(text.trim());
+    } else {
+      setTranscriptionError("Could not transcribe. Recording may be too short or unclear. Try again.");
     }
-    // Empty transcription (too short/failed): stay in the ready state.
   };
 
   const handleConfirmSend = () => {
@@ -719,7 +723,7 @@ const ConversationPage = () => {
                   onClick={() => void handleVoiceStopAndTranscribe()}
                 >
                   <Square className="h-4 w-4" />
-                  Stop &amp; Send
+                  Done Speaking
                 </Button>
                 <Button
                   type="button"
@@ -731,6 +735,9 @@ const ConversationPage = () => {
                 </Button>
               </div>
             )}
+            {transcriptionError && (
+              <p className="text-sm text-destructive text-center">{transcriptionError}</p>
+            )}
             {!isRecording &&
               !isTranscribing &&
               !isSpeaking &&
@@ -739,7 +746,7 @@ const ConversationPage = () => {
                 <Button
                   type="button"
                   className="w-full min-h-[44px]"
-                  onClick={() => void startRecording()}
+                  onClick={() => { setTranscriptionError(null); void startRecording(); }}
                 >
                   <Mic className="h-4 w-4" />
                   Record Next
