@@ -42,6 +42,7 @@ import {
 } from "@/hooks/use-db";
 import { generateStudyPlan, type StudyStep, type StudyStepType } from "@/lib/study-engine";
 import { getCostSummary, type CostSummary } from "@/lib/cost-tracker";
+import { getPoolStatus } from "@/lib/task-pool";
 import type { DailyStats, MasteryLevel } from "@/lib/types";
 
 const STEP_ICONS: Record<StudyStepType, typeof Brain> = {
@@ -218,35 +219,61 @@ const DashboardPage = () => {
     dbHelpers.updateStreak();
   }, []);
 
-  // Pull today's pre-generated tasks from server (Vercel Blob) into local IndexedDB
+  // Ensure today's tasks exist in local pool. Tries server first (Vercel Blob
+  // filled by the daily cron job), then falls back to client-side generation
+  // if the server has nothing — but only once per calendar day per device.
   useEffect(() => {
-    const pullTasks = async () => {
+    const LAST_GEN_KEY = "en-tutor-last-pool-gen";
+    const today = new Date().toISOString().split("T")[0];
+
+    const pullOrGenerate = async () => {
+      // Check if we already have enough local tasks for today
+      const localStatus = await getPoolStatus();
+      if (localStatus.todayTotal >= 5) return; // already stocked
+
+      // Try server first
       try {
         const res = await fetch("/api/tasks/today");
-        if (!res.ok) return;
-        const data = await res.json();
-        if (!data.tasks?.length) return;
-
-        for (const task of data.tasks) {
-          const existing = await db.poolTasks.get(task.id);
-          if (!existing) {
-            await db.poolTasks.add({
-              id: task.id,
-              type: task.type,
-              difficulty: task.difficulty,
-              content: task.content,
-              assignedDate: data.date,
-              completed: false,
-              createdAt: new Date(),
-            });
+        if (res.ok) {
+          const data = await res.json();
+          if (data.tasks?.length) {
+            for (const task of data.tasks) {
+              const existing = await db.poolTasks.get(task.id);
+              if (!existing) {
+                await db.poolTasks.add({
+                  id: task.id,
+                  type: task.type,
+                  difficulty: task.difficulty,
+                  content: task.content,
+                  assignedDate: data.date,
+                  completed: false,
+                  createdAt: new Date(),
+                });
+              }
+            }
+            return; // server had tasks, done
           }
         }
       } catch {
-        // Silent fail — modules will fallback to real-time generation
+        // Server unavailable, fall through to local generation
       }
+
+      // Fallback: generate locally, max once per day
+      const lastGen = localStorage.getItem(LAST_GEN_KEY);
+      if (lastGen === today) return; // already generated today
+
+      const profileData = await dbHelpers.getProfile();
+      const level = profileData.initialCefrLevel || "B1";
+
+      // Import dynamically to avoid pulling generation code into the main bundle
+      // when the server path succeeds
+      const { generatePoolTasks } = await import("@/lib/task-pool-generate");
+      await generatePoolTasks(level, 7); // 1 task per type
+      localStorage.setItem(LAST_GEN_KEY, today);
     };
-    void pullTasks();
-  }, []);
+
+    void pullOrGenerate();
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps -- once on mount is intentional
 
   const heatmapRange = useMemo(() => {
     const end = new Date();
