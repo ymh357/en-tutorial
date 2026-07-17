@@ -118,10 +118,19 @@ const ReviewPage = () => {
   const params = useParams<{ id: string }>();
   const conversationId = params.id;
 
-  const conversation = useLiveQuery(
-    () => db.conversations.get(conversationId),
+  const conversationResult = useLiveQuery(
+    async () => {
+      const c = await db.conversations.get(conversationId);
+      return c === undefined ? ("not-found" as const) : c;
+    },
     [conversationId]
   );
+  const conversation =
+    conversationResult === undefined || conversationResult === "not-found"
+      ? null
+      : conversationResult;
+  const convLoading = conversationResult === undefined;
+  const convNotFound = conversationResult === "not-found";
 
   const [isGenerating, setIsGenerating] = useState(false);
   const [generationError, setGenerationError] = useState<string | null>(null);
@@ -233,7 +242,7 @@ const ReviewPage = () => {
     }
   };
 
-  if (conversation === undefined) {
+  if (convLoading) {
     return (
       <div className="flex h-full items-center justify-center">
         <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
@@ -241,7 +250,7 @@ const ReviewPage = () => {
     );
   }
 
-  if (conversation === null || !conversation) {
+  if (convNotFound || !conversation) {
     return (
       <div className="flex h-full flex-col items-center justify-center gap-4">
         <p className="text-sm text-muted-foreground">Conversation not found.</p>
