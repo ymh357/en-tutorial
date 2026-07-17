@@ -187,12 +187,12 @@ const ConversationPage = () => {
   const exchangeCount = messages.filter((m) => m.role === "user").length;
   const canEnd = exchangeCount >= MIN_EXCHANGES_TO_END && !isStreaming;
 
-  // Accumulates interim transcription and waits for the user to finish
-  // speaking (1.5s silence) before sending. Uses continuous mode so the
-  // mic stays open and doesn't cut off mid-sentence.
-  const pendingTranscriptRef = useRef("");
-  const silenceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const SILENCE_DELAY = 1500; // ms of silence before auto-sending
+  // Voice mode uses continuous recognition that accumulates a live
+  // transcript. The user speaks freely, sees their words appear in
+  // real-time, and taps "Send" when they're done — no auto-send, no
+  // sentence truncation. After AI replies and TTS finishes, recording
+  // resumes automatically.
+  const [liveTranscript, setLiveTranscript] = useState("");
 
   const startContinuousListening = () => {
     const SpeechRecognitionCtor = getSpeechRecognition();
@@ -203,10 +203,7 @@ const ConversationPage = () => {
     recognition.interimResults = true;
     recognition.continuous = true;
 
-    pendingTranscriptRef.current = "";
-
     recognition.onresult = (event) => {
-      // Build the full transcript from all results
       let finalTranscript = "";
       let interimTranscript = "";
       const results = event.results;
@@ -218,32 +215,13 @@ const ConversationPage = () => {
           interimTranscript += result[0].transcript;
         }
       }
-
       const fullText = (finalTranscript + interimTranscript).trim();
-      pendingTranscriptRef.current = fullText;
-
-      // Reset the silence timer each time we get new speech
-      if (silenceTimerRef.current) {
-        clearTimeout(silenceTimerRef.current);
-      }
-
-      // If we have final results, start the silence countdown
-      if (finalTranscript.trim()) {
-        silenceTimerRef.current = setTimeout(() => {
-          const toSend = pendingTranscriptRef.current.trim();
-          if (toSend && voiceModeRef.current) {
-            // Stop recognition before sending, will restart after AI replies
-            recognitionRef.current?.stop();
-            sendMessage({ text: toSend });
-            pendingTranscriptRef.current = "";
-          }
-        }, SILENCE_DELAY);
-      }
+      setLiveTranscript(fullText);
     };
 
     recognition.onerror = () => {
       setIsRecording(false);
-      if (voiceModeRef.current) {
+      if (voiceModeRef.current && !isSpeakingRef.current) {
         setTimeout(() => {
           if (voiceModeRef.current && !isSpeakingRef.current) {
             startContinuousListening();
@@ -254,8 +232,9 @@ const ConversationPage = () => {
 
     recognition.onend = () => {
       setIsRecording(false);
-      // Auto-restart if voice mode is still on and we're not waiting for AI
-      const currentlyStreaming = previousStatusRef.current === "streaming" || previousStatusRef.current === "submitted";
+      const currentlyStreaming =
+        previousStatusRef.current === "streaming" ||
+        previousStatusRef.current === "submitted";
       if (voiceModeRef.current && !isSpeakingRef.current && !currentlyStreaming) {
         setTimeout(() => {
           if (voiceModeRef.current && !isSpeakingRef.current) {
@@ -267,7 +246,16 @@ const ConversationPage = () => {
 
     recognitionRef.current = recognition;
     setIsRecording(true);
+    setLiveTranscript("");
     recognition.start();
+  };
+
+  const handleVoiceSend = () => {
+    const text = liveTranscript.trim();
+    if (!text || isStreaming) return;
+    recognitionRef.current?.stop();
+    sendMessage({ text });
+    setLiveTranscript("");
   };
 
   // Speaks the given text via TTS, then resumes listening for the user's
@@ -289,8 +277,7 @@ const ConversationPage = () => {
       voiceModeRef.current = false;
       setVoiceMode(false);
       recognitionRef.current?.stop();
-      if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
-      pendingTranscriptRef.current = "";
+      setLiveTranscript("");
       stopSpeaking();
       isSpeakingRef.current = false;
       setIsSpeaking(false);
@@ -578,25 +565,52 @@ const ConversationPage = () => {
         )}
 
         {voiceMode ? (
-          <div className="flex flex-col items-center gap-2 rounded-lg border bg-muted/20 py-6">
-            <div
-              className={`flex h-16 w-16 items-center justify-center rounded-full ${
-                isRecording
-                  ? "animate-pulse bg-primary text-primary-foreground"
-                  : "bg-muted text-muted-foreground"
-              }`}
-            >
-              <Mic className="h-7 w-7" />
+          <div className="space-y-3">
+            {/* Status indicator */}
+            <div className="flex items-center gap-3 rounded-lg border bg-muted/20 px-4 py-3">
+              <div
+                className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-full ${
+                  isRecording
+                    ? "animate-pulse bg-primary text-primary-foreground"
+                    : isSpeaking
+                      ? "bg-green-500 text-white"
+                      : "bg-muted text-muted-foreground"
+                }`}
+              >
+                <Mic className="h-5 w-5" />
+              </div>
+              <div className="min-w-0 flex-1">
+                <p className="text-xs font-medium text-muted-foreground">
+                  {isStreaming
+                    ? "AI is thinking..."
+                    : isSpeaking
+                      ? "AI is speaking..."
+                      : isRecording
+                        ? "Listening... tap Send when done"
+                        : "Starting..."}
+                </p>
+                {liveTranscript && (
+                  <p className="mt-1 text-sm text-foreground truncate">
+                    {liveTranscript}
+                  </p>
+                )}
+              </div>
             </div>
-            <p className="text-sm font-medium text-muted-foreground">
-              {isStreaming
-                ? "AI is thinking..."
-                : isSpeaking
-                  ? "AI is speaking..."
-                  : isRecording
-                    ? "Listening..."
-                    : "Processing..."}
-            </p>
+            {/* Live transcript preview + send */}
+            {liveTranscript && (
+              <div className="rounded-lg border bg-card p-3">
+                <p className="text-sm text-foreground whitespace-pre-wrap mb-2">{liveTranscript}</p>
+                <Button
+                  type="button"
+                  className="w-full min-h-[44px]"
+                  onClick={handleVoiceSend}
+                  disabled={isStreaming}
+                >
+                  <Send className="h-4 w-4" />
+                  Send
+                </Button>
+              </div>
+            )}
           </div>
         ) : (
           <div className="flex gap-2">
