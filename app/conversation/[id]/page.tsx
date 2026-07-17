@@ -32,10 +32,60 @@ const formatDuration = (seconds: number): string => {
 // transcribed text (empty string on failure). Records a zero-cost usage
 // entry on success — Whisper is billed per-audio-second server-side, not
 // tracked here in tokens, but the entry keeps the module breakdown visible.
+// Convert a webm/ogg audio blob to WAV using AudioContext decoding.
+// Whisper APIs universally accept WAV; webm support varies by provider.
+const convertToWav = async (blob: Blob): Promise<Blob> => {
+  const arrayBuffer = await blob.arrayBuffer();
+  const audioCtx = new AudioContext();
+  const audioBuffer = await audioCtx.decodeAudioData(arrayBuffer);
+  await audioCtx.close();
+
+  const numChannels = 1;
+  const sampleRate = audioBuffer.sampleRate;
+  const samples = audioBuffer.getChannelData(0);
+  const dataLength = samples.length * 2;
+  const buffer = new ArrayBuffer(44 + dataLength);
+  const view = new DataView(buffer);
+
+  const writeString = (offset: number, str: string) => {
+    for (let i = 0; i < str.length; i++) view.setUint8(offset + i, str.charCodeAt(i));
+  };
+
+  writeString(0, "RIFF");
+  view.setUint32(4, 36 + dataLength, true);
+  writeString(8, "WAVE");
+  writeString(12, "fmt ");
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true);
+  view.setUint16(22, numChannels, true);
+  view.setUint32(24, sampleRate, true);
+  view.setUint32(28, sampleRate * numChannels * 2, true);
+  view.setUint16(32, numChannels * 2, true);
+  view.setUint16(34, 16, true);
+  writeString(36, "data");
+  view.setUint32(40, dataLength, true);
+
+  let offset = 44;
+  for (let i = 0; i < samples.length; i++, offset += 2) {
+    const s = Math.max(-1, Math.min(1, samples[i]));
+    view.setInt16(offset, s < 0 ? s * 0x8000 : s * 0x7fff, true);
+  }
+
+  return new Blob([buffer], { type: "audio/wav" });
+};
+
 const transcribeAudio = async (audioBlob: Blob): Promise<string> => {
   try {
+    // Convert to WAV for maximum Whisper compatibility
+    let wavBlob: Blob;
+    try {
+      wavBlob = await convertToWav(audioBlob);
+    } catch {
+      wavBlob = audioBlob; // fallback: send original if conversion fails
+    }
+
     const formData = new FormData();
-    formData.append("audio", audioBlob, "recording.webm");
+    formData.append("audio", wavBlob, "recording.wav");
     const res = await fetch("/api/stt", { method: "POST", body: formData });
     if (!res.ok) return "";
     const data = await res.json();
