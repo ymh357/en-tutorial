@@ -582,9 +582,17 @@ const ReaderSessionPage = ({
   let globalPosition = 0;
 
   const hasLookupPanel = Boolean(wordPopup || sentencePanel);
+  const lookupPanelRef = useRef<HTMLDivElement>(null);
+
+  // Scroll to panel when content appears
+  useEffect(() => {
+    if (hasLookupPanel && lookupPanelRef.current) {
+      lookupPanelRef.current.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    }
+  }, [hasLookupPanel, wordPopup?.word, sentencePanel?.sentence]);
 
   const lookupPanelContent = (
-    <>
+    <div ref={lookupPanelRef}>
       {wordPopup && (
         <Card className="border-primary/40">
           <CardHeader className="pb-2">
@@ -698,7 +706,7 @@ const ReaderSessionPage = ({
           here.
         </p>
       )}
-    </>
+    </div>
   );
 
   return (
