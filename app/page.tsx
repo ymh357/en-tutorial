@@ -397,41 +397,49 @@ const DashboardPage = () => {
   );
 
   // Lazily read today's completed steps from sessionStorage on first render
-  // (resets on page refresh, since sessionStorage is per-tab and the key is
-  // date-scoped rather than persisted across days).
-  const [completedSteps, setCompletedSteps] = useState<Set<StudyStepType>>(
-    () => {
-      if (typeof window === "undefined") return new Set();
-      const raw = window.sessionStorage.getItem(sessionKey);
-      if (!raw) return new Set();
-      try {
-        const parsed = JSON.parse(raw) as string[];
-        return new Set(parsed as StudyStepType[]);
-      } catch {
-        return new Set();
-      }
+  // Skipped steps (sessionStorage, date-scoped) — these are hidden but NOT
+  // marked as completed. Completion is determined solely by real activity data.
+  const [skippedSteps, setSkippedSteps] = useState<Set<StudyStepType>>(() => {
+    if (typeof window === "undefined") return new Set();
+    const raw = window.sessionStorage.getItem(sessionKey);
+    if (!raw) return new Set();
+    try {
+      return new Set(JSON.parse(raw) as StudyStepType[]);
+    } catch {
+      return new Set();
     }
-  );
+  });
 
-  // Auto-detect completion from today's stats, so a step already done (e.g. in
-  // a previous tab, or via Quick Launch without hitting "Start") still shows
-  // as completed rather than relying solely on the sessionStorage click-trail.
-  const statsCompletedSteps = useMemo<Set<StudyStepType>>(() => {
+  // Completion is based ONLY on real activity data — not on clicking Start.
+  const mergedCompletedSteps = useMemo<Set<StudyStepType>>(() => {
     const detected = new Set<StudyStepType>();
     if (!todayStats) return detected;
     if (todayStats.srsReviewed > 0) detected.add("srs");
     if (todayStats.conversationCount > 0) detected.add("conversation");
     if (todayStats.readingCount > 0) detected.add("reading");
     if (todayStats.writingCount > 0) detected.add("writing");
+    // Listening and translation have no DailyStats field; check localStorage
+    try {
+      const lRaw = localStorage.getItem("en-tutor-listening-stats");
+      if (lRaw) {
+        const ls = JSON.parse(lRaw) as { lastDate?: string };
+        if (ls.lastDate?.startsWith(new Date().toISOString().split("T")[0])) {
+          detected.add("listening");
+        }
+      }
+      const tRaw = localStorage.getItem("en-tutor-translation-stats");
+      if (tRaw) {
+        const ts = JSON.parse(tRaw) as { lastDate?: string };
+        if (ts.lastDate?.startsWith(new Date().toISOString().split("T")[0])) {
+          detected.add("translate");
+        }
+      }
+    } catch { /* ignore */ }
     return detected;
   }, [todayStats]);
 
-  const mergedCompletedSteps = useMemo<Set<StudyStepType>>(() => {
-    return new Set([...completedSteps, ...statsCompletedSteps]);
-  }, [completedSteps, statsCompletedSteps]);
-
-  const markStepCompleted = (type: StudyStepType) => {
-    setCompletedSteps((prev) => {
+  const skipStep = (type: StudyStepType) => {
+    setSkippedSteps((prev) => {
       const next = new Set(prev);
       next.add(type);
       if (typeof window !== "undefined") {
@@ -439,10 +447,6 @@ const DashboardPage = () => {
       }
       return next;
     });
-  };
-
-  const skipStep = (type: StudyStepType) => {
-    markStepCompleted(type);
   };
 
   const studyPlan = useMemo<StudyStep[]>(() => {
@@ -479,7 +483,7 @@ const DashboardPage = () => {
       : 0;
 
   const firstUnfinishedStep = studyPlan.find(
-    (step) => !mergedCompletedSteps.has(step.type)
+    (step) => !mergedCompletedSteps.has(step.type) && !skippedSteps.has(step.type)
   );
 
   const greeting = useMemo(() => getGreeting(new Date().getHours()), []);
@@ -527,6 +531,8 @@ const DashboardPage = () => {
                 {studyPlan.map((step, index) => {
                   const Icon = STEP_ICONS[step.type];
                   const done = mergedCompletedSteps.has(step.type);
+                  const skipped = skippedSteps.has(step.type);
+                  if (skipped && !done) return null; // hide skipped (but show if actually completed)
                   return (
                     <li
                       key={step.type}
@@ -559,7 +565,6 @@ const DashboardPage = () => {
                               <Button
                                 size="sm"
                                 render={<Link href={step.href} />}
-                                onClick={() => markStepCompleted(step.type)}
                               >
                                 Start
                               </Button>
@@ -583,7 +588,6 @@ const DashboardPage = () => {
               <Button
                 className="mt-2 w-full sm:w-auto"
                 render={<Link href={firstUnfinishedStep.href} />}
-                onClick={() => markStepCompleted(firstUnfinishedStep.type)}
               >
                 Start Full Session &rarr;
               </Button>
