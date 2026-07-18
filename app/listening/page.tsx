@@ -167,6 +167,7 @@ const tokenize = (text: string): string[] =>
 
 interface WordDiffEntry {
   word: string;
+  heardAs: string | null; // what the user actually said at this position (null if missing)
   correct: boolean;
 }
 
@@ -175,14 +176,13 @@ interface DiffResult {
   original: WordDiffEntry[];
 }
 
-// Word-level diff: for each original word, check if it appears at the
-// corresponding position in the user's transcript.
 const diffWords = (original: string, userText: string): DiffResult => {
   const originalWords = tokenize(original);
   const userWords = tokenize(userText);
 
   const entries: WordDiffEntry[] = originalWords.map((word, idx) => ({
     word,
+    heardAs: idx < userWords.length ? userWords[idx] : null,
     correct: userWords[idx] === word,
   }));
 
@@ -404,15 +404,21 @@ const DictationTab = ({ cefrLevel }: { cefrLevel: string }) => {
           <CardContent className="space-y-2">
             <div className="flex flex-wrap gap-1">
               {result.original.map((entry, idx) => (
-                <span
-                  key={idx}
-                  className={
-                    entry.correct
-                      ? "text-green-700 dark:text-green-400"
-                      : "text-red-700 dark:text-red-400 line-through"
-                  }
-                >
-                  {entry.word}
+                <span key={idx} className="inline-flex flex-col items-center mx-0.5">
+                  <span
+                    className={
+                      entry.correct
+                        ? "text-green-700 dark:text-green-400"
+                        : "text-red-700 dark:text-red-400 line-through"
+                    }
+                  >
+                    {entry.word}
+                  </span>
+                  {!entry.correct && entry.heardAs && (
+                    <span className="text-[10px] text-amber-600 dark:text-amber-400">
+                      {entry.heardAs}
+                    </span>
+                  )}
                 </span>
               ))}
             </div>
@@ -934,15 +940,21 @@ const ShadowingTab = ({ cefrLevel }: { cefrLevel: string }) => {
           <CardContent className="space-y-2">
             <div className="flex flex-wrap gap-1">
               {result.original.map((entry, idx) => (
-                <span
-                  key={idx}
-                  className={
-                    entry.correct
-                      ? "text-green-700 dark:text-green-400"
-                      : "text-red-700 dark:text-red-400 line-through"
-                  }
-                >
-                  {entry.word}
+                <span key={idx} className="inline-flex flex-col items-center mx-0.5">
+                  <span
+                    className={
+                      entry.correct
+                        ? "text-green-700 dark:text-green-400"
+                        : "text-red-700 dark:text-red-400 line-through"
+                    }
+                  >
+                    {entry.word}
+                  </span>
+                  {!entry.correct && entry.heardAs && (
+                    <span className="text-[10px] text-amber-600 dark:text-amber-400">
+                      {entry.heardAs}
+                    </span>
+                  )}
                 </span>
               ))}
             </div>
