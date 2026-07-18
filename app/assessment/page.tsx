@@ -326,9 +326,9 @@ const RadarChart = ({
 }: {
   scores: { label: string; value: number }[];
 }) => {
-  const cx = 150;
-  const cy = 150;
-  const r = 120;
+  const cx = 200;
+  const cy = 180;
+  const r = 100;
   const n = scores.length;
 
   const pointFor = (value: number, i: number) => {
@@ -342,11 +342,10 @@ const RadarChart = ({
   const polygonPoints = points.map((p) => `${p.x},${p.y}`).join(" ");
   const bgPolygonPoints = bgPoints.map((p) => `${p.x},${p.y}`).join(" ");
 
-  // Concentric grid rings at 25/50/75/100%
   const rings = [0.25, 0.5, 0.75, 1];
 
   return (
-    <svg viewBox="0 0 300 320" className="mx-auto h-64 w-64">
+    <svg viewBox="0 0 400 380" className="mx-auto w-full max-w-sm" style={{ aspectRatio: "400/380" }}>
       {rings.map((ring) => {
         const ringPoints = scores
           .map((_, i) => pointFor(100 * ring, i))
@@ -386,21 +385,24 @@ const RadarChart = ({
       ))}
       {/* Labels */}
       {scores.map((s, i) => {
-        const labelPoint = pointFor(120, i);
         const angle = (Math.PI * 2 * i) / n - Math.PI / 2;
+        const labelDist = r + 30;
+        const lx = cx + labelDist * Math.cos(angle);
+        const ly = cy + labelDist * Math.sin(angle);
         const anchor =
           Math.cos(angle) > 0.3
             ? "start"
             : Math.cos(angle) < -0.3
               ? "end"
               : "middle";
+        const dy = Math.sin(angle) > 0.3 ? 14 : Math.sin(angle) < -0.3 ? -4 : 5;
         return (
           <text
             key={s.label}
-            x={labelPoint.x}
-            y={labelPoint.y + 20}
+            x={lx}
+            y={ly + dy}
             textAnchor={anchor}
-            className="fill-foreground text-[11px] font-medium"
+            className="fill-foreground text-xs font-medium"
           >
             {s.label} ({s.value})
           </text>
