@@ -1168,7 +1168,7 @@ Return ONLY valid JSON (no markdown fences, no explanation) in this exact format
 
     const abilityScores = [
       { label: "Reading", value: finalResult.readingScore },
-      { label: "Listening/Cloze", value: finalResult.clozeScore },
+      { label: "Cloze", value: finalResult.clozeScore },
       { label: "Writing", value: finalResult.writingScore },
       { label: "Speaking", value: finalResult.conversationScore },
     ];
