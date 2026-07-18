@@ -200,7 +200,7 @@ const ConversationPage = () => {
   // never overlap: this is only ever called while the mic is idle and no
   // audio is playing, so there is no feedback loop into the mic. No
   // auto-send and no silence detection — the user decides when to send.
-  const startVoiceRecording = () => {
+  const startVoiceRecording = (isRestart = false) => {
     const Ctor = getSpeechRecognition();
     if (!Ctor) return;
 
@@ -226,31 +226,32 @@ const ConversationPage = () => {
     };
 
     recognition.onerror = () => {
-      // Auto-restart on transient errors if voice mode is on.
       if (voiceModeRef.current && !isSpeakingRef.current) {
         setTimeout(() => {
           if (voiceModeRef.current && !isSpeakingRef.current) {
-            startVoiceRecording();
+            startVoiceRecording(true);
+          } else {
+            setIsRecording(false);
           }
         }, 500);
+      } else {
+        setIsRecording(false);
       }
     };
 
     recognition.onend = () => {
-      setIsRecording(false);
-      // Auto-restart if voice mode still on (recognition stops on its own sometimes).
+      // Browser periodically resets continuous recognition. If voice mode
+      // is still on, restart silently — no UI flicker, keep transcript.
       if (voiceModeRef.current && !isSpeakingRef.current) {
-        setTimeout(() => {
-          if (voiceModeRef.current && !isSpeakingRef.current) {
-            startVoiceRecording();
-          }
-        }, 300);
+        startVoiceRecording(true);
+      } else {
+        setIsRecording(false);
       }
     };
 
     recognitionRef.current = recognition;
     setIsRecording(true);
-    setLiveTranscript("");
+    if (!isRestart) setLiveTranscript("");
     recognition.start();
   };
 
