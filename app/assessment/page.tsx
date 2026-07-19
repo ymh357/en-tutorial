@@ -288,28 +288,39 @@ interface AssessmentProgress {
   clozeData: ClozeData | null;
   clozeAnswers: Record<number, string>;
   clozeScore: number;
+  writingPrompt: string;
   writingContent: string;
   writingScore: number;
   writingFeedback: string;
+  conversationTopic: string;
   conversationHistory: ConversationTurn[];
   conversationScore: number;
   conversationFeedback: string;
 }
 
+// Stored snapshot also carries a savedAt timestamp so a stale snapshot (e.g.
+// abandoned days ago) can be discarded on restore instead of resuming forever.
+const ASSESSMENT_PROGRESS_MAX_AGE_MS = 24 * 60 * 60 * 1000;
+
+type StoredAssessmentProgress = AssessmentProgress & { savedAt: number };
+
 const saveAssessmentProgress = (progress: AssessmentProgress): void => {
   if (typeof window === "undefined") return;
-  window.sessionStorage.setItem(
-    ASSESSMENT_PROGRESS_KEY,
-    JSON.stringify(progress)
-  );
+  const stored: StoredAssessmentProgress = { ...progress, savedAt: Date.now() };
+  window.localStorage.setItem(ASSESSMENT_PROGRESS_KEY, JSON.stringify(stored));
 };
 
 const loadAssessmentProgress = (): AssessmentProgress | null => {
   if (typeof window === "undefined") return null;
   try {
-    const raw = window.sessionStorage.getItem(ASSESSMENT_PROGRESS_KEY);
+    const raw = window.localStorage.getItem(ASSESSMENT_PROGRESS_KEY);
     if (!raw) return null;
-    return JSON.parse(raw) as AssessmentProgress;
+    const parsed = JSON.parse(raw) as StoredAssessmentProgress;
+    if (Date.now() - parsed.savedAt > ASSESSMENT_PROGRESS_MAX_AGE_MS) {
+      window.localStorage.removeItem(ASSESSMENT_PROGRESS_KEY);
+      return null;
+    }
+    return parsed;
   } catch {
     return null;
   }
@@ -317,7 +328,7 @@ const loadAssessmentProgress = (): AssessmentProgress | null => {
 
 const clearAssessmentProgress = (): void => {
   if (typeof window === "undefined") return;
-  window.sessionStorage.removeItem(ASSESSMENT_PROGRESS_KEY);
+  window.localStorage.removeItem(ASSESSMENT_PROGRESS_KEY);
 };
 
 // Simple SVG radar chart for the 4 ability dimensions — no external chart lib.
@@ -475,7 +486,9 @@ const AssessmentPage = () => {
 
   // Writing section state
   const [writingPrompt] = useState<string>(
-    () => WRITING_PROMPTS[Math.floor(Math.random() * WRITING_PROMPTS.length)]
+    () =>
+      restoredProgress?.writingPrompt ??
+      WRITING_PROMPTS[Math.floor(Math.random() * WRITING_PROMPTS.length)]
   );
   const [writingContent, setWritingContent] = useState(
     () => restoredProgress?.writingContent ?? ""
@@ -490,6 +503,7 @@ const AssessmentPage = () => {
   // Conversation section state
   const [conversationTopic] = useState<string>(
     () =>
+      restoredProgress?.conversationTopic ??
       CONVERSATION_TOPICS[
         Math.floor(Math.random() * CONVERSATION_TOPICS.length)
       ]
@@ -524,8 +538,11 @@ const AssessmentPage = () => {
   // results screen can still compare against the true prior assessment.
   const [priorResult, setPriorResult] = useState<AssessmentResult | null>(null);
 
-  // Persist progress to sessionStorage whenever the phase advances, so a
-  // refresh mid-assessment doesn't lose the student's work.
+  // Persist progress to localStorage whenever the phase advances, so closing
+  // the tab (not just refreshing) doesn't lose the student's work. Includes
+  // writingPrompt/conversationTopic so a restored session shows the same
+  // prompt/topic the restored answers were written for, instead of re-rolling
+  // a new random one.
   useEffect(() => {
     if (phase === "intro" || phase === "results") return;
     saveAssessmentProgress({
@@ -536,9 +553,11 @@ const AssessmentPage = () => {
       clozeData,
       clozeAnswers,
       clozeScore,
+      writingPrompt,
       writingContent,
       writingScore,
       writingFeedback,
+      conversationTopic,
       conversationHistory,
       conversationScore,
       conversationFeedback,
@@ -551,9 +570,11 @@ const AssessmentPage = () => {
     clozeData,
     clozeAnswers,
     clozeScore,
+    writingPrompt,
     writingContent,
     writingScore,
     writingFeedback,
+    conversationTopic,
     conversationHistory,
     conversationScore,
     conversationFeedback,
@@ -1192,7 +1213,7 @@ Return ONLY valid JSON (no markdown fences, no explanation) in this exact format
     const dimensionComparisons = priorResult
       ? [
           { label: "Reading", prev: priorResult.readingScore, curr: finalResult.readingScore },
-          { label: "Listening/Cloze", prev: priorResult.clozeScore, curr: finalResult.clozeScore },
+          { label: "Cloze", prev: priorResult.clozeScore, curr: finalResult.clozeScore },
           { label: "Writing", prev: priorResult.writingScore, curr: finalResult.writingScore },
           { label: "Speaking", prev: priorResult.conversationScore, curr: finalResult.conversationScore },
         ]
