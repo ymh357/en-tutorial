@@ -1,4 +1,5 @@
 import type { DailyStats, LearningProfile } from "./types";
+import { daysBetween } from "./date";
 
 export type StudyStepType =
   | "srs"
@@ -49,11 +50,8 @@ const NEVER_DONE_GAP = 999;
 
 const daysSince = (date: Date | null | undefined): number => {
   if (!date) return NEVER_DONE_GAP;
-  const msPerDay = 1000 * 60 * 60 * 24;
-  const now = new Date();
-  const a = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-  const b = new Date(date.getFullYear(), date.getMonth(), date.getDate());
-  return Math.max(0, Math.round((a.getTime() - b.getTime()) / msPerDay));
+  if (Number.isNaN(date.getTime())) return NEVER_DONE_GAP; // corrupt lastDate
+  return Math.max(0, daysBetween(date, new Date()));
 };
 
 const srsMinutes = (count: number): number => {
