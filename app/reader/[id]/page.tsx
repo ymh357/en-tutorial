@@ -319,10 +319,11 @@ const ReaderSessionPage = ({
   const masteredLemmaSet = useMemo(() => {
     const set = new Set<string>();
     for (const card of srsLemmas ?? []) {
-      if (card.masteryLevel === "mastered") set.add(card.lemma);
+      if (card.masteryLevel === "mastered") set.add(lemmatize(card.lemma));
     }
     return set;
-  }, [srsLemmas]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- lemmaReady triggers recompute once the lemmatizer dictionary loads
+  }, [srsLemmas, lemmaReady]);
 
   // Learning/familiar cards are not yet "known" — tracked separately so the
   // coverage display can distinguish mastered+baseline from in-progress words.
@@ -330,11 +331,12 @@ const ReaderSessionPage = ({
     const set = new Set<string>();
     for (const card of srsLemmas ?? []) {
       if (card.masteryLevel === "learning" || card.masteryLevel === "familiar") {
-        set.add(card.lemma);
+        set.add(lemmatize(card.lemma));
       }
     }
     return set;
-  }, [srsLemmas]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- lemmaReady triggers recompute once the lemmatizer dictionary loads
+  }, [srsLemmas, lemmaReady]);
 
   const { vocabCoverage, learningCoverage } = useMemo(() => {
     if (!session) return { vocabCoverage: 0, learningCoverage: 0 };
