@@ -45,7 +45,7 @@ import {
 import { generateStudyPlan, type StudyStep, type StudyStepType } from "@/lib/study-engine";
 import { getCostSummary, type CostSummary } from "@/lib/cost-tracker";
 import { getPoolStatus } from "@/lib/task-pool";
-import type { DailyStats, MasteryLevel } from "@/lib/types";
+import type { DailyStats, MasteryLevel, PoolTask } from "@/lib/types";
 
 const STEP_ICONS: Record<StudyStepType, typeof Brain> = {
   srs: Brain,
@@ -57,6 +57,20 @@ const STEP_ICONS: Record<StudyStepType, typeof Brain> = {
 };
 
 const SESSION_STORAGE_PREFIX = "en-tutor-session-";
+
+const DAILY_GOAL_STORAGE_KEY = "en-tutor-daily-goal";
+const DEFAULT_DAILY_GOAL_MINUTES = 20;
+
+// Read the user's configured daily study goal (minutes/day) written by the
+// Settings page. Guards missing / NaN / non-positive values back to the default.
+const loadDailyGoal = (): number => {
+  if (typeof window === "undefined") return DEFAULT_DAILY_GOAL_MINUTES;
+  const raw = window.localStorage.getItem(DAILY_GOAL_STORAGE_KEY);
+  const parsed = raw ? Number(raw) : NaN;
+  return Number.isFinite(parsed) && parsed > 0
+    ? parsed
+    : DEFAULT_DAILY_GOAL_MINUTES;
+};
 
 const getGreeting = (hour: number): string => {
   if (hour >= 5 && hour < 12) return "Good morning";
@@ -198,10 +212,7 @@ const DashboardPage = () => {
   const totalConversationCount = useLiveQuery(() => db.conversations.count()) ?? 0;
   const totalWritingCount = useLiveQuery(() => db.writingSessions.count()) ?? 0;
   const [costSummary] = useState<CostSummary>(() => getCostSummary());
-
-  useEffect(() => {
-    dbHelpers.updateStreak();
-  }, []);
+  const [dailyGoalMinutes] = useState<number>(() => loadDailyGoal());
 
   // Ensure today's tasks exist in local pool. Tries server first (Vercel Blob
   // filled by the daily cron job), then falls back to client-side generation
@@ -215,31 +226,37 @@ const DashboardPage = () => {
       const localStatus = await getPoolStatus();
       if (localStatus.todayTotal >= 5) return; // already stocked
 
-      // Try server first
+      // Try server first. Only the network call is wrapped in try/catch — a
+      // failed fetch means "server unavailable, fall through to local
+      // generation", but DB writes and the local fallback below must NOT be
+      // swallowed by that same catch.
+      let serverData: { tasks?: PoolTask[]; date?: string } | null = null;
       try {
         const res = await fetch("/api/tasks/today");
         if (res.ok) {
-          const data = await res.json();
-          if (data.tasks?.length) {
-            for (const task of data.tasks) {
-              const existing = await db.poolTasks.get(task.id);
-              if (!existing) {
-                await db.poolTasks.add({
-                  id: task.id,
-                  type: task.type,
-                  difficulty: task.difficulty,
-                  content: task.content,
-                  assignedDate: data.date,
-                  completed: false,
-                  createdAt: new Date(),
-                });
-              }
-            }
-            return; // server had tasks, done
-          }
+          serverData = (await res.json()) as { tasks?: PoolTask[]; date?: string };
         }
       } catch {
         // Server unavailable, fall through to local generation
+      }
+
+      if (serverData?.tasks?.length) {
+        // bulkPut is idempotent (server task ids are stable per day), so
+        // concurrent mounts (StrictMode double-mount / multiple tabs) converge
+        // instead of throwing a ConstraintError that falsely triggers local
+        // generation and burns AI calls.
+        await db.poolTasks.bulkPut(
+          serverData.tasks.map((task) => ({
+            id: task.id,
+            type: task.type,
+            difficulty: task.difficulty,
+            content: task.content,
+            assignedDate: serverData?.date ?? null,
+            completed: false,
+            createdAt: new Date(),
+          }))
+        );
+        return; // server had tasks, done
       }
 
       // Fallback: generate locally, max once per day
@@ -429,6 +446,7 @@ const DashboardPage = () => {
       lastTranslation: recentTranslation[0]?.createdAt ?? null,
       profile,
       todayStats,
+      targetMinutes: dailyGoalMinutes,
     });
   }, [
     dueCards.length,
@@ -439,6 +457,7 @@ const DashboardPage = () => {
     recentTranslation,
     profile,
     todayStats,
+    dailyGoalMinutes,
   ]);
 
   const totalPlanMinutes = studyPlan.reduce(
