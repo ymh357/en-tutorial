@@ -237,6 +237,18 @@ const ReaderSessionPage = ({
     };
   }, []);
 
+  const hasLookupPanel = Boolean(wordPopup || sentencePanel);
+  const lookupPanelRef = useRef<HTMLDivElement>(null);
+
+  // Scroll to panel when content appears. Kept above all early returns
+  // (loading/not-found/finish-summary below) so the hook count stays
+  // constant across renders — Rules of Hooks.
+  useEffect(() => {
+    if (hasLookupPanel && lookupPanelRef.current) {
+      lookupPanelRef.current.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    }
+  }, [hasLookupPanel, wordPopup?.word, sentencePanel?.sentence]);
+
   const handleAnswerChange = (index: number, value: string): void => {
     setComprehensionAnswers((prev) => {
       const next = [...prev];
@@ -361,9 +373,8 @@ const ReaderSessionPage = ({
   // so word popups can locate the right sentence.
   const occurrenceCounterRef = useRef<Map<string, number>>(new Map());
 
-  const handleWordClick = async (word: string, position: number) => {
+  const handleWordClick = async (word: string, position: number, occurrenceIndex: number) => {
     const lemma = lemmatize(word);
-    const occurrenceIndex = occurrenceCounterRef.current.get(lemma) ?? 0;
     const sentence = findSentenceForWord(sentences, word, occurrenceIndex);
 
     setSentencePanel(null);
@@ -625,16 +636,6 @@ const ReaderSessionPage = ({
   occurrenceCounterRef.current = new Map();
   let globalPosition = 0;
 
-  const hasLookupPanel = Boolean(wordPopup || sentencePanel);
-  const lookupPanelRef = useRef<HTMLDivElement>(null);
-
-  // Scroll to panel when content appears
-  useEffect(() => {
-    if (hasLookupPanel && lookupPanelRef.current) {
-      lookupPanelRef.current.scrollIntoView({ behavior: "smooth", block: "nearest" });
-    }
-  }, [hasLookupPanel, wordPopup?.word, sentencePanel?.sentence]);
-
   const lookupPanelContent = (
     <div ref={lookupPanelRef}>
       {wordPopup && (
@@ -817,7 +818,7 @@ const ReaderSessionPage = ({
                         key={tIndex}
                         role="button"
                         tabIndex={0}
-                        onClick={() => void handleWordClick(token.text, position)}
+                        onClick={() => void handleWordClick(token.text, position, count)}
                         className={`cursor-pointer rounded px-0.5 py-0.5 inline-block min-h-[24px] hover:bg-primary/15 transition-colors ${
                           isSelected ? "bg-primary/25" : ""
                         } ${isInSrs ? "underline decoration-dotted decoration-primary/60 underline-offset-4" : ""}`}
