@@ -20,12 +20,14 @@ import { db } from "@/lib/db";
 import { dbHelpers } from "@/lib/db-helpers";
 import { useProfile } from "@/hooks/use-db";
 import { SCENARIOS } from "@/lib/scenarios";
-import type { Conversation, ReadingSession, WritingSession } from "@/lib/types";
+import type {
+  AssessmentResult,
+  Conversation,
+  ReadingSession,
+  WritingSession,
+} from "@/lib/types";
 
-// --- CEFR progression + assessment localStorage reader ---
-// (Monthly assessments aren't stored in IndexedDB — they live in
-// localStorage. Reading them here keeps the roadmap accurate without
-// adding new DB tables.)
+// --- CEFR progression ---
 
 const NEXT_CEFR_LEVEL: Record<string, string> = {
   A1: "A2",
@@ -36,12 +38,10 @@ const NEXT_CEFR_LEVEL: Record<string, string> = {
   C2: "C2",
 };
 
-const ASSESSMENTS_STORAGE_KEY = "en-tutor-assessments";
+// Mirrors the B1 -> B2 breakpoint used by the assessment's own coarse
+// cefrFromScore ladder (app/assessment/page.tsx) — kept as a literal here
+// since roadmap only needs the single B1->B2 gate, not the full ladder.
 const B2_ASSESSMENT_THRESHOLD = 65;
-
-interface StoredAssessment {
-  overallScore: number;
-}
 
 // Stable fallback reference so useMemo deps don't churn on every render
 // while the live query is still resolving.
@@ -49,18 +49,7 @@ const EMPTY_LISTENING_AGGREGATE: { count: number; avgAccuracy: number } = {
   count: 0,
   avgAccuracy: 0,
 };
-
-const readAssessments = (): StoredAssessment[] => {
-  if (typeof window === "undefined") return [];
-  try {
-    const raw = window.localStorage.getItem(ASSESSMENTS_STORAGE_KEY);
-    if (!raw) return [];
-    const parsed = JSON.parse(raw) as StoredAssessment[];
-    return Array.isArray(parsed) ? parsed : [];
-  } catch {
-    return [];
-  }
-};
+const EMPTY_ASSESSMENTS: AssessmentResult[] = [];
 
 // Conversations only store the scenario's display name (not its id), so
 // category attribution is done by matching that name against SCENARIOS.
@@ -220,12 +209,13 @@ const RoadmapPage = () => {
     () => dbHelpers.getListeningAggregate("dictation"),
     []
   ) ?? EMPTY_LISTENING_AGGREGATE;
+  const assessments = useLiveQuery(() => dbHelpers.getAssessments(), []) ?? EMPTY_ASSESSMENTS;
 
-  const currentLevel = profile?.initialCefrLevel || "B1";
+  const currentLevel = profile?.assessedLevel || profile?.studyLevel || "B1";
   const nextLevel = NEXT_CEFR_LEVEL[currentLevel] ?? "B2";
 
   const stages: RoadmapStage[] = useMemo(() => {
-    const foundationDone = Boolean(profile?.initialCefrLevel);
+    const foundationDone = Boolean(profile?.assessedLevel || profile?.studyLevel);
 
     // --- Vocabulary Base ---
     const vocabCount = masteredVocabCount ?? 0;
@@ -304,7 +294,6 @@ const RoadmapPage = () => {
     const listeningDone = requirementsMet(listeningRequirements);
 
     // --- Level Assessment ---
-    const assessments = readAssessments();
     const bestAssessmentScore = assessments.reduce(
       (max, a) => Math.max(max, a.overallScore),
       0
@@ -395,6 +384,7 @@ const RoadmapPage = () => {
     writingSessions,
     listeningAll,
     dictation,
+    assessments,
     currentLevel,
     nextLevel,
   ]);
