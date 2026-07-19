@@ -3,7 +3,9 @@
 import { useState } from "react";
 import { useProfile } from "@/hooks/use-db";
 import { db } from "@/lib/db";
+import { dbHelpers } from "@/lib/db-helpers";
 import { getCostSummary, clearCostHistory, type CostSummary } from "@/lib/cost-tracker";
+import { getKnownWordsForLevel, type CefrLevel } from "@/lib/frequency-list";
 import {
   Card,
   CardContent,
@@ -50,7 +52,7 @@ const SettingsPage = () => {
   const [testMessage, setTestMessage] = useState("");
 
   const [cefrLevelOverride, setCefrLevelOverride] = useState<string | null>(null);
-  const selectedCefrLevel = cefrLevelOverride ?? profile?.initialCefrLevel ?? "";
+  const selectedCefrLevel = cefrLevelOverride ?? profile?.studyLevel ?? "";
   const [isSavingCefr, setIsSavingCefr] = useState(false);
   const [cefrSaveMessage, setCefrSaveMessage] = useState("");
 
@@ -69,9 +71,25 @@ const SettingsPage = () => {
     setIsSavingCefr(true);
     setCefrSaveMessage("");
     try {
-      await db.learningProfile.update("singleton", {
-        initialCefrLevel: selectedCefrLevel,
+      // Changing the study level must recompute knownWordsBase too, or
+      // vocab coverage / isWordKnown would keep judging against the old
+      // level's word list.
+      const knownWordsBase = getKnownWordsForLevel(selectedCefrLevel as CefrLevel);
+      const updatedCount = await db.learningProfile.update("singleton", {
+        studyLevel: selectedCefrLevel,
+        knownWordsBase,
       });
+      if (updatedCount === 0) {
+        // Table.update() is a no-op when the singleton row doesn't exist yet
+        // (e.g. profile never initialized) — fall back to put() so the
+        // change isn't silently dropped while still reporting "Saved".
+        const currentProfile = await dbHelpers.getProfile();
+        await db.learningProfile.put({
+          ...currentProfile,
+          studyLevel: selectedCefrLevel,
+          knownWordsBase,
+        });
+      }
       setCefrSaveMessage("Saved");
     } catch (e) {
       setCefrSaveMessage(
