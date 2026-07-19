@@ -44,7 +44,7 @@ import { useProfile } from "@/hooks/use-db";
 import { db } from "@/lib/db";
 import { dbHelpers } from "@/lib/db-helpers";
 import { recordCost } from "@/lib/cost-tracker";
-import { formatDate } from "@/lib/date";
+import { formatDate, parseDate } from "@/lib/date";
 import { getKnownWordsForLevel, type CefrLevel } from "@/lib/frequency-list";
 import type { AssessmentResult } from "@/lib/types";
 
@@ -857,7 +857,7 @@ Return ONLY valid JSON (no markdown fences, no explanation) in this exact format
         {previousResult && (
           <Alert>
             <AlertDescription className="text-sm">
-              Your last assessment ({new Date(previousResult.date).toLocaleDateString()}) scored{" "}
+              Your last assessment ({parseDate(previousResult.date).toLocaleDateString()}) scored{" "}
               {previousResult.overallScore}/100 — {previousResult.levelBand}.
             </AlertDescription>
           </Alert>

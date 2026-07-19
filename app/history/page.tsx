@@ -17,6 +17,7 @@ import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { db } from "@/lib/db";
 import { dbHelpers } from "@/lib/db-helpers";
+import { parseDate } from "@/lib/date";
 import type { AssessmentResult } from "@/lib/types";
 
 type ModuleType =
@@ -188,7 +189,7 @@ const HistoryPage = () => {
       all.push({
         key: `assessment-${a.date}-${idx}`,
         module: "assessment",
-        createdAt: new Date(a.date),
+        createdAt: parseDate(a.date),
         title: "Full Assessment",
         summary: `Overall ${a.overallScore} · ${a.levelBand}`,
         href: null,
@@ -307,12 +308,14 @@ const HistoryPage = () => {
                               <Icon className="h-3 w-3" />
                               {MODULE_LABEL[entry.module]}
                             </Badge>
-                            <span className="text-xs text-muted-foreground">
-                              {entry.createdAt.toLocaleTimeString(undefined, {
-                                hour: "2-digit",
-                                minute: "2-digit",
-                              })}
-                            </span>
+                            {entry.module !== "assessment" && (
+                              <span className="text-xs text-muted-foreground">
+                                {entry.createdAt.toLocaleTimeString(undefined, {
+                                  hour: "2-digit",
+                                  minute: "2-digit",
+                                })}
+                              </span>
+                            )}
                           </div>
                         </div>
                         <p className="text-sm font-medium break-words">
