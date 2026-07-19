@@ -7,6 +7,7 @@ import type {
   AssessmentResult,
 } from "./types";
 import { formatDate, today } from "./date";
+import { ensureLemmatizer, lemmatize } from "./lemma";
 
 const DEFAULT_PROFILE: LearningProfile = {
   id: "singleton",
@@ -154,9 +155,11 @@ export const dbHelpers = {
   },
 
   async isWordKnown(lemma: string): Promise<boolean> {
+    await ensureLemmatizer();
+    const key = lemmatize(lemma);
     const profile = await this.getProfile();
-    if (profile.knownWordsBase.includes(lemma)) return true;
-    const card = await this.getCardByLemma(lemma);
+    if (profile.knownWordsBase.some((w) => lemmatize(w) === key)) return true;
+    const card = await this.getCardByLemma(key);
     return card?.masteryLevel === "mastered";
   },
 

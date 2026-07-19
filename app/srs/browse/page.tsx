@@ -1,10 +1,11 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useLiveQuery } from "dexie-react-hooks";
 import { Plus, Search, Trash2 } from "lucide-react";
 import { db } from "@/lib/db";
 import { dbHelpers } from "@/lib/db-helpers";
+import { ensureLemmatizer, lemmatize } from "@/lib/lemma";
 import type { Card as CardType, CardSource, MasteryLevel } from "@/lib/types";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -71,8 +72,6 @@ const truncate = (text: string, max: number): string => {
   return `${text.slice(0, max).trimEnd()}...`;
 };
 
-const lemmatize = (word: string): string => word.trim().toLowerCase();
-
 const AddCardDialog = () => {
   const [open, setOpen] = useState(false);
   const [word, setWord] = useState("");
@@ -82,6 +81,12 @@ const AddCardDialog = () => {
   const [lemmaTouched, setLemmaTouched] = useState(false);
   const [duplicateWarning, setDuplicateWarning] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
+
+  // Preload the lemmatizer dictionary so lemmatize() below has real lemmas
+  // by the time the user submits; falls back to lowercase if still loading.
+  useEffect(() => {
+    ensureLemmatizer();
+  }, []);
 
   const resetForm = (): void => {
     setWord("");
