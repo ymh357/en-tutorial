@@ -136,6 +136,8 @@ export interface LearningProfile {
   lastActiveDate: string | null;
   milestones: Array<{ id: string; earnedAt: Date }>;
   initialCefrLevel: string;
+  assessedLevel: string; // most recent assessed level, for display only
+  studyLevel: string; // difficulty used for generation/content, user-adjustable
   knownWordsBase: string[];
 }
 
@@ -147,6 +149,8 @@ export interface DailyStats {
   readingCount: number;
   writingCount: number;
   srsReviewed: number;
+  listeningCount: number;
+  translationCount: number;
   timeSpent: number;
 }
 
@@ -188,4 +192,15 @@ export interface PoolTask {
   assignedDate: string | null; // YYYY-MM-DD or null if unassigned
   completed: boolean;
   createdAt: Date;
+}
+
+export interface AssessmentResult {
+  id: string;
+  date: string; // YYYY-MM-DD
+  readingScore: number;
+  clozeScore: number;
+  writingScore: number;
+  conversationScore: number;
+  overallScore: number;
+  levelBand: string;
 }
