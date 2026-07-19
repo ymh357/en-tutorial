@@ -11,6 +11,7 @@ import { Separator } from "@/components/ui/separator";
 import { Input } from "@/components/ui/input";
 import { db } from "@/lib/db";
 import { dbHelpers } from "@/lib/db-helpers";
+import { ensureLemmatizer, lemmatize } from "@/lib/lemma";
 import { recordCost } from "@/lib/cost-tracker";
 import { UNKNOWN_DIFFICULTY, type Card as SrsCard, type ReadingLookup } from "@/lib/types";
 import { speak } from "@/lib/tts";
@@ -99,8 +100,6 @@ const tokenizeParagraph = (
   }
   return tokens;
 };
-
-const lemmatize = (word: string): string => word.trim().toLowerCase();
 
 const findSentenceForWord = (sentences: string[], word: string, occurrenceIndex: number): string => {
   // Best-effort: find the sentence that contains this word occurrence.
@@ -225,6 +224,19 @@ const ReaderSessionPage = ({
     setComprehensionError(null);
   }, [id]);
 
+  // Preload the lemmatizer dictionary; flipping lemmaReady retriggers the
+  // coverage/known-words memos below so they use real lemmas once loaded.
+  const [lemmaReady, setLemmaReady] = useState(false);
+  useEffect(() => {
+    let alive = true;
+    ensureLemmatizer().then(() => {
+      if (alive) setLemmaReady(true);
+    });
+    return () => {
+      alive = false;
+    };
+  }, []);
+
   const handleAnswerChange = (index: number, value: string): void => {
     setComprehensionAnswers((prev) => {
       const next = [...prev];
@@ -299,9 +311,10 @@ const ReaderSessionPage = ({
 
   const knownWordsSet = useMemo(() => {
     const set = new Set<string>();
-    for (const word of profile?.knownWordsBase ?? []) set.add(word.toLowerCase());
+    for (const word of profile?.knownWordsBase ?? []) set.add(lemmatize(word));
     return set;
-  }, [profile]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- lemmaReady triggers recompute once the lemmatizer dictionary loads
+  }, [profile, lemmaReady]);
 
   const masteredLemmaSet = useMemo(() => {
     const set = new Set<string>();
@@ -311,17 +324,36 @@ const ReaderSessionPage = ({
     return set;
   }, [srsLemmas]);
 
-  const vocabCoverage = useMemo(() => {
-    if (!session) return 0;
-    const words = session.content.match(WORD_RE) ?? [];
-    if (words.length === 0) return 0;
-    const uniqueWords = new Set(words.map((w) => w.toLowerCase()));
-    let known = 0;
-    for (const word of uniqueWords) {
-      if (knownWordsSet.has(word) || masteredLemmaSet.has(word)) known += 1;
+  // Learning/familiar cards are not yet "known" — tracked separately so the
+  // coverage display can distinguish mastered+baseline from in-progress words.
+  const learningLemmaSet = useMemo(() => {
+    const set = new Set<string>();
+    for (const card of srsLemmas ?? []) {
+      if (card.masteryLevel === "learning" || card.masteryLevel === "familiar") {
+        set.add(card.lemma);
+      }
     }
-    return Math.round((known / uniqueWords.size) * 100);
-  }, [session, knownWordsSet, masteredLemmaSet]);
+    return set;
+  }, [srsLemmas]);
+
+  const { vocabCoverage, learningCoverage } = useMemo(() => {
+    if (!session) return { vocabCoverage: 0, learningCoverage: 0 };
+    const words = session.content.match(WORD_RE) ?? [];
+    if (words.length === 0) return { vocabCoverage: 0, learningCoverage: 0 };
+    const uniqueLemmas = new Set(words.map((w) => lemmatize(w)));
+    let known = 0;
+    let learning = 0;
+    for (const lem of uniqueLemmas) {
+      if (knownWordsSet.has(lem) || masteredLemmaSet.has(lem)) known += 1;
+      else if (learningLemmaSet.has(lem)) learning += 1;
+    }
+    const size = uniqueLemmas.size;
+    return {
+      vocabCoverage: Math.round((known / size) * 100),
+      learningCoverage: Math.round((learning / size) * 100),
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- lemmaReady triggers recompute once the lemmatizer dictionary loads
+  }, [session, knownWordsSet, masteredLemmaSet, learningLemmaSet, lemmaReady]);
 
   // Tracks the running occurrence count per lemma while rendering,
   // so word popups can locate the right sentence.
@@ -757,7 +789,8 @@ const ReaderSessionPage = ({
 
         <div className="text-sm text-muted-foreground">
           Vocab Coverage: <span className="font-semibold text-foreground">{vocabCoverage}%</span>{" "}
-          known
+          known · Learning:{" "}
+          <span className="font-semibold text-foreground">{learningCoverage}%</span>
         </div>
 
         <Card>
