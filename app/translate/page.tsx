@@ -96,28 +96,6 @@ const ANNOTATION_LABEL: Record<TranslationAnnotationType, string> = {
   good: "Good",
 };
 
-// --- Translation stats persistence (for roadmap/dashboard tracking) ---
-// Translation completions aren't tracked via DailyStats.writingCount (that
-// field is for the writing module specifically), so we record them
-// separately in localStorage, mirroring the listening module's approach.
-
-const TRANSLATION_STATS_KEY = "en-tutor-translation-stats";
-
-const recordTranslation = (): void => {
-  if (typeof window === "undefined") return;
-  try {
-    const raw = window.localStorage.getItem(TRANSLATION_STATS_KEY);
-    const stats = raw
-      ? (JSON.parse(raw) as { completed: number; lastDate?: string })
-      : { completed: 0 };
-    stats.completed += 1;
-    stats.lastDate = new Date().toISOString();
-    window.localStorage.setItem(TRANSLATION_STATS_KEY, JSON.stringify(stats));
-  } catch {
-    // Ignore storage errors — stats tracking is best-effort.
-  }
-};
-
 const scoreLabel = (score: number): string => {
   if (score >= 9) return "Excellent";
   if (score >= 7) return "Good";
@@ -495,7 +473,7 @@ const TranslatePage = () => {
       setSessionCount((c) => c + 1);
       setScoreSum((s) => s + parsed.score);
 
-      recordTranslation();
+      await dbHelpers.incrementTodayStat("translationCount");
       await dbHelpers.updateStreak();
 
       const record: TranslationExerciseRecord = {
