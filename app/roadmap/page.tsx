@@ -17,14 +17,15 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { db } from "@/lib/db";
+import { dbHelpers } from "@/lib/db-helpers";
 import { useProfile } from "@/hooks/use-db";
 import { SCENARIOS } from "@/lib/scenarios";
 import type { Conversation, ReadingSession, WritingSession } from "@/lib/types";
 
-// --- CEFR progression + assessment/listening localStorage readers ---
-// (Listening exercises and monthly assessments aren't stored in IndexedDB —
-// they live in localStorage. Reading them here keeps the roadmap accurate
-// without adding new DB tables.)
+// --- CEFR progression + assessment localStorage reader ---
+// (Monthly assessments aren't stored in IndexedDB — they live in
+// localStorage. Reading them here keeps the roadmap accurate without
+// adding new DB tables.)
 
 const NEXT_CEFR_LEVEL: Record<string, string> = {
   A1: "A2",
@@ -36,17 +37,18 @@ const NEXT_CEFR_LEVEL: Record<string, string> = {
 };
 
 const ASSESSMENTS_STORAGE_KEY = "en-tutor-assessments";
-const LISTENING_STATS_KEY = "en-tutor-listening-stats";
 const B2_ASSESSMENT_THRESHOLD = 65;
 
 interface StoredAssessment {
   overallScore: number;
 }
 
-interface ListeningStats {
-  completed: number;
-  totalAccuracy: number;
-}
+// Stable fallback reference so useMemo deps don't churn on every render
+// while the live query is still resolving.
+const EMPTY_LISTENING_AGGREGATE: { count: number; avgAccuracy: number } = {
+  count: 0,
+  avgAccuracy: 0,
+};
 
 const readAssessments = (): StoredAssessment[] => {
   if (typeof window === "undefined") return [];
@@ -57,21 +59,6 @@ const readAssessments = (): StoredAssessment[] => {
     return Array.isArray(parsed) ? parsed : [];
   } catch {
     return [];
-  }
-};
-
-const readListeningStats = (): ListeningStats => {
-  if (typeof window === "undefined") return { completed: 0, totalAccuracy: 0 };
-  try {
-    const raw = window.localStorage.getItem(LISTENING_STATS_KEY);
-    if (!raw) return { completed: 0, totalAccuracy: 0 };
-    const parsed = JSON.parse(raw) as ListeningStats;
-    return {
-      completed: parsed.completed ?? 0,
-      totalAccuracy: parsed.totalAccuracy ?? 0,
-    };
-  } catch {
-    return { completed: 0, totalAccuracy: 0 };
   }
 };
 
@@ -222,6 +209,17 @@ const RoadmapPage = () => {
     () => db.writingSessions.toArray(),
     []
   ) as WritingSession[] | undefined;
+  // "Complete listening exercises" counts all modes (matches its unqualified
+  // label); "Dictation accuracy" is filtered to mode === "dictation" to match
+  // its label (previously it was mislabeled as an all-modes average).
+  const listeningAll = useLiveQuery(
+    () => dbHelpers.getListeningAggregate(),
+    []
+  ) ?? EMPTY_LISTENING_AGGREGATE;
+  const dictation = useLiveQuery(
+    () => dbHelpers.getListeningAggregate("dictation"),
+    []
+  ) ?? EMPTY_LISTENING_AGGREGATE;
 
   const currentLevel = profile?.initialCefrLevel || "B1";
   const nextLevel = NEXT_CEFR_LEVEL[currentLevel] ?? "B2";
@@ -299,14 +297,9 @@ const RoadmapPage = () => {
     const writingDone = requirementsMet(writingRequirements);
 
     // --- Listening Skills ---
-    const listeningStats = readListeningStats();
-    const listeningAccuracy =
-      listeningStats.completed > 0
-        ? Math.round(listeningStats.totalAccuracy / listeningStats.completed)
-        : 0;
     const listeningRequirements: Requirement[] = [
-      { label: "Complete listening exercises", current: listeningStats.completed, target: 20, unit: "exercises" },
-      { label: "Dictation accuracy", current: listeningAccuracy, target: 80, unit: "%" },
+      { label: "Complete listening exercises", current: listeningAll.count, target: 20, unit: "exercises" },
+      { label: "Dictation accuracy", current: dictation.avgAccuracy, target: 80, unit: "%" },
     ];
     const listeningDone = requirementsMet(listeningRequirements);
 
@@ -400,6 +393,8 @@ const RoadmapPage = () => {
     conversations,
     readingSessions,
     writingSessions,
+    listeningAll,
+    dictation,
     currentLevel,
     nextLevel,
   ]);
