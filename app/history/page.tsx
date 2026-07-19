@@ -16,7 +16,8 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { db } from "@/lib/db";
-import type { AssessmentResult } from "@/app/assessment/page";
+import { dbHelpers } from "@/lib/db-helpers";
+import type { AssessmentResult } from "@/lib/types";
 
 type ModuleType =
   | "conversation"
@@ -62,22 +63,12 @@ const MODULE_BADGE_CLASS: Record<ModuleType, string> = {
   assessment: "bg-teal-100 text-teal-700 dark:bg-teal-950/50 dark:text-teal-400",
 };
 
-const ASSESSMENTS_STORAGE_KEY = "en-tutor-assessments";
-
 const truncate = (text: string, max: number): string =>
   text.length > max ? `${text.slice(0, max).trim()}...` : text;
 
-const loadAssessments = (): AssessmentResult[] => {
-  if (typeof window === "undefined") return [];
-  try {
-    const raw = window.localStorage.getItem(ASSESSMENTS_STORAGE_KEY);
-    if (!raw) return [];
-    const parsed = JSON.parse(raw) as AssessmentResult[];
-    return Array.isArray(parsed) ? parsed : [];
-  } catch {
-    return [];
-  }
-};
+// Stable fallback reference so the `entries` useMemo below doesn't recompute
+// on every render while the live query is still resolving.
+const EMPTY_ASSESSMENTS: AssessmentResult[] = [];
 
 const formatGroupLabel = (date: Date): string => {
   const now = new Date();
@@ -107,7 +98,8 @@ const FILTER_TABS: Array<{ value: "all" | ModuleType; label: string }> = [
 
 const HistoryPage = () => {
   const [filter, setFilter] = useState<"all" | ModuleType>("all");
-  const assessments = useMemo(() => loadAssessments(), []);
+  const assessments: AssessmentResult[] =
+    useLiveQuery(() => dbHelpers.getAssessments(), []) ?? EMPTY_ASSESSMENTS;
 
   const conversations = useLiveQuery(
     () => db.conversations.orderBy("createdAt").reverse().toArray(),
