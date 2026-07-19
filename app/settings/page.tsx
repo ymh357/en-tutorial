@@ -523,6 +523,9 @@ const SettingsPage = () => {
             </Button>{" "}
             before continuing.
           </p>
+          {exportStatus === "error" && (
+            <p className="mb-3 text-sm text-red-600">{exportError}</p>
+          )}
           <Dialog
             open={clearDialogOpen}
             onOpenChange={(open) => {

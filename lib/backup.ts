@@ -38,6 +38,27 @@ const DATE_PATHS: Record<string, string[]> = {
 
 const TABLES = Object.keys(DATE_PATHS);
 
+// Dev-only guard: TABLES is hand-mirrored against the real Dexie tables in
+// ./db. If a table gets added there without updating DATE_PATHS here, backups
+// would silently omit it. Warn loudly in dev instead of failing silently;
+// never throw, since this must not break the app.
+if (process.env.NODE_ENV !== "production") {
+  try {
+    const dbTableNames = db.tables.map((t) => t.name);
+    const missing = TABLES.filter((t) => !dbTableNames.includes(t));
+    const extra = dbTableNames.filter((t) => !TABLES.includes(t));
+    if (missing.length > 0 || extra.length > 0) {
+      console.warn(
+        `[backup] TABLES is out of sync with db.tables — backups may silently omit data. ` +
+          `In DATE_PATHS but not a real Dexie table: [${missing.join(", ")}]. ` +
+          `Real Dexie table missing from DATE_PATHS: [${extra.join(", ")}].`
+      );
+    }
+  } catch {
+    // db.tables not available yet at module load — skip; exportBackup still works.
+  }
+}
+
 export interface BackupFile {
   schemaVersion: number;
   exportedAt: string;
@@ -131,9 +152,31 @@ export const importBackup = async (file: File): Promise<void> => {
       await table(name).bulkPut(reviveDates(name, rows));
     }
   });
+  // localStorage restore has no cross-store atomicity with the Dexie
+  // transaction above, so it's best-effort: the tables are already durably
+  // restored by this point, and a setItem failure here (e.g.
+  // QuotaExceededError) must not throw out of importBackup — that would make
+  // the caller falsely report "no data was changed".
   if (typeof window !== "undefined" && parsed.localStorage) {
-    for (const [k, v] of Object.entries(parsed.localStorage)) {
-      window.localStorage.setItem(k, v);
+    try {
+      // Clear existing en-tutor- keys first so this is a true replace (drops
+      // keys absent from the backup) rather than an overlay, matching the
+      // "overwrite all" contract of import.
+      const keysToRemove: string[] = [];
+      for (let i = 0; i < window.localStorage.length; i++) {
+        const key = window.localStorage.key(i);
+        if (key?.startsWith("en-tutor-")) keysToRemove.push(key);
+      }
+      for (const key of keysToRemove) window.localStorage.removeItem(key);
+
+      for (const [k, v] of Object.entries(parsed.localStorage)) {
+        window.localStorage.setItem(k, v);
+      }
+    } catch (e) {
+      console.warn(
+        "importBackup: localStorage restore failed after table data was already restored; import still counts as succeeded.",
+        e
+      );
     }
   }
 };
