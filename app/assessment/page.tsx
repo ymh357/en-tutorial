@@ -30,10 +30,22 @@ import {
   ProgressTrack,
   ProgressIndicator,
 } from "@/components/ui/progress";
+import {
+  Dialog,
+  DialogClose,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { useLiveQuery } from "dexie-react-hooks";
 import { useProfile } from "@/hooks/use-db";
 import { db } from "@/lib/db";
 import { dbHelpers } from "@/lib/db-helpers";
 import { recordCost } from "@/lib/cost-tracker";
+import { formatDate } from "@/lib/date";
+import type { AssessmentResult } from "@/lib/types";
 
 type Phase =
   | "intro"
@@ -70,17 +82,10 @@ interface ConversationTurn {
   content: string;
 }
 
-export interface AssessmentResult {
-  date: string;
-  readingScore: number;
-  clozeScore: number;
-  writingScore: number;
-  conversationScore: number;
-  overallScore: number;
-  levelBand: string;
-}
+// Re-exported for app/history/page.tsx, which still imports this type from
+// this module path; the canonical definition now lives in lib/types.ts.
+export type { AssessmentResult };
 
-const ASSESSMENTS_STORAGE_KEY = "en-tutor-assessments";
 const ASSESSMENT_PROGRESS_KEY = "en-tutor-assessment-progress";
 
 const WRITING_PROMPTS = [
@@ -247,38 +252,32 @@ const scoreClozeBlank = (userAnswer: string, blank: ClozeBlank): boolean => {
   return candidates.includes(normalizedUser);
 };
 
-const levelBandForScore = (score: number): string => {
-  if (score < 30) return "A2 (Lower)";
-  if (score < 45) return "A2 (Upper)";
-  if (score < 55) return "B1 (Lower)";
-  if (score < 65) return "B1 (Upper)";
-  if (score < 75) return "B2 (Lower)";
-  if (score < 85) return "B2 (Upper)";
-  if (score < 95) return "C1 (Lower)";
-  return "C1 (Upper)";
-};
+// Single source of truth for score -> level mapping. Each entry's fine
+// `band` is the display label (levelBandForScore); its coarse `cefr` is
+// the level used to drive study-difficulty suggestions (cefrFromScore).
+// Ascending by minScore; a score matches the last entry it meets or beats.
+const CEFR_BANDS: { minScore: number; band: string; cefr: string }[] = [
+  { minScore: 0, band: "A2 (Lower)", cefr: "A2" },
+  { minScore: 30, band: "A2 (Upper)", cefr: "A2" },
+  { minScore: 45, band: "B1 (Lower)", cefr: "B1" },
+  { minScore: 55, band: "B1 (Upper)", cefr: "B1" },
+  { minScore: 65, band: "B2 (Lower)", cefr: "B2" },
+  { minScore: 75, band: "B2 (Upper)", cefr: "B2" },
+  { minScore: 85, band: "C1 (Lower)", cefr: "C1" },
+  { minScore: 95, band: "C1 (Upper)", cefr: "C1" },
+];
 
-const loadPreviousAssessments = (): AssessmentResult[] => {
-  if (typeof window === "undefined") return [];
-  try {
-    const raw = window.localStorage.getItem(ASSESSMENTS_STORAGE_KEY);
-    if (!raw) return [];
-    const parsed = JSON.parse(raw) as AssessmentResult[];
-    return Array.isArray(parsed) ? parsed : [];
-  } catch {
-    return [];
+const bandForScore = (score: number): (typeof CEFR_BANDS)[number] => {
+  let match = CEFR_BANDS[0];
+  for (const entry of CEFR_BANDS) {
+    if (score >= entry.minScore) match = entry;
+    else break;
   }
+  return match;
 };
 
-const saveAssessment = (result: AssessmentResult): void => {
-  if (typeof window === "undefined") return;
-  const existing = loadPreviousAssessments();
-  const updated = [...existing, result];
-  window.localStorage.setItem(
-    ASSESSMENTS_STORAGE_KEY,
-    JSON.stringify(updated)
-  );
-};
+const levelBandForScore = (score: number): string => bandForScore(score).band;
+const cefrFromScore = (score: number): string => bandForScore(score).cefr;
 
 interface AssessmentProgress {
   phase: Phase;
@@ -505,17 +504,17 @@ const AssessmentPage = () => {
     () => restoredProgress?.conversationFeedback ?? ""
   );
 
-  const [previousAssessments] = useState<AssessmentResult[]>(() =>
-    loadPreviousAssessments()
-  );
-  const [finalResult, setFinalResult] = useState<AssessmentResult | null>(
-    null
-  );
+  const previousAssessments = useLiveQuery(() => dbHelpers.getAssessments(), []) ?? [];
+  const [finalResult, setFinalResult] = useState<Omit<
+    AssessmentResult,
+    "id"
+  > | null>(null);
+  const [pendingLevel, setPendingLevel] = useState<string | null>(null);
 
-  const previousResult =
-    previousAssessments.length > 0
-      ? previousAssessments[previousAssessments.length - 1]
-      : null;
+  // dbHelpers.getAssessments() sorts newest-first, so the most recent prior
+  // assessment is the first entry (not the last, unlike the old append-only
+  // localStorage array).
+  const previousResult = previousAssessments[0] ?? null;
 
   // Persist progress to sessionStorage whenever the phase advances, so a
   // refresh mid-assessment doesn't lose the student's work.
@@ -736,8 +735,8 @@ Return ONLY valid JSON (no markdown fences, no explanation) in this exact format
     const composite = Math.round(
       (readingScore + clozeScore + writingScore + finalConversationScore) / 4
     );
-    const result: AssessmentResult = {
-      date: new Date().toISOString(),
+    const result = {
+      date: formatDate(new Date()),
       readingScore,
       clozeScore,
       writingScore,
@@ -745,26 +744,28 @@ Return ONLY valid JSON (no markdown fences, no explanation) in this exact format
       overallScore: composite,
       levelBand: levelBandForScore(composite),
     };
-    saveAssessment(result);
+    await dbHelpers.saveAssessment(result);
     setFinalResult(result);
 
-    // Update profile CEFR level based on assessment result
-    const cefrFromScore = (s: number): string => {
-      if (s < 45) return "A2";
-      if (s < 65) return "B1";
-      if (s < 85) return "B2";
-      return "C1";
-    };
+    // assessedLevel is display-only and always kept current. studyLevel
+    // drives content generation, so only change it with the user's
+    // confirmation when it would actually differ from today's setting.
     const newLevel = cefrFromScore(composite);
     const currentProfile = await dbHelpers.getProfile();
-    if (currentProfile.initialCefrLevel !== newLevel) {
-      await db.learningProfile.update("singleton", {
-        initialCefrLevel: newLevel,
-      });
+    await db.learningProfile.update("singleton", { assessedLevel: newLevel });
+    if (newLevel !== currentProfile.studyLevel) {
+      setPendingLevel(newLevel);
     }
+
     await dbHelpers.updateStreak();
     clearAssessmentProgress();
     setPhase("results");
+  };
+
+  const confirmStudyLevelUpdate = async (): Promise<void> => {
+    if (!pendingLevel) return;
+    await db.learningProfile.update("singleton", { studyLevel: pendingLevel });
+    setPendingLevel(null);
   };
 
   const writingWordCount = writingContent.trim().split(/\s+/).filter(Boolean).length;
@@ -1185,6 +1186,32 @@ Return ONLY valid JSON (no markdown fences, no explanation) in this exact format
 
     return (
       <div className="max-w-2xl space-y-6">
+        <Dialog
+          open={pendingLevel !== null}
+          onOpenChange={(open) => {
+            if (!open) setPendingLevel(null);
+          }}
+        >
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Update study difficulty?</DialogTitle>
+              <DialogDescription>
+                This assessment puts you at {pendingLevel}, different from your
+                current study difficulty ({profile?.studyLevel || "not set"}).
+                Update it so future content matches your new level?
+              </DialogDescription>
+            </DialogHeader>
+            <DialogFooter>
+              <DialogClose render={<Button variant="outline" />}>
+                Keep current
+              </DialogClose>
+              <Button onClick={() => void confirmStudyLevelUpdate()}>
+                Update to {pendingLevel}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
         <div>
           <h1 className="text-2xl font-bold mb-2">Assessment Results</h1>
           <p className="text-muted-foreground">
