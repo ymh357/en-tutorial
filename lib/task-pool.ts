@@ -28,10 +28,10 @@ export const getTodayTasks = async (): Promise<PoolTask[]> => {
 
 // Assign tasks from the unassigned pool to upcoming days
 export const assignTasks = async (): Promise<void> => {
-  const today = new Date();
+  const now = new Date();
 
   for (let dayOffset = 0; dayOffset < POOL_TARGET_DAYS; dayOffset++) {
-    const date = new Date(today);
+    const date = new Date(now);
     date.setDate(date.getDate() + dayOffset);
     const dateStr = formatDate(date);
 

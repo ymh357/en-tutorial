@@ -139,7 +139,7 @@ db.version(4)
             for (const a of arr) {
               await table.put({
                 id: crypto.randomUUID(),
-                date: a.date,
+                date: formatDate(new Date(a.date)),
                 readingScore: a.readingScore,
                 clozeScore: a.clozeScore,
                 writingScore: a.writingScore,
