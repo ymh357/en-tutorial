@@ -39,6 +39,8 @@ import {
   useConversations,
   useReadingSessions,
   useWritingSessions,
+  useListeningExercises,
+  useTranslationExercises,
 } from "@/hooks/use-db";
 import { generateStudyPlan, type StudyStep, type StudyStepType } from "@/lib/study-engine";
 import { getCostSummary, type CostSummary } from "@/lib/cost-tracker";
@@ -73,28 +75,6 @@ const CEFR_LABELS: Record<string, string> = {
 };
 
 const HEATMAP_DAYS = 180;
-
-// --- Cross-module last-activity readers ---
-// Listening and translation stats live in localStorage (not IndexedDB), so
-// the study plan needs its own readers to determine staleness/rotation.
-
-const LISTENING_STATS_KEY = "en-tutor-listening-stats";
-const TRANSLATION_STATS_KEY = "en-tutor-translation-stats";
-
-const readLastDate = (key: string): Date | null => {
-  if (typeof window === "undefined") return null;
-  try {
-    const raw = window.localStorage.getItem(key);
-    if (!raw) return null;
-    const stats = JSON.parse(raw) as { lastDate?: string };
-    return stats.lastDate ? new Date(stats.lastDate) : null;
-  } catch {
-    return null;
-  }
-};
-
-const getLastListeningDate = (): Date | null => readLastDate(LISTENING_STATS_KEY);
-const getLastTranslationDate = (): Date | null => readLastDate(TRANSLATION_STATS_KEY);
 
 const formatDate = (date: Date): string => {
   const y = date.getFullYear();
@@ -211,6 +191,8 @@ const DashboardPage = () => {
   const conversations = useConversations(5);
   const readingSessions = useReadingSessions(1);
   const writingSessions = useWritingSessions(1);
+  const recentListening = useListeningExercises(1);
+  const recentTranslation = useTranslationExercises(1);
   const totalConversationCount = useLiveQuery(() => db.conversations.count()) ?? 0;
   const totalWritingCount = useLiveQuery(() => db.writingSessions.count()) ?? 0;
   const [costSummary] = useState<CostSummary>(() => getCostSummary());
@@ -418,23 +400,8 @@ const DashboardPage = () => {
     if (todayStats.conversationCount > 0) detected.add("conversation");
     if (todayStats.readingCount > 0) detected.add("reading");
     if (todayStats.writingCount > 0) detected.add("writing");
-    // Listening and translation have no DailyStats field; check localStorage
-    try {
-      const lRaw = localStorage.getItem("en-tutor-listening-stats");
-      if (lRaw) {
-        const ls = JSON.parse(lRaw) as { lastDate?: string };
-        if (ls.lastDate?.startsWith(new Date().toISOString().split("T")[0])) {
-          detected.add("listening");
-        }
-      }
-      const tRaw = localStorage.getItem("en-tutor-translation-stats");
-      if (tRaw) {
-        const ts = JSON.parse(tRaw) as { lastDate?: string };
-        if (ts.lastDate?.startsWith(new Date().toISOString().split("T")[0])) {
-          detected.add("translate");
-        }
-      }
-    } catch { /* ignore */ }
+    if (todayStats.listeningCount > 0) detected.add("listening");
+    if (todayStats.translationCount > 0) detected.add("translate");
     return detected;
   }, [todayStats]);
 
@@ -456,8 +423,8 @@ const DashboardPage = () => {
       lastConversation: conversations[0]?.createdAt ?? null,
       lastReading: readingSessions[0]?.createdAt ?? null,
       lastWriting: writingSessions[0]?.createdAt ?? null,
-      lastListening: getLastListeningDate(),
-      lastTranslation: getLastTranslationDate(),
+      lastListening: recentListening[0]?.createdAt ?? null,
+      lastTranslation: recentTranslation[0]?.createdAt ?? null,
       profile,
       todayStats,
     });
@@ -466,6 +433,8 @@ const DashboardPage = () => {
     conversations,
     readingSessions,
     writingSessions,
+    recentListening,
+    recentTranslation,
     profile,
     todayStats,
   ]);
