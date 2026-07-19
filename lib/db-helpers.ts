@@ -5,15 +5,7 @@ import type {
   LearningProfile,
   MasteryLevel,
 } from "./types";
-
-const formatDate = (date: Date): string => {
-  const y = date.getFullYear();
-  const m = String(date.getMonth() + 1).padStart(2, "0");
-  const d = String(date.getDate()).padStart(2, "0");
-  return `${y}-${m}-${d}`;
-};
-
-const today = (): string => formatDate(new Date());
+import { formatDate, today } from "./date";
 
 const DEFAULT_PROFILE: LearningProfile = {
   id: "singleton",
