@@ -169,7 +169,7 @@ export const generateStudyPlan = (
     conversation: todayStats.conversationCount,
     reading: todayStats.readingCount,
     writing: todayStats.writingCount,
-    listening: 0, // not yet tracked in DailyStats
+    listening: todayStats.listeningCount,
   };
 
   for (const candidate of rotated) {
