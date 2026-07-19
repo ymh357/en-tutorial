@@ -244,7 +244,16 @@ const DashboardPage = () => {
         // bulkPut is idempotent (server task ids are stable per day), so
         // concurrent mounts (StrictMode double-mount / multiple tabs) converge
         // instead of throwing a ConstraintError that falsely triggers local
-        // generation and burns AI calls.
+        // generation and burns AI calls. But bulkPut also overwrites existing
+        // rows wholesale, so read existing rows first and preserve their
+        // completed/createdAt — otherwise a later reload (e.g. the server
+        // still serving yesterday's overdue tasks) would resurrect a task the
+        // user already completed and double-count stats/streak.
+        const existing = await db.poolTasks.bulkGet(serverData.tasks.map((t) => t.id));
+        const existingById = new Map(
+          existing.filter((t): t is PoolTask => t !== undefined).map((t) => [t.id, t])
+        );
+
         await db.poolTasks.bulkPut(
           serverData.tasks.map((task) => ({
             id: task.id,
@@ -252,8 +261,8 @@ const DashboardPage = () => {
             difficulty: task.difficulty,
             content: task.content,
             assignedDate: serverData?.date ?? null,
-            completed: false,
-            createdAt: new Date(),
+            completed: existingById.get(task.id)?.completed ?? task.completed ?? false,
+            createdAt: existingById.get(task.id)?.createdAt ?? task.createdAt ?? new Date(),
           }))
         );
         return; // server had tasks, done
