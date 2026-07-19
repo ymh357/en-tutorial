@@ -71,6 +71,18 @@ const formatTimeSpent = (ms: number): string => {
 
 const SrsPage = () => {
   const dueCards = useDueCards(50);
+  // Snapshot the due set once at session start so the review loop iterates a
+  // stable list — `dueCards` is a live query that shrinks as ratings move
+  // cards out of the due set, which previously caused skipped cards and
+  // premature "session complete" as the array shifted under the index.
+  // Adjusted directly during render (React's documented pattern for
+  // deriving state from props, rather than a setState-in-effect) since
+  // dueCards resolving already re-renders this component.
+  const [sessionCards, setSessionCards] = useState<CardType[] | null>(null);
+  if (sessionCards === null && dueCards.length > 0) {
+    setSessionCards(dueCards);
+  }
+
   const [index, setIndex] = useState(0);
   const [showAnswer, setShowAnswer] = useState(false);
   const [reviewedCount, setReviewedCount] = useState(0);
@@ -81,8 +93,8 @@ const SrsPage = () => {
     null
   );
 
-  const totalCards = dueCards.length;
-  const currentCard: CardType | undefined = dueCards[index];
+  const totalCards = sessionCards?.length ?? 0;
+  const currentCard: CardType | undefined = sessionCards?.[index];
 
   const nextIntervals = useMemo(() => {
     if (!currentCard) return null;
@@ -119,8 +131,10 @@ const SrsPage = () => {
     }
   };
 
-  // Empty state: nothing was due at all.
-  if (totalCards === 0 && !sessionDone) {
+  // Empty state: nothing due at all. Checked against the live `dueCards`
+  // (not the frozen `sessionCards` snapshot) so this reflects the current
+  // due set, not just "haven't snapshotted yet".
+  if (dueCards.length === 0 && sessionCards === null && !sessionDone) {
     return (
       <div className="mx-auto w-full space-y-6 md:max-w-2xl">
         <div className="flex items-center justify-between">
