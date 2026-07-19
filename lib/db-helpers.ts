@@ -4,6 +4,7 @@ import type {
   DailyStats,
   LearningProfile,
   MasteryLevel,
+  AssessmentResult,
 } from "./types";
 import { formatDate, today } from "./date";
 
@@ -14,13 +15,21 @@ const DEFAULT_PROFILE: LearningProfile = {
   lastActiveDate: null,
   milestones: [],
   initialCefrLevel: "",
+  assessedLevel: "",
+  studyLevel: "",
   knownWordsBase: [],
 };
 
 export const dbHelpers = {
   async getProfile(): Promise<LearningProfile> {
     const profile = await db.learningProfile.get("singleton");
-    if (profile) return profile;
+    if (profile) {
+      return {
+        ...profile,
+        assessedLevel: profile.assessedLevel ?? profile.initialCefrLevel ?? "",
+        studyLevel: profile.studyLevel ?? profile.initialCefrLevel ?? "",
+      };
+    }
     return { ...DEFAULT_PROFILE, milestones: [], knownWordsBase: [] };
   },
 
@@ -31,6 +40,8 @@ export const dbHelpers = {
     await db.learningProfile.put({
       ...DEFAULT_PROFILE,
       initialCefrLevel: cefrLevel,
+      assessedLevel: cefrLevel,
+      studyLevel: cefrLevel,
       knownWordsBase: knownWords,
     });
   },
@@ -60,6 +71,8 @@ export const dbHelpers = {
       readingCount: 0,
       writingCount: 0,
       srsReviewed: 0,
+      listeningCount: 0,
+      translationCount: 0,
       timeSpent: 0,
     };
     return empty;
@@ -79,6 +92,8 @@ export const dbHelpers = {
         readingCount: 0,
         writingCount: 0,
         srsReviewed: 0,
+        listeningCount: 0,
+        translationCount: 0,
         timeSpent: 0,
         ...updates,
       });
@@ -104,6 +119,8 @@ export const dbHelpers = {
           readingCount: 0,
           writingCount: 0,
           srsReviewed: 0,
+          listeningCount: 0,
+          translationCount: 0,
           timeSpent: 0,
           [field]: amount,
         });
@@ -175,5 +192,14 @@ export const dbHelpers = {
     });
 
     return { current: newCurrent, longest: newLongest };
+  },
+
+  async saveAssessment(result: Omit<AssessmentResult, "id">): Promise<void> {
+    await db.assessments.add({ id: crypto.randomUUID(), ...result });
+  },
+
+  async getAssessments(): Promise<AssessmentResult[]> {
+    const all = await db.assessments.toArray();
+    return all.sort((a, b) => b.date.localeCompare(a.date));
   },
 };
