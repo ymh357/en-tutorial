@@ -34,28 +34,6 @@ import { completeTask } from "@/lib/task-pool";
 import { speak } from "@/lib/tts";
 import type { PoolTaskType } from "@/lib/types";
 
-// --- Listening stats persistence (for roadmap tracking) ---
-
-const LISTENING_STATS_KEY = "en-tutor-listening-stats";
-
-const recordListeningExercise = (accuracy: number): void => {
-  if (typeof window === "undefined") return;
-  try {
-    const raw = window.localStorage.getItem(LISTENING_STATS_KEY);
-    const stats = raw
-      ? (JSON.parse(raw) as {
-          completed: number;
-          totalAccuracy: number;
-          lastDate?: string;
-        })
-      : { completed: 0, totalAccuracy: 0 };
-    stats.completed += 1;
-    stats.totalAccuracy += accuracy;
-    stats.lastDate = new Date().toISOString();
-    window.localStorage.setItem(LISTENING_STATS_KEY, JSON.stringify(stats));
-  } catch { /* ignore storage errors */ }
-};
-
 // Persist a completed listening exercise to the local DB for the history page.
 const saveListeningExercise = async (
   mode: Mode,
@@ -294,7 +272,7 @@ const DictationTab = ({ cefrLevel }: { cefrLevel: string }) => {
     setCompleted((c) => c + 1);
     setTotalAccuracy((sum) => sum + diff.accuracy);
     await dbHelpers.updateStreak();
-    recordListeningExercise(diff.accuracy);
+    await dbHelpers.incrementTodayStat("listeningCount");
     await saveListeningExercise("dictation", sentence, userInput, diff.accuracy);
   };
 
@@ -559,7 +537,7 @@ const ComprehensionTab = ({ cefrLevel }: { cefrLevel: string }) => {
     await dbHelpers.updateStreak();
     const total = data?.questions.length ?? 1;
     const accuracy = Math.round((score / total) * 100);
-    recordListeningExercise(accuracy);
+    await dbHelpers.incrementTodayStat("listeningCount");
     if (data) {
       const userAnswer = data.questions
         .map((q, idx) => q.options[answers[idx]] ?? "(no answer)")
@@ -814,7 +792,7 @@ const ShadowingTab = ({ cefrLevel }: { cefrLevel: string }) => {
       const shadowResult = diffWords(currentSentence, text);
       setResult(shadowResult);
       await dbHelpers.updateStreak();
-      recordListeningExercise(shadowResult.accuracy);
+      await dbHelpers.incrementTodayStat("listeningCount");
       await saveListeningExercise(
         "shadowing",
         currentSentence,
@@ -1104,7 +1082,7 @@ const PredictionTab = ({ cefrLevel }: { cefrLevel: string }) => {
       }
       setEvaluation(parsed);
       await dbHelpers.updateStreak();
-      recordListeningExercise(parsed.score * 10);
+      await dbHelpers.incrementTodayStat("listeningCount");
       await saveListeningExercise(
         "prediction",
         `${passage.firstHalf} ${passage.secondHalf}`,
