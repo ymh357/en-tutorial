@@ -45,6 +45,7 @@ import { db } from "@/lib/db";
 import { dbHelpers } from "@/lib/db-helpers";
 import { recordCost } from "@/lib/cost-tracker";
 import { formatDate } from "@/lib/date";
+import { getKnownWordsForLevel, type CefrLevel } from "@/lib/frequency-list";
 import type { AssessmentResult } from "@/lib/types";
 
 type Phase =
@@ -440,7 +441,7 @@ const initialAssessmentProgress = (): AssessmentProgress | null => {
 
 const AssessmentPage = () => {
   const profile = useProfile();
-  const cefrLevel = profile?.initialCefrLevel || "B1";
+  const cefrLevel = profile?.studyLevel || "B1";
 
   const [restoredProgress] = useState<AssessmentProgress | null>(
     initialAssessmentProgress
@@ -515,6 +516,13 @@ const AssessmentPage = () => {
   // assessment is the first entry (not the last, unlike the old append-only
   // localStorage array).
   const previousResult = previousAssessments[0] ?? null;
+
+  // Snapshot of the assessment that was most recent BEFORE this run's result
+  // was saved. previousAssessments is a reactive live query, so once
+  // finishAssessment saves the new result, previousAssessments[0] becomes
+  // that just-saved row — priorResult is captured ahead of the save so the
+  // results screen can still compare against the true prior assessment.
+  const [priorResult, setPriorResult] = useState<AssessmentResult | null>(null);
 
   // Persist progress to sessionStorage whenever the phase advances, so a
   // refresh mid-assessment doesn't lose the student's work.
@@ -744,6 +752,9 @@ Return ONLY valid JSON (no markdown fences, no explanation) in this exact format
       overallScore: composite,
       levelBand: levelBandForScore(composite),
     };
+    // Capture the prior assessment BEFORE saving — previousAssessments is a
+    // live query and would otherwise reflect the row we're about to insert.
+    setPriorResult(previousAssessments[0] ?? null);
     await dbHelpers.saveAssessment(result);
     setFinalResult(result);
 
@@ -764,7 +775,10 @@ Return ONLY valid JSON (no markdown fences, no explanation) in this exact format
 
   const confirmStudyLevelUpdate = async (): Promise<void> => {
     if (!pendingLevel) return;
-    await db.learningProfile.update("singleton", { studyLevel: pendingLevel });
+    await db.learningProfile.update("singleton", {
+      studyLevel: pendingLevel,
+      knownWordsBase: getKnownWordsForLevel(pendingLevel as CefrLevel),
+    });
     setPendingLevel(null);
   };
 
@@ -1163,8 +1177,8 @@ Return ONLY valid JSON (no markdown fences, no explanation) in this exact format
 
     const weakestSection = [...sectionScores].sort((a, b) => a.score - b.score)[0];
 
-    const scoreDelta = previousResult
-      ? finalResult.overallScore - previousResult.overallScore
+    const scoreDelta = priorResult
+      ? finalResult.overallScore - priorResult.overallScore
       : null;
 
     const abilityScores = [
@@ -1175,12 +1189,12 @@ Return ONLY valid JSON (no markdown fences, no explanation) in this exact format
     ];
 
     // Per-dimension comparison vs. the previous assessment, if one exists.
-    const dimensionComparisons = previousResult
+    const dimensionComparisons = priorResult
       ? [
-          { label: "Reading", prev: previousResult.readingScore, curr: finalResult.readingScore },
-          { label: "Listening/Cloze", prev: previousResult.clozeScore, curr: finalResult.clozeScore },
-          { label: "Writing", prev: previousResult.writingScore, curr: finalResult.writingScore },
-          { label: "Speaking", prev: previousResult.conversationScore, curr: finalResult.conversationScore },
+          { label: "Reading", prev: priorResult.readingScore, curr: finalResult.readingScore },
+          { label: "Listening/Cloze", prev: priorResult.clozeScore, curr: finalResult.clozeScore },
+          { label: "Writing", prev: priorResult.writingScore, curr: finalResult.writingScore },
+          { label: "Speaking", prev: priorResult.conversationScore, curr: finalResult.conversationScore },
         ]
       : null;
 
