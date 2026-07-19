@@ -1,31 +1,25 @@
 import { db } from "./db";
 import type { PoolTask } from "./types";
+import { formatDate, today } from "./date";
 
 const TASKS_PER_DAY = 6; // how many tasks per day
 const POOL_TARGET_DAYS = 7; // assign up to 7 days ahead
 
-const formatDate = (d: Date): string => {
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, "0");
-  const day = String(d.getDate()).padStart(2, "0");
-  return `${y}-${m}-${day}`;
-};
-
 // Get today's assigned tasks (assigned + incomplete from past days carried forward)
 export const getTodayTasks = async (): Promise<PoolTask[]> => {
-  const today = formatDate(new Date());
+  const todayStr = today();
 
   // Get overdue incomplete tasks (assigned to past dates)
   const overdue = await db.poolTasks
     .where("assignedDate")
-    .below(today)
+    .below(todayStr)
     .and((t) => !t.completed && t.assignedDate !== "")
     .toArray();
 
   // Get today's assigned tasks
   const todayTasks = await db.poolTasks
     .where("assignedDate")
-    .equals(today)
+    .equals(todayStr)
     .toArray();
 
   // Overdue tasks come first (carry forward)

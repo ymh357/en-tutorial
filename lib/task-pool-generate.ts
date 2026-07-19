@@ -1,6 +1,7 @@
 import { db } from "./db";
 import type { PoolTaskType } from "./types";
 import { assignTasks } from "./task-pool";
+import { today } from "./date";
 
 const TASK_TYPES: PoolTaskType[] = [
   "listening-dictation",
@@ -60,7 +61,7 @@ export const generatePoolTasks = async (
 ): Promise<void> => {
   // Always generate all types so every module tab has pre-loaded content
   const typesToGenerate = TASK_TYPES;
-  const today = new Date().toISOString().split("T")[0];
+  const todayStr = today();
 
   for (const type of typesToGenerate) {
     try {
@@ -84,7 +85,7 @@ export const generatePoolTasks = async (
         type,
         difficulty: level,
         content,
-        assignedDate: today,
+        assignedDate: todayStr,
         completed: false,
         createdAt: new Date(),
       });
