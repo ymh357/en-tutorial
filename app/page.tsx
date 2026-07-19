@@ -272,14 +272,24 @@ const DashboardPage = () => {
       const lastGen = localStorage.getItem(LAST_GEN_KEY);
       if (lastGen === today) return; // already generated today
 
-      const profileData = await dbHelpers.getProfile();
-      const level = profileData.studyLevel || "B1";
-
-      // Import dynamically to avoid pulling generation code into the main bundle
-      // when the server path succeeds
-      const { generatePoolTasks } = await import("@/lib/task-pool-generate");
-      await generatePoolTasks(level, 8); // 1 task per type, all 8 types
+      // Claim the day up-front. This read-check-set is synchronous (no await
+      // between the check above and this set), so a concurrent mount — React
+      // StrictMode double-invoke or a second tab — reads the claim and bails
+      // instead of also generating, which would double the paid AI calls.
       localStorage.setItem(LAST_GEN_KEY, today);
+      try {
+        const profileData = await dbHelpers.getProfile();
+        const level = profileData.studyLevel || "B1";
+
+        // Import dynamically to avoid pulling generation code into the main
+        // bundle when the server path succeeds
+        const { generatePoolTasks } = await import("@/lib/task-pool-generate");
+        await generatePoolTasks(level, 8); // 1 task per type, all 8 types
+      } catch (err) {
+        // Generation failed — release the claim so a later load can retry today.
+        localStorage.removeItem(LAST_GEN_KEY);
+        throw err;
+      }
     };
 
     void pullOrGenerate();
