@@ -408,8 +408,8 @@ const ProfilePage = () => {
         <CardHeader>
           <CardTitle>Overview</CardTitle>
           <CardDescription>
-            {profile?.initialCefrLevel
-              ? CEFR_LABELS[profile.initialCefrLevel] ?? profile.initialCefrLevel
+            {profile?.assessedLevel
+              ? CEFR_LABELS[profile.assessedLevel] ?? profile.assessedLevel
               : "CEFR level not set"}
             {memberSince ? ` · Member since ${memberSince}` : ""}
           </CardDescription>

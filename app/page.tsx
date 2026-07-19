@@ -185,6 +185,8 @@ const QUICK_LAUNCH = [
 
 const DashboardPage = () => {
   const profile = useProfile();
+  // Display fallback: assessedLevel first, studyLevel if not yet assessed.
+  const displayLevel = profile?.assessedLevel || profile?.studyLevel;
   const dueCards = useDueCards();
   const vocabCounts = useVocabCounts();
   const todayStats = useTodayStats();
@@ -245,7 +247,7 @@ const DashboardPage = () => {
       if (lastGen === today) return; // already generated today
 
       const profileData = await dbHelpers.getProfile();
-      const level = profileData.initialCefrLevel || "B1";
+      const level = profileData.studyLevel || "B1";
 
       // Import dynamically to avoid pulling generation code into the main bundle
       // when the server path succeeds
@@ -603,9 +605,8 @@ const DashboardPage = () => {
               <Sparkles className="size-4 text-blue-500 shrink-0 md:size-5" />
               <div>
                 <p className="text-xs font-medium md:text-sm">
-                  {profile?.initialCefrLevel
-                    ? CEFR_LABELS[profile.initialCefrLevel] ??
-                      profile.initialCefrLevel
+                  {displayLevel
+                    ? CEFR_LABELS[displayLevel] ?? displayLevel
                     : "Not set"}
                 </p>
                 <p className="text-xs text-muted-foreground">Current level</p>
