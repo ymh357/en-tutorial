@@ -61,8 +61,14 @@ const parseJsonContent = (text: string): Record<string, unknown> | null => {
 };
 
 export const GET = async (req: Request): Promise<Response> => {
+  const cronSecret = process.env.CRON_SECRET;
+  if (!cronSecret) {
+    // Reject when the secret is not configured so an unset env var cannot be
+    // bypassed via a literal "Bearer undefined" authorization header.
+    return Response.json({ error: "Server misconfigured" }, { status: 500 });
+  }
   const authHeader = req.headers.get("authorization");
-  if (authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
+  if (authHeader !== `Bearer ${cronSecret}`) {
     return Response.json({ error: "Unauthorized" }, { status: 401 });
   }
 
@@ -95,6 +101,7 @@ export const GET = async (req: Request): Promise<Response> => {
   const blob = await put(`tasks/${today}.json`, JSON.stringify(tasks), {
     access: "public",
     contentType: "application/json",
+    allowOverwrite: true, // deterministic per-day path; allow same-day re-runs to be idempotent
   });
 
   return Response.json({
