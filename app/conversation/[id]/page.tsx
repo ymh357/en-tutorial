@@ -344,15 +344,23 @@ const ConversationPage = () => {
         }));
 
       if (conversationMessages.length > 0) {
-        void db.conversations.put({
-          id: conversationId,
-          scenario: type === "preset" ? title : (scenarioParam ?? title),
-          scenarioType: type ?? "free",
-          messages: conversationMessages,
-          review: null,
-          duration: Math.round((Date.now() - startTime) / 1000),
-          createdAt: new Date(),
-        });
+        void (async () => {
+          const existing = await db.conversations.get(conversationId);
+          // Never overwrite a conversation that already has a review — a
+          // deep link to a reviewed conversation must not clobber it.
+          if (existing?.review) return;
+          await db.conversations.put({
+            id: conversationId,
+            scenario: type === "preset" ? title : (scenarioParam ?? title),
+            scenarioType: type ?? "free",
+            messages: conversationMessages,
+            review: null,
+            duration: Math.round((Date.now() - startTime) / 1000),
+            // Preserve the original creation time across autosaves instead
+            // of resetting it to "now" on every persist.
+            createdAt: existing?.createdAt ?? new Date(),
+          });
+        })();
       }
     }
     previousStatusRef.current = status;
@@ -466,6 +474,14 @@ const ConversationPage = () => {
 
   const handleEndAndReview = async () => {
     if (!canEnd || isEnding) return;
+
+    const existing = await db.conversations.get(conversationId);
+    if (existing?.review) {
+      // Already reviewed — never overwrite it, just go to the existing review.
+      router.push(`/conversation/${conversationId}/review`);
+      return;
+    }
+
     setIsEnding(true);
 
     if (voiceModeRef.current) {
@@ -493,7 +509,8 @@ const ConversationPage = () => {
       messages: conversationMessages,
       review: null,
       duration: Math.round((Date.now() - startTime) / 1000),
-      createdAt: new Date(),
+      // Preserve the original creation time instead of resetting it to "now".
+      createdAt: existing?.createdAt ?? new Date(),
     };
 
     await db.conversations.put(conversation);
