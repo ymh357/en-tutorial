@@ -3,6 +3,7 @@ import type {
   Card,
   DailyStats,
   LearningProfile,
+  ListeningExercise,
   MasteryLevel,
   AssessmentResult,
 } from "./types";
@@ -195,6 +196,17 @@ export const dbHelpers = {
     });
 
     return { current: newCurrent, longest: newLongest };
+  },
+
+  async getListeningAggregate(
+    mode?: ListeningExercise["mode"]
+  ): Promise<{ count: number; avgAccuracy: number }> {
+    const rows = mode
+      ? await db.listeningExercises.where("mode").equals(mode).toArray()
+      : await db.listeningExercises.toArray();
+    if (rows.length === 0) return { count: 0, avgAccuracy: 0 };
+    const sum = rows.reduce((s, e) => s + e.accuracy, 0);
+    return { count: rows.length, avgAccuracy: Math.round(sum / rows.length) };
   },
 
   async saveAssessment(result: Omit<AssessmentResult, "id">): Promise<void> {

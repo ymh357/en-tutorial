@@ -8,8 +8,10 @@ import type {
   Conversation,
   DailyStats,
   LearningProfile,
+  ListeningExercise,
   MasteryLevel,
   ReadingSession,
+  TranslationExercise,
   WritingSession,
 } from "@/lib/types";
 
@@ -80,6 +82,38 @@ export const useWritingSessions = (
     useLiveQuery(
       () =>
         db.writingSessions
+          .orderBy("createdAt")
+          .reverse()
+          .limit(limit)
+          .toArray(),
+      [limit]
+    ) ?? []
+  );
+};
+
+export const useListeningExercises = (
+  limit: number = 20
+): ListeningExercise[] => {
+  return (
+    useLiveQuery(
+      () =>
+        db.listeningExercises
+          .orderBy("createdAt")
+          .reverse()
+          .limit(limit)
+          .toArray(),
+      [limit]
+    ) ?? []
+  );
+};
+
+export const useTranslationExercises = (
+  limit: number = 20
+): TranslationExercise[] => {
+  return (
+    useLiveQuery(
+      () =>
+        db.translationExercises
           .orderBy("createdAt")
           .reverse()
           .limit(limit)
