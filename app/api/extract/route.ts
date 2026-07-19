@@ -1,7 +1,8 @@
 import { Readability } from "@mozilla/readability";
 import { parseHTML } from "linkedom";
 import { lookup } from "node:dns/promises";
-import { isIP } from "node:net";
+import { isIP, type LookupFunction } from "node:net";
+import { fetch as safeFetch, Agent, type Response as UndiciResponse } from "undici";
 
 export const maxDuration = 15;
 
@@ -20,14 +21,18 @@ const isPrivateIp = (ip: string): boolean => {
   return false;
 };
 
-interface ValidatedUrl {
-  fetchUrl: string;
-  originalHost: string;
+interface ValidatedTarget {
+  // Real URL to fetch: the hostname is preserved so TLS SNI and certificate
+  // validation use the true host rather than a bare IP.
+  url: string;
+  // DNS-validated public IP. Pinned at the socket layer to prevent DNS rebinding
+  // without breaking SNI.
+  pinnedIp: string;
 }
 
 const validateUrl = async (
   raw: string
-): Promise<{ ok: true; result: ValidatedUrl } | { ok: false; error: string }> => {
+): Promise<{ ok: true; result: ValidatedTarget } | { ok: false; error: string }> => {
   let parsed: URL;
   try {
     parsed = new URL(raw);
@@ -49,37 +54,45 @@ const validateUrl = async (
     return { ok: false, error: "URL not allowed" };
   }
 
+  // Literal IP host: validate it directly and pin the socket to itself.
   if (isIP(host) !== 0) {
     if (isPrivateIp(host)) {
       return { ok: false, error: "URL not allowed" };
     }
-    return { ok: true, result: { fetchUrl: parsed.toString(), originalHost: host } };
+    return { ok: true, result: { url: parsed.toString(), pinnedIp: host } };
   }
 
-  // Resolve hostname, validate IP, then pin the fetch to the resolved IP
-  let resolvedIp: string;
+  // Hostname: resolve, reject private/loopback/link-local targets, then pin the
+  // socket to the resolved IP while keeping the real hostname in the URL so TLS
+  // SNI and the Host header stay correct.
   try {
     const { address } = await lookup(host);
-    resolvedIp = address;
-    if (isPrivateIp(resolvedIp)) {
+    if (isPrivateIp(address)) {
       return { ok: false, error: "URL not allowed" };
     }
+    return { ok: true, result: { url: parsed.toString(), pinnedIp: address } };
   } catch {
     return { ok: false, error: "Could not resolve hostname" };
   }
+};
 
-  // Replace hostname with resolved IP to prevent DNS rebinding
-  const pinnedUrl = new URL(parsed.toString());
-  pinnedUrl.hostname = resolvedIp;
-
-  return {
-    ok: true,
-    result: { fetchUrl: pinnedUrl.toString(), originalHost: host },
+// Build a DNS lookup that always resolves to the already-validated IP. This pins
+// the socket to that address (preventing DNS rebinding to a private IP after
+// validation) while leaving the URL hostname intact for TLS SNI / certificate
+// checks and the Host header.
+const buildPinnedLookup = (ip: string): LookupFunction => {
+  const family = isIP(ip);
+  return (_hostname, options, callback) => {
+    if (options.all) {
+      callback(null, [{ address: ip, family }]);
+    } else {
+      callback(null, ip, family);
+    }
   };
 };
 
 const readBodyWithLimit = async (
-  response: Response,
+  response: UndiciResponse,
   maxBytes: number
 ): Promise<string> => {
   const contentLength = response.headers.get("content-length");
@@ -129,37 +142,76 @@ export const POST = async (req: Request): Promise<Response> => {
     );
   }
 
-  const validation = await validateUrl(url);
-  if (!validation.ok) {
-    return Response.json(
-      { title: "", content: "", error: validation.error },
-      { status: 400 }
-    );
-  }
+  const MAX_REDIRECTS = 5;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 10000);
+  let dispatcher: Agent | null = null;
 
   try {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 10000);
+    let currentUrl = url;
+    let response: UndiciResponse | null = null;
 
-    const response = await fetch(validation.result.fetchUrl, {
-      headers: {
-        "User-Agent":
-          "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
-        Host: validation.result.originalHost,
-      },
-      signal: controller.signal,
-      redirect: "manual",
-    });
+    // Follow redirects in a bounded loop, re-running the full SSRF validation
+    // (protocol + DNS resolve + private/loopback/link-local reject) on every hop.
+    for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
+      const validation = await validateUrl(currentUrl);
+      if (!validation.ok) {
+        return Response.json(
+          {
+            title: "",
+            content: "",
+            error:
+              hop === 0
+                ? validation.error
+                : "The URL redirected to a disallowed address.",
+          },
+          { status: hop === 0 ? 400 : 200 }
+        );
+      }
+
+      // Pin this hop's socket to its validated IP with a fresh dispatcher, while
+      // keeping the real hostname in the URL so TLS SNI / cert checks succeed.
+      const hopDispatcher = new Agent({
+        connect: { lookup: buildPinnedLookup(validation.result.pinnedIp) },
+      });
+      if (dispatcher) await dispatcher.close();
+      dispatcher = hopDispatcher;
+
+      const res = await safeFetch(validation.result.url, {
+        headers: {
+          "User-Agent":
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
+        },
+        signal: controller.signal,
+        redirect: "manual",
+        dispatcher,
+      });
+
+      if (res.status >= 300 && res.status < 400) {
+        const location = res.headers.get("location");
+        await res.body?.cancel();
+        if (!location) {
+          // A redirect with no Location is treated as a terminal (failing) response.
+          response = res;
+          break;
+        }
+        currentUrl = new URL(location, validation.result.url).toString();
+        continue;
+      }
+
+      response = res;
+      break;
+    }
 
     clearTimeout(timeout);
 
-    if (response.status >= 300 && response.status < 400) {
+    if (!response) {
       return Response.json(
         {
           title: "",
           content: "",
           error:
-            "The URL redirected to another page. Try pasting the final URL or the text directly.",
+            "Too many redirects. Try pasting the final URL or the text directly.",
         },
         { status: 200 }
       );
@@ -236,5 +288,14 @@ export const POST = async (req: Request): Promise<Response> => {
       { title: "", content: "", error: message },
       { status: 200 }
     );
+  } finally {
+    clearTimeout(timeout);
+    if (dispatcher) {
+      try {
+        await dispatcher.close();
+      } catch {
+        // Ignore dispatcher cleanup failures.
+      }
+    }
   }
 };
