@@ -1,9 +1,10 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { useProfile } from "@/hooks/use-db";
 import { db } from "@/lib/db";
 import { dbHelpers } from "@/lib/db-helpers";
+import { downloadBackup, importBackup } from "@/lib/backup";
 import { getCostSummary, clearCostHistory, type CostSummary } from "@/lib/cost-tracker";
 import { getKnownWordsForLevel, type CefrLevel } from "@/lib/frequency-list";
 import {
@@ -57,9 +58,22 @@ const SettingsPage = () => {
   const [cefrSaveMessage, setCefrSaveMessage] = useState("");
 
   const [dailyGoal, setDailyGoal] = useState<number>(() => loadDailyGoal());
-  const [isClearingData, setIsClearingData] = useState(false);
 
   const [costSummary, setCostSummary] = useState<CostSummary>(() => getCostSummary());
+
+  const [exportStatus, setExportStatus] = useState<"idle" | "exporting" | "error">("idle");
+  const [exportError, setExportError] = useState("");
+
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [pendingImportFile, setPendingImportFile] = useState<File | null>(null);
+  const [importDialogOpen, setImportDialogOpen] = useState(false);
+  const [importStatus, setImportStatus] = useState<"idle" | "importing" | "error">("idle");
+  const [importError, setImportError] = useState("");
+
+  const [isClearingData, setIsClearingData] = useState(false);
+  const [clearDialogOpen, setClearDialogOpen] = useState(false);
+  const [deleteConfirmText, setDeleteConfirmText] = useState("");
+  const [clearError, setClearError] = useState("");
 
   const handleClearCostHistory = () => {
     clearCostHistory();
@@ -107,16 +121,77 @@ const SettingsPage = () => {
     window.localStorage.setItem(DAILY_GOAL_STORAGE_KEY, String(nextGoal));
   };
 
+  const handleExport = async () => {
+    setExportStatus("exporting");
+    setExportError("");
+    try {
+      await downloadBackup();
+      setExportStatus("idle");
+    } catch (e) {
+      setExportStatus("error");
+      setExportError(
+        `Export failed: ${e instanceof Error ? e.message : "Unknown error"}`
+      );
+    }
+  };
+
+  const handleImportFileSelected = (file: File): void => {
+    setPendingImportFile(file);
+    setImportStatus("idle");
+    setImportError("");
+    setImportDialogOpen(true);
+  };
+
+  const handleConfirmImport = async () => {
+    if (!pendingImportFile) return;
+    setImportStatus("importing");
+    setImportError("");
+    try {
+      await importBackup(pendingImportFile);
+      window.location.reload();
+    } catch (e) {
+      setImportStatus("error");
+      setImportError(
+        `Import failed: ${e instanceof Error ? e.message : "Unknown error"}. No data was changed.`
+      );
+    }
+  };
+
   const handleClearAllData = async () => {
     setIsClearingData(true);
+    setClearError("");
     try {
-      await db.delete();
-      window.localStorage.clear();
+      // db.delete() can hang if other tabs still hold an open connection to
+      // this database — race it against a timeout so the UI never gets
+      // permanently stuck on "Clearing...".
+      await Promise.race([
+        db.delete(),
+        new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error("CLEAR_TIMEOUT")), 8000)
+        ),
+      ]);
+      // Only remove this app's own keys — localStorage.clear() would also
+      // wipe any non-EnTutor keys that happen to share the browser storage.
+      const keysToRemove: string[] = [];
+      for (let i = 0; i < window.localStorage.length; i++) {
+        const key = window.localStorage.key(i);
+        if (key?.startsWith("en-tutor-")) keysToRemove.push(key);
+      }
+      for (const key of keysToRemove) window.localStorage.removeItem(key);
       window.location.reload();
     } catch (e) {
       setIsClearingData(false);
-      // eslint-disable-next-line no-console
-      console.error("Failed to clear data", e);
+      if (e instanceof Error && e.message === "CLEAR_TIMEOUT") {
+        setClearError(
+          "Clearing timed out. Close other tabs of this app and try again."
+        );
+      } else {
+        setClearError(
+          `Failed to clear data: ${e instanceof Error ? e.message : "Unknown error"}`
+        );
+        // eslint-disable-next-line no-console
+        console.error("Failed to clear data", e);
+      }
     }
   };
 
@@ -351,6 +426,83 @@ const SettingsPage = () => {
         </CardContent>
       </Card>
 
+      <Card>
+        <CardHeader>
+          <CardTitle>Backup</CardTitle>
+          <CardDescription>
+            Export all your data to a JSON file, or restore from a previous
+            export.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <div className="flex flex-wrap items-center gap-3">
+            <Button
+              onClick={() => void handleExport()}
+              disabled={exportStatus === "exporting"}
+            >
+              {exportStatus === "exporting" ? "Exporting..." : "Export all data"}
+            </Button>
+            <Button variant="outline" onClick={() => fileInputRef.current?.click()}>
+              Import backup
+            </Button>
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="application/json"
+              className="hidden"
+              onChange={(e) => {
+                const file = e.target.files?.[0];
+                e.target.value = "";
+                if (file) handleImportFileSelected(file);
+              }}
+            />
+          </div>
+          {exportStatus === "error" && (
+            <p className="text-sm text-red-600">{exportError}</p>
+          )}
+        </CardContent>
+      </Card>
+
+      <Dialog
+        open={importDialogOpen}
+        onOpenChange={(open) => {
+          setImportDialogOpen(open);
+          if (!open) {
+            setPendingImportFile(null);
+            setImportStatus("idle");
+            setImportError("");
+          }
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Import backup?</DialogTitle>
+            <DialogDescription>
+              This will overwrite all current data with the contents of{" "}
+              <strong>{pendingImportFile?.name}</strong>. This cannot be
+              undone.
+            </DialogDescription>
+          </DialogHeader>
+          {importStatus === "error" && (
+            <p className="text-sm text-red-600">{importError}</p>
+          )}
+          <DialogFooter>
+            <DialogClose render={<Button variant="outline" />}>
+              Cancel
+            </DialogClose>
+            <Button
+              variant="destructive"
+              onClick={() => void handleConfirmImport()}
+              disabled={importStatus === "importing"}
+            >
+              {importStatus === "importing"
+                ? "Importing..."
+                : "Yes, overwrite with backup"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       <Card className="border-destructive/40">
         <CardHeader>
           <CardTitle>Danger Zone</CardTitle>
@@ -360,7 +512,27 @@ const SettingsPage = () => {
           </CardDescription>
         </CardHeader>
         <CardContent>
-          <Dialog>
+          <p className="mb-3 text-sm text-muted-foreground">
+            We recommend exporting a backup first —{" "}
+            <Button
+              variant="link"
+              className="h-auto p-0 text-sm"
+              onClick={() => void handleExport()}
+            >
+              export all data
+            </Button>{" "}
+            before continuing.
+          </p>
+          <Dialog
+            open={clearDialogOpen}
+            onOpenChange={(open) => {
+              setClearDialogOpen(open);
+              if (!open) {
+                setDeleteConfirmText("");
+                setClearError("");
+              }
+            }}
+          >
             <DialogTrigger
               render={<Button variant="destructive">Clear All Data</Button>}
             />
@@ -373,6 +545,22 @@ const SettingsPage = () => {
                   This action cannot be undone.
                 </DialogDescription>
               </DialogHeader>
+              <div className="grid gap-2">
+                <Label htmlFor="delete-confirm-input">
+                  Type <span className="font-mono font-semibold">DELETE</span>{" "}
+                  to confirm
+                </Label>
+                <Input
+                  id="delete-confirm-input"
+                  value={deleteConfirmText}
+                  onChange={(e) => setDeleteConfirmText(e.target.value)}
+                  placeholder="DELETE"
+                  autoComplete="off"
+                />
+              </div>
+              {clearError && (
+                <p className="text-sm text-red-600">{clearError}</p>
+              )}
               <DialogFooter>
                 <DialogClose render={<Button variant="outline" />}>
                   Cancel
@@ -380,7 +568,7 @@ const SettingsPage = () => {
                 <Button
                   variant="destructive"
                   onClick={() => void handleClearAllData()}
-                  disabled={isClearingData}
+                  disabled={isClearingData || deleteConfirmText !== "DELETE"}
                 >
                   {isClearingData ? "Clearing..." : "Yes, clear everything"}
                 </Button>
