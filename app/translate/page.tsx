@@ -240,7 +240,7 @@ const buildEvalPrompt = (
 
 const TranslatePage = () => {
   const profile = useProfile();
-  const cefrLevel = profile?.initialCefrLevel || "B1";
+  const cefrLevel = profile?.studyLevel || "B1";
 
   const [mode, setMode] = useState<ExerciseMode>("sentence");
   const [scenario, setScenario] = useState<Scenario | null>(null);

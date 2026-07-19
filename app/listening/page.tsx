@@ -1234,7 +1234,7 @@ const POOL_CHECK_MODES: readonly Mode[] = [
 
 const ListeningPage = () => {
   const profile = useProfile();
-  const cefrLevel = profile?.initialCefrLevel || "B1";
+  const cefrLevel = profile?.studyLevel || "B1";
   const [mode, setMode] = useState<Mode>("dictation");
   const [readyMode, setReadyMode] = useState<Mode | null>(null);
   const [checkedPool, setCheckedPool] = useState(false);
