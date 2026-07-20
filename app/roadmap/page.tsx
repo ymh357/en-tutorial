@@ -244,8 +244,8 @@ const RoadmapPage = () => {
       {
         label: "Average fluency score",
         current: Math.round(avgFluency * 10) / 10,
-        target: 6,
-        unit: "/10",
+        target: 60,
+        unit: "/100",
       },
       { label: "Try different scenario categories", current: categoriesTried.size, target: 3, unit: "categories" },
     ];
@@ -280,8 +280,8 @@ const RoadmapPage = () => {
       {
         label: "Average writing score",
         current: Math.round(avgWritingScore * 10) / 10,
-        target: 6,
-        unit: "/10",
+        target: 60,
+        unit: "/100",
       },
     ];
     const writingDone = requirementsMet(writingRequirements);
