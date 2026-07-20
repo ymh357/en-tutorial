@@ -5,6 +5,15 @@ export const maxDuration = 60;
 
 const MAX_BODY_SIZE = 100_000; // ~100KB
 
+// Metadata attached to the final assistant message so the client can read
+// real token usage + the model that actually served the request, instead of
+// falling back to a char-count estimate. Consumed by the conversation page
+// (B2) — this route only needs to surface it.
+export type ChatMessageMetadata = {
+  model: string;
+  usage: { inputTokens: number; outputTokens: number };
+};
+
 export const POST = async (req: Request): Promise<Response> => {
   const contentLength = req.headers.get("content-length");
   if (contentLength && parseInt(contentLength, 10) > MAX_BODY_SIZE) {
@@ -37,7 +46,29 @@ export const POST = async (req: Request): Promise<Response> => {
       messages: await convertToModelMessages(messages),
     });
 
-    return result.toUIMessageStreamResponse();
+    // Captured from the 'finish-step' stream part, which always fires
+    // immediately before 'finish' — gives us the model id the provider
+    // actually reported (response.modelId), not just the one requested.
+    let respondingModelId: string | undefined;
+
+    return result.toUIMessageStreamResponse<UIMessage<ChatMessageMetadata>>({
+      messageMetadata: ({ part }) => {
+        if (part.type === "finish-step") {
+          respondingModelId = part.response.modelId;
+          return undefined;
+        }
+        if (part.type === "finish") {
+          return {
+            model: respondingModelId ?? model.modelId,
+            usage: {
+              inputTokens: part.totalUsage.inputTokens ?? 0,
+              outputTokens: part.totalUsage.outputTokens ?? 0,
+            },
+          };
+        }
+        return undefined;
+      },
+    });
   } catch (error) {
     console.error("Chat API error:", error);
     return Response.json(
