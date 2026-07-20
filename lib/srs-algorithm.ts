@@ -10,13 +10,17 @@ export const ratingLabels: Record<Rating, string> = {
 };
 
 const MINIMUM_EASE = 1.3;
+const LAPSE_FACTOR = 0.3;
 
 // Mastered requires both: interval >= 30 days AND 3+ consecutive successful reviews
 const computeMasteryLevel = (
   interval: number,
-  repetitions: number
+  repetitions: number,
+  lapses: number
 ): MasteryLevel => {
-  if (repetitions === 0) return "new";
+  if (repetitions === 0 && lapses === 0) return "new";
+  // A lapsed card sitting on a short interval is relearning, not brand-new.
+  if (lapses > 0 && interval < 7) return "relearning";
   if (interval < 7) return "learning";
   if (interval < 30) return "familiar";
   if (repetitions >= 3) return "mastered";
@@ -32,22 +36,43 @@ export const computeNextReview = (
   repetitions: number;
   nextReview: Date;
   masteryLevel: MasteryLevel;
+  lapses: number;
+  lapsedInterval?: number;
 } => {
   let { easeFactor, interval, repetitions } = card;
+  let lapses = card.lapses ?? 0;
+  let lapsedInterval = card.lapsedInterval;
+  const inRelearning = lapses > 0 && repetitions === 0;
 
   if (rating === 0) {
+    // Again: enter/stay relearning. Capture pre-lapse interval only when
+    // coming from a graduated state (repetitions > 0), so repeated Agains in
+    // relearning don't overwrite it with the ~1min step.
+    if (repetitions > 0) lapsedInterval = interval;
+    lapses += 1;
     repetitions = 0;
     interval = 0.0007; // ~1 minute in days
     easeFactor = Math.max(MINIMUM_EASE, easeFactor - 0.2);
+  } else if (inRelearning && (rating === 2 || rating === 3)) {
+    // Graduate from relearning: scale off the pre-lapse interval.
+    const base = lapsedInterval ?? 1;
+    const factor = rating === 3 ? LAPSE_FACTOR * 1.3 : LAPSE_FACTOR;
+    interval = Math.max(1, Math.round(base * factor));
+    easeFactor =
+      rating === 3
+        ? Math.max(MINIMUM_EASE, easeFactor + 0.15)
+        : Math.max(MINIMUM_EASE, easeFactor + 0.05);
+    repetitions = 1;
+    lapsedInterval = undefined; // graduated; clear
   } else if (rating === 1) {
-    // Hard: keep current interval, reduce ease
+    // Hard: relearning → repeat ~10min step (stay reps 0); else reduce ease, ×1.2.
     easeFactor = Math.max(MINIMUM_EASE, easeFactor - 0.15);
     if (repetitions === 0) {
-      interval = 0.007; // ~10 minutes
+      interval = 0.007; // ~10 min (relearning/learning step, will re-queue)
     } else {
       interval = Math.max(1, interval * 1.2);
+      repetitions += 1;
     }
-    repetitions += 1;
   } else if (rating === 2) {
     // Good: normal progression
     easeFactor = Math.max(MINIMUM_EASE, easeFactor - 0.05 + 0.1);
@@ -73,9 +98,9 @@ export const computeNextReview = (
   const nextReview = new Date();
   nextReview.setTime(nextReview.getTime() + interval * 24 * 60 * 60 * 1000);
 
-  const masteryLevel = computeMasteryLevel(interval, repetitions);
+  const masteryLevel = computeMasteryLevel(interval, repetitions, lapses);
 
-  return { easeFactor, interval, repetitions, nextReview, masteryLevel };
+  return { easeFactor, interval, repetitions, nextReview, masteryLevel, lapses, lapsedInterval };
 };
 
 export const getNextIntervals = (card: Card): Record<Rating, number> => {
