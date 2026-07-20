@@ -435,7 +435,12 @@ const ConversationPage = () => {
       } catch {
         setVoiceError("Couldn't reach transcription — please try again.");
       } finally {
-        setMicStatus("idle");
+        // Guard against a mode-switch race: if the user started a voice-mode
+        // recording (micStatus="recording") while this text-mode transcription
+        // was still uploading, an unguarded reset would stomp that live session
+        // to "idle", stranding a mic with no UI to stop it. Only reset if still
+        // transcribing — mirrors stopAndSend's finally.
+        setMicStatus((s) => (s === "transcribing" ? "idle" : s));
       }
       return;
     }
