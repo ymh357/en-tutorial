@@ -44,10 +44,10 @@
 
 ### Task 1: 类型（`lib/types.ts`）
 - [ ] `MasteryLevel`（L3）加 `"relearning"`：`"new" | "learning" | "relearning" | "familiar" | "mastered"`。
-- [ ] `Card`（L15-33）加：`lapses: number;`（累计失败次数）`lapsedInterval?: number;`（进入 relearning 前的 interval，供毕业缩放；毕业后清）。
-- [ ] `DailyStats`（L144-155）加 `newCardsIntroduced: number;`。
+- [ ] `Card`（L15-33）加：**`lapses?: number;`（optional——累计失败次数；算法读 `card.lapses ?? 0`，避免破坏 6 个不含该字段的 Card 创建字面量：reader/[id]:510、dictionary-panel:186、translate:~495、conversation/[id]/review:~216、writing/[id]:~475、srs/browse:130）** `lapsedInterval?: number;`（进入 relearning 前的 interval，供毕业缩放；毕业后清）。
+- [ ] `DailyStats`（L144-155）加 `newCardsIntroduced: number;`（3 处 typed 空字面量在 db-helpers，Task 4 全补）。
 - [ ] `LearningProfile`（L132-142）加 `dailyNewLimit?: number; // new SRS cards per day (default 20 when absent)`。
-- [ ] `tsc`（会在 srs-algorithm/db-helpers/srs page 报出未处理 relearning/lapses——Phase 1/2/3 逐步补齐；本 task 后单独 `tsc` 可能有依赖报错，属预期，Phase 1 内 Task 3 收敛）。Commit `feat(types): Card lapses/lapsedInterval, relearning mastery, DailyStats.newCardsIntroduced, dailyNewLimit`.
+- [ ] **注**：`MasteryLevel` 加 relearning 会使全库多处 `Record<MasteryLevel,…>` 字面量与 mastery 桶展示需同步（Task 3/4/6/7/9 覆盖：srs-algorithm、db-helpers getVocabCounts、srs masteryLabels、srs/browse Record×2+filter+stat tiles、app/page.tsx VOCAB_LABELS/COLORS+分布+totalVocab）。本 task 后 tsc 会因这些未补点报错，属预期，随后续 task 收敛（Task 9 是最后一处，之后 tsc 绿）。Commit `feat(types): Card lapses?/lapsedInterval?, relearning mastery, DailyStats.newCardsIntroduced, dailyNewLimit?`.
 
 ### Task 2: v6 迁移 backfill（`lib/db.ts`）
 - [ ] 加 `db.version(6)`：`.stores({...})` **逐字复制 v5**（无索引变化——lapses/lapsedInterval/newCardsIntroduced/dailyNewLimit 均非索引字段）；`.upgrade` backfill 使既有行带上 required 新字段：
@@ -232,17 +232,20 @@
   ```ts
   const handleRate = async (rating: Rating): Promise<void> => {
     if (!currentCard || !queue) return;
+    const seen = reappear[currentCard.id] ?? 0; // 0 only on this card's first appearance
     const wasNew = currentCard.masteryLevel === "new";
     const result = computeNextReview(currentCard, rating);
     await db.cards.update(currentCard.id, { ...result, lastReviewedAt: new Date() });
     await dbHelpers.incrementTodayStat("srsReviewed");
-    if (wasNew) await dbHelpers.incrementTodayStat("newCardsIntroduced");
+    // Count a new card ONCE, on first handling only. A new card that takes a
+    // learning step (Hard) stays masteryLevel "new" and re-queues, so gating on
+    // wasNew alone would double/triple-count it (C3). seen===0 = first appearance.
+    if (wasNew && seen === 0) await dbHelpers.incrementTodayStat("newCardsIntroduced");
     setReviewedCount((c) => c + 1);
     setShowAnswer(false);
 
     // Short interval = a learning/relearning step → re-queue in-session, bounded.
     const isShortStep = result.interval < 1;
-    const seen = reappear[currentCard.id] ?? 0;
     const willReappear = isShortStep && seen < 2;
 
     const rest = queue.slice(1);
@@ -268,18 +271,26 @@
 - [ ] `tsc` + `eslint app/srs/page.tsx` 清。**推理核对（report）**：Again/短-Hard 卡在会话内重现、每卡至多 2 次（seen<2）后出队 → 有界不死循环；单卡反复 Again 队列长度维持 1、2 次后出队→空→done；进度按 graduated 不因重入倒退/超 100；新卡首次评分（wasNew）计 newCardsIntroduced。Commit `feat(srs): in-session relearning re-queue + progress by graduated cards + new-card counting`.
 
 ### Task 7: browse relearning 显示（`app/srs/browse/page.tsx`）
-- [ ] `Record<MasteryLevel,…>`（~:35）加 `relearning` 项（label 如 "Relearning"，配色沿用既有风格）；filter 列表（~:52-56）加 `"relearning"`。`tsc` + `eslint`（相关）。Commit `feat(srs-browse): show relearning bucket`.
+- [ ] **全部** `Record<MasteryLevel,…>` 字面量补 `relearning`（评审 C2 指出该文件有多处）：`~:35` 的 label Record（"Relearning"）；`~:42` `masteryBadgeVariant`（配色沿用既有风格，如 secondary/outline）；`~:299` `BrowsePage` 内 inline `counts: Record<MasteryLevel, number>`。filter 列表（`~:52-56`）加 `"relearning"`。
+- [ ] **M1**：stat tiles（`~:340-371`，现 `grid-cols-5` 硬编码 5 桶）加 relearning 桶 tile 并把 grid 调为 `grid-cols-6`（或按实际布局自适应），使 relearning 计数可见。
+- [ ] 读文件实际结构后精确改（行号可能漂移）。`tsc` + `eslint app/srs/browse/page.tsx` 清。Commit `feat(srs-browse): show relearning bucket (all Records + stat tile)`.
 
 ### Task 8: settings 每日新卡上限（`app/settings/page.tsx`）
 - [ ] 加一个 dailyNewLimit 控件（读 `profile.dailyNewLimit ?? 20`，写 `db.learningProfile.update("singleton", { dailyNewLimit: value })`）。用现有 settings 页的输入控件风格（数字/滑块，范围如 0-100）。**读 settings 页实际结构后按其 pattern 加**（不新建抽象）。`tsc` + `eslint app/settings/page.tsx` 清。Commit `feat(settings): daily new-card limit control`.
 
+### Task 9: dashboard relearning（`app/page.tsx`，评审 C2 + M1；tsc 最后收敛点）
+- [ ] **C2（tsc 错，必修）**：`VOCAB_LABELS: Record<MasteryLevel, string>`（`~:147`）与 `VOCAB_COLORS: Record<MasteryLevel, string>`（`~:154`）各加 `relearning`（label "Relearning"，配色沿用既有风格）。
+- [ ] **M1（可见性）**：`totalVocab`（`~:500-501`，现 `new+learning+familiar+mastered`）把 `relearning` 计入分母；vocab 分布映射（`~:783`，现硬编码 `["new","learning","familiar","mastered"]`）加 `"relearning"`。
+- [ ] 读文件实际结构后精确改（行号可能漂移）。`tsc --noEmit`（**此时应全库 0 error——relearning 所有 exhaustive 点已补齐**）+ `eslint app/page.tsx` 清。Commit `feat(dashboard): include relearning in vocab labels/colors/distribution`.
+
 ---
 
-## Self-Review（已执行）
+## Self-Review（已按 plan-review 修订）
 
 - **覆盖**：spec §3 全 4 项（relearning 会话重入 Task 6 + lapse-aware 毕业 Task 3 + relearning 桶 Task 3/4/6/7 + 每日新卡上限/分离 Task 4/5/6/8）。ease 下限已对不改。
 - **占位符**：算法/迁移/队列/db-helpers 给完整代码 + 手算样例；settings/browse 因需读实际结构给"读后按 pattern 加"的明确约束（目标明确）。
-- **类型一致**：MasteryLevel +relearning 贯穿（srs-algorithm/db-helpers levels+Record/srs masteryLabels/browse Record+filter——全列出）；computeNextReview 返回 +lapses/lapsedInterval，handleRate 存回；Card.lapses required（v6 backfill 保证既有行有值）。
+- **类型一致（plan-review C1/C2 修订）**：`Card.lapses?` 改 optional（算法 `?? 0`），不破坏 6 个 Card 创建字面量（reader/dictionary-panel/translate/conv-review/writing/browse）。`MasteryLevel +relearning` 的全部 exhaustive 点均有归属 task：srs-algorithm computeMasteryLevel（Task 3）、db-helpers getVocabCounts levels+Record（Task 4）、srs masteryLabels（Task 6）、browse Record×2(:35,:42)+inline counts(:299)+filter+stat tiles（Task 7）、**app/page.tsx VOCAB_LABELS(:147)+VOCAB_COLORS(:154)+totalVocab+分布（Task 9）**。Task 9 为最后收敛点，之后全库 tsc 0。computeNextReview 返回 +lapses/lapsedInterval，handleRate 存回。
+- **新卡计数（C3）**：`newCardsIntroduced` 门控 `wasNew && seen===0`——新卡取 learning step 停留 "new" 并重入，仅首次计数，不重复。
 - **迁移安全**：v6 stores 逐字 = v5；backfill 幂等 typeof guard；非索引字段。
 - **循环界**：会话重入 seen<2 硬界，单卡至多重现 2 次；`isShortStep=interval<1` 只对 Again/首次-Hard 为真。
 - **风险**：relearning 桶定义（lapses>0 && interval<7）可能把刚毕业到短间隔（如 base 10×0.3=3）的卡标 relearning——可接受（近期失败、短间隔，语义合理，spec §M1 记录）。既有因过去 lapse 而 reps=0 的卡无 lapse 历史仍显示由 masteryLevel 字段既存值决定（backfill 只加 lapses=0，不重算 mastery）——即历史卡 lapses=0 → 不会误标 relearning，安全。
