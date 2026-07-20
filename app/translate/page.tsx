@@ -32,6 +32,7 @@ import { db } from "@/lib/db";
 import { dbHelpers } from "@/lib/db-helpers";
 import { recordCost } from "@/lib/cost-tracker";
 import { completeTask } from "@/lib/task-pool";
+import { translateGenSchema, translateEvalSchema, toJsonSchema } from "@/lib/ai-schemas";
 import type {
   Card as SrsCard,
   TranslationExercise as TranslationExerciseRecord,
@@ -103,52 +104,16 @@ const scoreLabel = (score: number): string => {
   return "Needs Work";
 };
 
-const stripJsonFence = (raw: string): string => {
-  let text = raw.trim();
-  const fenceMatch = text.match(/```(?:json)?\s*([\s\S]*?)```/);
-  if (fenceMatch) {
-    text = fenceMatch[1].trim();
-  }
-  return text;
-};
-
-const parseExercise = (raw: string): TranslationExercise | null => {
-  try {
-    const parsed = JSON.parse(stripJsonFence(raw)) as TranslationExercise;
-    if (
-      !parsed ||
-      typeof parsed !== "object" ||
-      typeof parsed.chinese !== "string" ||
-      typeof parsed.referenceTranslation !== "string" ||
-      !Array.isArray(parsed.keyPoints)
-    ) {
-      return null;
-    }
-    return parsed;
-  } catch {
-    return null;
-  }
-};
-
-const parseEvaluation = (raw: string): TranslationEvaluation | null => {
-  try {
-    const parsed = JSON.parse(stripJsonFence(raw)) as TranslationEvaluation;
-    if (
-      !parsed ||
-      typeof parsed !== "object" ||
-      typeof parsed.score !== "number" ||
-      !Array.isArray(parsed.annotations) ||
-      typeof parsed.polishedVersion !== "string" ||
-      !Array.isArray(parsed.keyDifferences) ||
-      !Array.isArray(parsed.alternativeTranslations) ||
-      !Array.isArray(parsed.grammarNotes)
-    ) {
-      return null;
-    }
-    return parsed;
-  } catch {
-    return null;
-  }
+// Local shape guard for pool-task content (already an object read from
+// IndexedDB, not raw AI response text — no fence-strip/JSON.parse needed).
+const isTranslationExercise = (value: unknown): value is TranslationExercise => {
+  if (!value || typeof value !== "object") return false;
+  const v = value as Record<string, unknown>;
+  return (
+    typeof v.chinese === "string" &&
+    typeof v.referenceTranslation === "string" &&
+    Array.isArray(v.keyPoints)
+  );
 };
 
 type Segment = {
@@ -322,9 +287,8 @@ const TranslatePage = () => {
           }
         } else {
           // Paragraph and situational have { chinese, referenceTranslation, keyPoints }
-          const parsed = parseExercise(JSON.stringify(content));
-          if (parsed) {
-            setExercise(parsed);
+          if (isTranslationExercise(content)) {
+            setExercise(content);
             await completeTask(poolTask.id);
             setIsGenerating(false);
             return;
@@ -345,7 +309,11 @@ const TranslatePage = () => {
       const res = await fetch("/api/review", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ prompt, system }),
+        body: JSON.stringify({
+          prompt,
+          system,
+          schema: toJsonSchema(translateGenSchema),
+        }),
       });
 
       if (!res.ok) {
@@ -353,28 +321,24 @@ const TranslatePage = () => {
       }
 
       const data = (await res.json()) as {
-        content?: string;
-        usage?: { promptTokens: number; completionTokens: number };
+        object?: TranslationExercise;
+        usage?: { inputTokens: number; outputTokens: number };
+        model?: string;
       };
-      if (!data.content) {
+      if (!data.object) {
         throw new Error("Empty response from generation service");
       }
 
-      if (data.usage) {
+      if (data.usage && data.model) {
         recordCost({
-          model: "claude-sonnet-5",
-          inputTokens: data.usage.promptTokens ?? 0,
-          outputTokens: data.usage.completionTokens ?? 0,
+          model: data.model,
+          inputTokens: data.usage.inputTokens ?? 0,
+          outputTokens: data.usage.outputTokens ?? 0,
           module: "translate",
         });
       }
 
-      const parsed = parseExercise(data.content);
-      if (!parsed) {
-        throw new Error("Could not parse the generated exercise");
-      }
-
-      setExercise(parsed);
+      setExercise(data.object);
     } catch (err) {
       setGenerateError(
         err instanceof Error ? err.message : "Failed to generate exercise"
@@ -440,7 +404,11 @@ const TranslatePage = () => {
       const res = await fetch("/api/review", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ prompt, system: EVAL_SYSTEM_PROMPT }),
+        body: JSON.stringify({
+          prompt,
+          system: EVAL_SYSTEM_PROMPT,
+          schema: toJsonSchema(translateEvalSchema),
+        }),
       });
 
       if (!res.ok) {
@@ -448,27 +416,24 @@ const TranslatePage = () => {
       }
 
       const data = (await res.json()) as {
-        content?: string;
-        usage?: { promptTokens: number; completionTokens: number };
+        object?: TranslationEvaluation;
+        usage?: { inputTokens: number; outputTokens: number };
+        model?: string;
       };
-      if (!data.content) {
+      if (!data.object) {
         throw new Error("Empty response from evaluation service");
       }
 
-      if (data.usage) {
+      if (data.usage && data.model) {
         recordCost({
-          model: "claude-sonnet-5",
-          inputTokens: data.usage.promptTokens ?? 0,
-          outputTokens: data.usage.completionTokens ?? 0,
+          model: data.model,
+          inputTokens: data.usage.inputTokens ?? 0,
+          outputTokens: data.usage.outputTokens ?? 0,
           module: "translate",
         });
       }
 
-      const parsed = parseEvaluation(data.content);
-      if (!parsed) {
-        throw new Error("Could not parse the AI's evaluation response");
-      }
-
+      const parsed = data.object;
       setEvaluation(parsed);
       setSessionCount((c) => c + 1);
       setScoreSum((s) => s + parsed.score);
