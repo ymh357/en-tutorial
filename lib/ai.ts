@@ -6,16 +6,22 @@ import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
 // values unrelated to color. The model's own reasoning_content stayed on
 // topic (colors), yet the final `content` strictly matched the schema's
 // enum — proof the router enforces the schema server-side rather than the
-// AI SDK's prompt-injection fallback getting lucky. Confirms native
-// structured-output support for deepseek-v4-pro via router-api-staging.0g.ai.
+// AI SDK's prompt-injection fallback getting lucky. Re-confirmed for BOTH
+// deepseek-v4-pro and deepseek-v4-flash via router-api-staging.0g.ai (the
+// base URL .env.local currently points at). Plain chat/completions requests
+// also confirm the response body's `model` field comes back as exactly
+// "deepseek-v4-pro" / "deepseek-v4-flash" (no suffix/version) for both
+// models — matching lib/cost-tracker.ts's MODEL_PRICING keys directly, no
+// normalization needed.
 //
 // The default baseURL above is PRODUCTION (router-api.0g.ai), which has NOT
-// been independently verified to honor native json_schema mode. Left at
-// `true`, generateObject would use native mode there and hard-error (instead
-// of degrading) if production doesn't support it. So this stays `false` for
-// now: with `false`, generateObject falls back to injecting the schema into
-// the prompt and validates/repairs the result SDK-side — strictly better
-// than the old manual fence-strip, and works regardless of native support.
+// been independently verified to honor native json_schema mode — only
+// STAGING has been tested (see above). Left at `true`, generateObject would
+// use native mode on production and hard-error (instead of degrading) if
+// production doesn't support it. So this stays `false` for now: with
+// `false`, generateObject falls back to injecting the schema into the
+// prompt and validates/repairs the result SDK-side — strictly better than
+// the old manual fence-strip, and works regardless of native support.
 // Flip to `true` only after a production smoke test confirms native
 // json_schema support there too (optionally gate behind an env var, e.g.
 // `OG_NATIVE_JSON_SCHEMA === "1"`, if a toggle without a code change is

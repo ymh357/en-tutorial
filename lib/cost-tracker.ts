@@ -190,7 +190,19 @@ export const recordCost = (
 ): void => {
   if (typeof window === "undefined") return;
 
-  const pricing = MODEL_PRICING[record.model] ?? MODEL_PRICING["deepseek-v4-flash"];
+  let pricing = MODEL_PRICING[record.model];
+  if (!pricing) {
+    // Smoke-tested against router-api-staging.0g.ai: the chat/completions
+    // response's `model` field comes back as exactly "deepseek-v4-pro" /
+    // "deepseek-v4-flash" (no suffix/version), matching these keys directly.
+    // An unknown model here means either a new/renamed model or a caller
+    // bug — warn instead of silently pricing it as the cheapest tier.
+    console.warn(
+      `[cost-tracker] Unknown model "${record.model}" — falling back to deepseek-v4-flash pricing. ` +
+        "Add a MODEL_PRICING entry if this is a real model."
+    );
+    pricing = MODEL_PRICING["deepseek-v4-flash"];
+  }
   const costA0GI =
     record.inputTokens * pricing.input + record.outputTokens * pricing.output;
 
