@@ -10,12 +10,12 @@ import { recordCost } from "./cost-tracker";
 // compliance over diversity, which is right for data-extraction-shaped tasks
 // but would make every generated writing prompt/article/scenario near-
 // identical if left at 0.
-const CREATIVE_TASK_TYPES = new Set<PoolTaskType>([
+export const CREATIVE_TASK_TYPES = new Set<PoolTaskType>([
   "writing-prompt",
   "reading-article",
   "translation-situational",
 ]);
-const CREATIVE_TEMPERATURE = 0.7;
+export const CREATIVE_TEMPERATURE = 0.7;
 
 // reading-article generates a full 300-500 word article via
 // readerArticleGenSchema — the same schema and word-count target that
@@ -24,7 +24,7 @@ const CREATIVE_TEMPERATURE = 0.7;
 // Overflow makes generateObject throw, which the catch below silently
 // swallows, so without this override the daily pool would quietly miss
 // reading-article content. Other types keep the route's default.
-const MAX_OUTPUT_TOKENS: Partial<Record<PoolTaskType, number>> = {
+export const MAX_OUTPUT_TOKENS: Partial<Record<PoolTaskType, number>> = {
   "reading-article": 8192,
 };
 

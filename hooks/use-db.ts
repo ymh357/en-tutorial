@@ -19,10 +19,6 @@ export const useProfile = (): LearningProfile | undefined => {
   return useLiveQuery(() => dbHelpers.getProfile());
 };
 
-export const useDueCards = (limit: number = 50): Card[] => {
-  return useLiveQuery(() => dbHelpers.getDueCards(limit), [limit]) ?? [];
-};
-
 export const useSessionQueue = (dailyNewLimit: number): Card[] =>
   useLiveQuery(() => dbHelpers.getSessionQueue(dailyNewLimit), [dailyNewLimit]) ?? [];
 

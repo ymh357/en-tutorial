@@ -255,9 +255,9 @@ export const dbHelpers = {
     const rows = mode
       ? await db.listeningExercises.where("mode").equals(mode).toArray()
       : await db.listeningExercises.toArray();
-    // count is intentionally over ALL modes (roadmap's "complete 20 listening
-    // exercises" gate relies on this); only avgAccuracy excludes subjective
-    // modes so it stays a pure objective-accuracy average.
+    // count covers whatever `rows` contains (all modes when unfiltered, or just
+    // the requested mode when filtered). avgAccuracy excludes subjective modes
+    // so it stays a pure objective-accuracy average.
     const objectiveRows = rows.filter(
       (r) => !SUBJECTIVE_LISTENING_MODES.has(r.mode)
     );

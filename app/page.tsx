@@ -45,6 +45,7 @@ import {
 import { generateStudyPlan, type StudyStep, type StudyStepType } from "@/lib/study-engine";
 import { getCostSummary, type CostSummary } from "@/lib/cost-tracker";
 import { getPoolStatus } from "@/lib/task-pool";
+import { formatDate, daysBetween, startOfWeek } from "@/lib/date";
 import type { DailyStats, MasteryLevel, PoolTask } from "@/lib/types";
 
 const STEP_ICONS: Record<StudyStepType, typeof Brain> = {
@@ -89,29 +90,6 @@ const CEFR_LABELS: Record<string, string> = {
 };
 
 const HEATMAP_DAYS = 180;
-
-const formatDate = (date: Date): string => {
-  const y = date.getFullYear();
-  const m = String(date.getMonth() + 1).padStart(2, "0");
-  const d = String(date.getDate()).padStart(2, "0");
-  return `${y}-${m}-${d}`;
-};
-
-const daysBetween = (a: Date, b: Date): number => {
-  const msPerDay = 1000 * 60 * 60 * 24;
-  const aStart = new Date(a.getFullYear(), a.getMonth(), a.getDate());
-  const bStart = new Date(b.getFullYear(), b.getMonth(), b.getDate());
-  return Math.round((aStart.getTime() - bStart.getTime()) / msPerDay);
-};
-
-// Monday-based start of week
-const startOfWeek = (date: Date): Date => {
-  const d = new Date(date.getFullYear(), date.getMonth(), date.getDate());
-  const day = d.getDay();
-  const diff = (day + 6) % 7; // 0 = Monday
-  d.setDate(d.getDate() - diff);
-  return d;
-};
 
 const activityCount = (stats: DailyStats | undefined): number => {
   if (!stats) return 0;
@@ -323,7 +301,7 @@ const DashboardPage = () => {
     // Align start to the Monday of that week so columns are complete weeks
     const alignedStart = startOfWeek(cursor);
     const today = new Date();
-    const totalDays = daysBetween(today, alignedStart) + 1;
+    const totalDays = daysBetween(alignedStart, today) + 1;
 
     for (let i = 0; i < totalDays; i++) {
       const d = new Date(alignedStart);

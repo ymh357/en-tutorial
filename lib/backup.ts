@@ -13,6 +13,7 @@ const LOCAL_STATIC_KEYS = [
   "en-tutor-daily-goal",
   "en-tutor-dict-history",
   "en-tutor-cost-records",
+  "en-tutor-cost-totals",
   "en-tutor-last-pool-gen",
 ];
 // Per-id dynamic key prefixes to include.

@@ -70,10 +70,15 @@ export const computeNextReview = (
     repetitions = 1;
     lapsedInterval = undefined; // graduated; clear
   } else if (rating === 1) {
-    // Hard: relearning → repeat ~10min step (stay reps 0); else reduce ease, ×1.2.
+    // Hard: relearning → repeat ~10min step (stay reps 0); brand-new learning
+    // card → short interval but still graduate (increment repetitions so it
+    // exits the "new" bucket); graduated card → reduce ease, ×1.2.
     easeFactor = Math.max(MINIMUM_EASE, easeFactor - 0.15);
-    if (repetitions === 0) {
-      interval = 0.007; // ~10 min (relearning/learning step, will re-queue)
+    if (inRelearning) {
+      interval = 0.007; // ~10 min relearning step, stay reps 0
+    } else if (repetitions === 0) {
+      interval = 0.5; // ~12 hours — harder than Good(1 day) but still progresses
+      repetitions = 1;
     } else {
       interval = Math.max(1, interval * 1.2);
       repetitions += 1;

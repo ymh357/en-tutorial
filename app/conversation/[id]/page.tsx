@@ -533,22 +533,40 @@ const ConversationPage = () => {
     // Sum the real per-turn usage the server attached to each assistant
     // message via messageMetadata (see ChatMessageMetadata in
     // app/api/chat/route.ts), instead of estimating tokens from character
-    // count. A turn whose metadata never arrived (stream interrupted, or an
-    // older message restored from IndexedDB before this field existed)
-    // contributes 0 rather than falling back to an estimate.
+    // count. Falls back to a character-based estimate for turns whose
+    // metadata never arrived (stream interrupted, or older messages restored
+    // from IndexedDB before this field existed).
     let inputTokens = 0;
     let outputTokens = 0;
     let lastModel: string | undefined;
+    let hasAnyMetadata = false;
     for (const m of messages) {
-      if (m.role !== "assistant" || !m.metadata) continue;
-      inputTokens += m.metadata.usage.inputTokens;
-      outputTokens += m.metadata.usage.outputTokens;
-      lastModel = m.metadata.model;
+      if (m.role !== "assistant") continue;
+      if (m.metadata) {
+        inputTokens += m.metadata.usage.inputTokens;
+        outputTokens += m.metadata.usage.outputTokens;
+        lastModel = m.metadata.model;
+        hasAnyMetadata = true;
+      }
     }
 
-    if (lastModel && (inputTokens > 0 || outputTokens > 0)) {
+    if (!hasAnyMetadata) {
+      // Rough estimate: ~4 chars per token for English text.
+      let totalChars = 0;
+      for (const m of messages) {
+        if (m.role === "user" || m.role === "assistant") {
+          totalChars += getMessageText(m.parts).length;
+        }
+      }
+      const estimatedTokens = Math.ceil(totalChars / 4);
+      inputTokens = Math.ceil(estimatedTokens * 0.6);
+      outputTokens = Math.ceil(estimatedTokens * 0.4);
+    }
+
+    const model = lastModel ?? "deepseek-v4-flash";
+    if (inputTokens > 0 || outputTokens > 0) {
       recordCost({
-        model: lastModel,
+        model,
         inputTokens,
         outputTokens,
         module: "conversation",

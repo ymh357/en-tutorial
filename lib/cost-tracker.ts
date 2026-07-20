@@ -64,12 +64,11 @@ const isToday = (isoTimestamp: string): boolean => {
   );
 };
 
-// Local-date key used to detect day rollover for the `today` rollup. Not a
-// display value, so no zero-padding is needed — it only has to be stable and
-// unique per local calendar day, matching the semantics of isToday() above.
+// Local-date key: YYYY-M-D (1-indexed month, no zero-padding). Only needs to
+// be stable and unique per local calendar day, matching isToday() semantics.
 const todayKey = (): string => {
   const now = new Date();
-  return `${now.getFullYear()}-${now.getMonth()}-${now.getDate()}`;
+  return `${now.getFullYear()}-${now.getMonth() + 1}-${now.getDate()}`;
 };
 
 const readRecords = (): CostRecord[] => {
@@ -129,26 +128,36 @@ const isValidTotals = (value: unknown): value is CumulativeCostTotals => {
 // undercount if more than MAX_STORED_RECORDS calls happened before this
 // feature shipped (those records are already gone), but it's a closer
 // approximation than resetting existing users' totals to zero.
+const accumulateCall = (
+  totals: CumulativeCostTotals,
+  module: string,
+  model: string,
+  costA0GI: number,
+  inputTokens: number,
+  outputTokens: number,
+): void => {
+  totals.totalCostA0GI += costA0GI;
+  totals.totalCalls += 1;
+  totals.totalInputTokens += inputTokens;
+  totals.totalOutputTokens += outputTokens;
+
+  if (!totals.byModule[module]) {
+    totals.byModule[module] = { calls: 0, costA0GI: 0 };
+  }
+  totals.byModule[module].calls += 1;
+  totals.byModule[module].costA0GI += costA0GI;
+
+  if (!totals.byModel[model]) {
+    totals.byModel[model] = { calls: 0, costA0GI: 0 };
+  }
+  totals.byModel[model].calls += 1;
+  totals.byModel[model].costA0GI += costA0GI;
+};
+
 const aggregateFromRecords = (records: CostRecord[]): CumulativeCostTotals => {
   const totals = emptyTotals();
   for (const record of records) {
-    totals.totalCostA0GI += record.costA0GI;
-    totals.totalCalls += 1;
-    totals.totalInputTokens += record.inputTokens;
-    totals.totalOutputTokens += record.outputTokens;
-
-    if (!totals.byModule[record.module]) {
-      totals.byModule[record.module] = { calls: 0, costA0GI: 0 };
-    }
-    totals.byModule[record.module].calls += 1;
-    totals.byModule[record.module].costA0GI += record.costA0GI;
-
-    if (!totals.byModel[record.model]) {
-      totals.byModel[record.model] = { calls: 0, costA0GI: 0 };
-    }
-    totals.byModel[record.model].calls += 1;
-    totals.byModel[record.model].costA0GI += record.costA0GI;
-
+    accumulateCall(totals, record.module, record.model, record.costA0GI, record.inputTokens, record.outputTokens);
     if (isToday(record.timestamp)) {
       totals.today.costA0GI += record.costA0GI;
     }
@@ -232,22 +241,7 @@ export const recordCost = (
       : records;
   writeRecords(trimmed);
 
-  totals.totalCostA0GI += costA0GI;
-  totals.totalCalls += 1;
-  totals.totalInputTokens += record.inputTokens;
-  totals.totalOutputTokens += record.outputTokens;
-
-  if (!totals.byModule[record.module]) {
-    totals.byModule[record.module] = { calls: 0, costA0GI: 0 };
-  }
-  totals.byModule[record.module].calls += 1;
-  totals.byModule[record.module].costA0GI += costA0GI;
-
-  if (!totals.byModel[record.model]) {
-    totals.byModel[record.model] = { calls: 0, costA0GI: 0 };
-  }
-  totals.byModel[record.model].calls += 1;
-  totals.byModel[record.model].costA0GI += costA0GI;
+  accumulateCall(totals, record.module, record.model, costA0GI, record.inputTokens, record.outputTokens);
 
   const key = todayKey();
   if (totals.today.date !== key) {

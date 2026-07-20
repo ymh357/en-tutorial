@@ -380,6 +380,11 @@ const AssessmentPage = () => {
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
 
+  // Snapshot of the CEFR spread captured at startReading time, so submitReading
+  // pairs subtests against the same levels even if profile.studyLevel changes
+  // mid-assessment (e.g. from another tab).
+  const [readingLevels, setReadingLevels] = useState<Cefr[] | null>(null);
+
   // Reading section state
   const [readingData, setReadingData] = useState<ReadingData | null>(
     () => restoredProgress?.readingData ?? null
@@ -557,6 +562,7 @@ Return ONLY valid JSON (no markdown fences, no explanation) in this exact format
       // Normalize to exactly the requested spread size at ingestion, so
       // render, the answered-all gate, and scoring all operate on the same
       // subtests (the model can over-produce vs the 2 requested at a ladder end).
+      setReadingLevels(levels);
       setReadingData({ subtests: data.object.subtests.slice(0, levels.length) });
       setReadingAnswers({});
       setPhase("reading");
@@ -569,11 +575,9 @@ Return ONLY valid JSON (no markdown fences, no explanation) in this exact format
 
   const submitReading = (): void => {
     if (!readingData) return;
-    // Pair subtests to the levels THIS app requested, by index — never trust
-    // the LLM's echoed `st.level` string, which could be wrong/garbage and
-    // would silently collapse locateLevel to a single (likely B1) level,
-    // re-introducing the self-reference bug this rewrite exists to fix.
-    const levels = spreadLevels(cefr);
+    // Use the levels snapshot captured at startReading time, not the live cefr
+    // (which could have changed via another tab updating studyLevel).
+    const levels = readingLevels ?? spreadLevels(cefr);
     const subtests: SubtestScore[] = readingData.subtests
       .slice(0, levels.length)
       .map((st, si) => ({
