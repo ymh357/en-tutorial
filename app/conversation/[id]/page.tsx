@@ -15,7 +15,7 @@ import { useProfile } from "@/hooks/use-db";
 import { getScenarioById } from "@/lib/scenarios";
 import type { Conversation, ConversationMessage, ScenarioType } from "@/lib/types";
 import type { ChatMessageMetadata } from "@/app/api/chat/route";
-import { speak, stopSpeaking } from "@/lib/tts";
+import { speakStream, stopSpeaking } from "@/lib/tts";
 import { startRecording, isRecordingSupported, type RecordingSession } from "@/lib/speech";
 
 const MIN_EXCHANGES_TO_END = 3;
@@ -163,6 +163,15 @@ const ConversationPage = () => {
   const startingRef = useRef(false);
   const [voiceError, setVoiceError] = useState<string | null>(null);
   const [lastApproximate, setLastApproximate] = useState(false); // last transcript came from the SpeechRecognition fallback
+  // Budget of automatic mic restarts after a failed transcription. Transient
+  // failures (network blip, whisper timeout) deserve one silent retry;
+  // deterministic ones (no STT configured, dead input device) would otherwise
+  // spin forever, so the budget caps that at a single attempt and then hands
+  // control back to the user. A ref, not state: it is read and written
+  // synchronously inside stopAndSend's async flow, where a re-render-scheduled
+  // state update would be read stale on the very next failure.
+  const transcribeRetriesRef = useRef(0);
+  const MAX_TRANSCRIBE_RETRIES = 1;
 
   const isStreaming = status === "streaming" || status === "submitted";
   const voiceSupported = typeof window !== "undefined" && isRecordingSupported();
@@ -217,40 +226,66 @@ const ConversationPage = () => {
     }
   };
 
-  // Stop recording → faithful transcript → auto-send. On transcribe failure,
-  // surface a repeat prompt and return to idle (user can record again).
+  // Stop recording → faithful transcript → auto-send.
+  //
+  // On transcribe failure this reopens the mic AT MOST ONCE (see
+  // transcribeRetriesRef), then stops and waits for the user. Retrying
+  // without a budget used to spin forever: nothing about a deterministic
+  // failure (STT misconfigured, dead input device) changes between attempts,
+  // so every retry took the identical path and re-acquired the mic, leaving
+  // the browser's recording indicator flickering indefinitely. One retry
+  // still absorbs a transient blip; past that, voice mode stays ON and the
+  // Record button is offered so recovery is an explicit user action.
   const stopAndSend = async (): Promise<void> => {
     const session = sessionRef.current;
     if (!session || micStatus !== "recording" || isStreaming) return;
     sessionRef.current = null;
     setMicStatus("transcribing");
     try {
+      // Contract (lib/speech.ts): resolves only with a non-empty transcript;
+      // "nothing recognized" arrives as a rejection, handled below.
       const { text, approximate } = await session.stop();
       setLastApproximate(approximate);
-      const trimmed = text.trim();
-      if (trimmed) {
-        setVoiceError(null); // genuine send clears any stale "try again" prompt
-        sendMessage({ text: trimmed });
-        // AI reply auto-plays via the voice-autoplay effect, which then
-        // resumes recording through speakAndResumeListening → startMicSession.
-      } else {
-        setVoiceError("Didn't catch that — try again.");
-        await startMicSession();
-      }
+      setVoiceError(null); // genuine send clears any stale "try again" prompt
+      transcribeRetriesRef.current = 0; // a good transcript proves the path works again
+      sendMessage({ text });
+      // AI reply auto-plays via the voice-autoplay effect, which then
+      // resumes recording through speakAndResumeListening → startMicSession.
     } catch {
-      setVoiceError("Couldn't reach transcription — please repeat that.");
-      await startMicSession();
+      // Only retry while voice mode is still on -- the user may have toggled
+      // it off during the transcription await, and reopening the mic then
+      // would strand a live recording with no UI to stop it.
+      if (
+        transcribeRetriesRef.current < MAX_TRANSCRIBE_RETRIES &&
+        voiceModeRef.current &&
+        mountedRef.current
+      ) {
+        transcribeRetriesRef.current += 1;
+        setVoiceError("Didn't catch that — listening again.");
+        // startMicSession sets micStatus to "recording" on success, or "idle"
+        // (and exits voice mode) if the mic is unavailable -- in both cases
+        // the finally below is a no-op since the status left "transcribing".
+        // If it early-returns without starting (TTS playing / concurrent
+        // start), the status is still "transcribing" and the finally resets
+        // it to "idle", surfacing the Record button. No path leaves the UI
+        // stuck on "Transcribing…".
+        await startMicSession();
+        return;
+      }
+      setVoiceError("Didn't catch that — tap Record to try again.");
     } finally {
       setMicStatus((s) => (s === "transcribing" ? "idle" : s));
     }
   };
 
-  // Discard current recording and immediately start a fresh one (stay in voice mode).
+  // Discard current recording and immediately start a fresh one, but only
+  // while voice mode is actually still on -- an unconditional restart could
+  // reopen the mic after toggleVoiceMode had just shut it down.
   const cancelMic = (): void => {
     sessionRef.current?.cancel();
     sessionRef.current = null;
     setMicStatus("idle");
-    void startMicSession();
+    if (voiceModeRef.current) void startMicSession();
   };
 
   // Speaks the given text via TTS, then resumes listening for the user's
@@ -260,7 +295,11 @@ const ConversationPage = () => {
   const speakAndResumeListening = async (text: string): Promise<void> => {
     isSpeakingRef.current = true;
     setIsSpeaking(true);
-    await speak(text); // C1: resolves only after audio truly ends (awaitable fallback)
+    // Sentence-streamed so the first sentence starts playing as soon as its
+    // audio is ready instead of after the whole reply synthesizes. Still
+    // resolves only once the entire passage has played, preserving the
+    // "mic stays off until playback truly ends" guarantee below.
+    await speakStream(text);
     isSpeakingRef.current = false;
     setIsSpeaking(false);
     if (voiceModeRef.current) {
@@ -291,6 +330,7 @@ const ConversationPage = () => {
       setMicStatus("idle");
       setVoiceError(null);
       setLastApproximate(false); // fresh entry into voice mode: don't carry over a text-mode banner (M-a)
+      transcribeRetriesRef.current = 0; // fresh entry earns a fresh retry budget
       if (messages.length === 0) {
         // Let the AI open the conversation instead of prompting the user to
         // speak first. The greeting reply is spoken via the auto-play effect,
@@ -430,7 +470,8 @@ const ConversationPage = () => {
       setMicStatus("idle");
       await speakAndResumeListening(text);
     } else {
-      await speak(text);
+      // Text-mode read-aloud: stream sentences so playback starts sooner.
+      await speakStream(text);
     }
   };
 
@@ -454,6 +495,7 @@ const ConversationPage = () => {
         setLastApproximate(approximate);
         const trimmed = text.trim();
         if (trimmed) setInput((prev) => (prev ? `${prev} ${trimmed}` : trimmed));
+        else setVoiceError("Didn't catch that — please try again.");
       } catch {
         setVoiceError("Couldn't reach transcription — please try again.");
       } finally {
@@ -737,6 +779,25 @@ const ConversationPage = () => {
             {micStatus === "transcribing" && (
               <Button type="button" className="w-full min-h-[44px]" disabled>
                 Transcribing…
+              </Button>
+            )}
+            {/* Idle in voice mode means the automatic listen loop stopped --
+                transcription failed, or TTS finished without resuming. This
+                is the manual way back in, and the reason a failed transcript
+                no longer needs to auto-restart the mic. */}
+            {micStatus === "idle" && !isStreaming && !isSpeaking && (
+              <Button
+                type="button"
+                className="w-full min-h-[44px]"
+                onClick={() => {
+                  // Manual restart: the user is asserting the problem may be
+                  // fixed, so grant the automatic retry budget again.
+                  transcribeRetriesRef.current = 0;
+                  void startMicSession();
+                }}
+              >
+                <Mic className="h-4 w-4" />
+                Record
               </Button>
             )}
           </div>

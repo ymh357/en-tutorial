@@ -16,6 +16,11 @@
 // Never silent: whisper success is faithful (approximate: false); whisper
 // failure is an explicit, flagged degradation, or a thrown error if even
 // the fallback has nothing to recognize.
+//
+// Contract: a resolved TranscribeResult always carries a non-empty, trimmed
+// transcript. "Nothing was recognized" is signalled by a rejection, never by
+// an empty string -- callers that auto-resume recording depend on this to
+// distinguish a retryable outcome from a deterministic dead end.
 
 export interface TranscribeResult {
   text: string;
@@ -95,15 +100,22 @@ const recognizeOnce = (): Promise<string> => {
     recognition.interimResults = false;
     recognition.continuous = false;
     recognition.onresult = (event) => {
-      resolve(event.results[0]?.[0]?.transcript ?? "");
+      // An empty/whitespace transcript is NOT a usable result: resolving it
+      // would hand callers a "successful" empty string, which the voice-mode
+      // caller treats as "didn't catch that" and retries forever with no
+      // state changed between attempts. Leave the promise unsettled and let
+      // the onend handler below reject it as the no-result case it is.
+      const transcript = event.results[0]?.[0]?.transcript?.trim();
+      if (transcript) resolve(transcript);
     };
     recognition.onerror = (event) => {
       reject(new Error(`Speech recognition fallback failed: ${event.error}`));
     };
     recognition.onend = () => {
-      // Settling a Promise more than once is a no-op, so if onresult already
-      // resolved this is harmless; if the session ended with no result at
-      // all (e.g. no speech detected), reject explicitly instead of hanging.
+      // onend always fires, including right after a successful onresult.
+      // Settling twice is a no-op, so this is harmless in that case; when
+      // the session ended with no usable result it is the only thing that
+      // settles the promise, rejecting instead of hanging.
       reject(new Error("Speech recognition fallback ended with no result"));
     };
     try {
@@ -142,7 +154,17 @@ const transcribe = async (blob: Blob): Promise<TranscribeResult> => {
         throw new Error(data.error ?? `STT request failed: ${res.status}`);
       }
 
-      return { text: data.text ?? "", approximate: false };
+      // A 2xx response carrying an empty transcript is a failure of the
+      // whisper path, not a success with nothing in it -- returning "" here
+      // would skip the fallback entirely and report approximate: false, so
+      // the caller could not even tell the transcript was degraded. Throw so
+      // the SpeechRecognition fallback below gets its turn.
+      const whisperText = data.text?.trim();
+      if (!whisperText) {
+        throw new Error("STT returned an empty transcript");
+      }
+
+      return { text: whisperText, approximate: false };
     } finally {
       clearTimeout(timer);
     }
