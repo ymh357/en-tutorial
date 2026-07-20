@@ -59,6 +59,9 @@ const SettingsPage = () => {
 
   const [dailyGoal, setDailyGoal] = useState<number>(() => loadDailyGoal());
 
+  const [dailyNewLimitOverride, setDailyNewLimitOverride] = useState<number | null>(null);
+  const dailyNewLimit = dailyNewLimitOverride ?? profile?.dailyNewLimit ?? 20;
+
   const [costSummary, setCostSummary] = useState<CostSummary>(() => getCostSummary());
 
   const [exportStatus, setExportStatus] = useState<"idle" | "exporting" | "error">("idle");
@@ -119,6 +122,21 @@ const SettingsPage = () => {
     const nextGoal = Number.isFinite(parsed) && parsed > 0 ? parsed : DEFAULT_DAILY_GOAL_MINUTES;
     setDailyGoal(nextGoal);
     window.localStorage.setItem(DAILY_GOAL_STORAGE_KEY, String(nextGoal));
+  };
+
+  const handleDailyNewLimitChange = async (value: string): Promise<void> => {
+    const parsed = Number(value);
+    const nextLimit = Number.isFinite(parsed) && parsed >= 0 ? Math.round(parsed) : 20;
+    setDailyNewLimitOverride(nextLimit);
+    const updatedCount = await db.learningProfile.update("singleton", {
+      dailyNewLimit: nextLimit,
+    });
+    if (updatedCount === 0) {
+      // Table.update() is a no-op when the singleton row doesn't exist yet —
+      // fall back to put() so the change isn't silently dropped.
+      const currentProfile = await dbHelpers.getProfile();
+      await db.learningProfile.put({ ...currentProfile, dailyNewLimit: nextLimit });
+    }
   };
 
   const handleExport = async () => {
@@ -326,6 +344,28 @@ const SettingsPage = () => {
               min={1}
               value={dailyGoal}
               onChange={(e) => handleDailyGoalChange(e.target.value)}
+            />
+          </div>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Daily New Cards</CardTitle>
+          <CardDescription>
+            Maximum new SRS cards introduced per day. Due reviews are never capped by this limit.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div className="grid gap-2 max-w-xs">
+            <Label htmlFor="daily-new-limit-input">New cards per day</Label>
+            <Input
+              id="daily-new-limit-input"
+              type="number"
+              min={0}
+              max={100}
+              value={dailyNewLimit}
+              onChange={(e) => void handleDailyNewLimitChange(e.target.value)}
             />
           </div>
         </CardContent>
