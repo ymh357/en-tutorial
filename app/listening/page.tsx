@@ -44,6 +44,8 @@ import {
   listeningPredictionEvalSchema,
   toJsonSchema,
 } from "@/lib/ai-schemas";
+import { alignWords, type AlignResult } from "@/lib/word-align";
+import { normalizeTo100 } from "@/lib/rubric";
 import type { PoolTaskType } from "@/lib/types";
 
 // Persist a completed listening exercise to the local DB for the history page.
@@ -109,47 +111,6 @@ const callReview = async (prompt: string, system: string): Promise<string> => {
   return data.content;
 };
 
-const normalizeWord = (word: string): string =>
-  word.toLowerCase().replace(/[.,!?;:'"]/g, "");
-
-const tokenize = (text: string): string[] =>
-  text
-    .trim()
-    .split(/\s+/)
-    .filter(Boolean)
-    .map(normalizeWord)
-    .filter(Boolean);
-
-interface WordDiffEntry {
-  word: string;
-  heardAs: string | null; // what the user actually said at this position (null if missing)
-  correct: boolean;
-}
-
-interface DiffResult {
-  accuracy: number;
-  original: WordDiffEntry[];
-}
-
-const diffWords = (original: string, userText: string): DiffResult => {
-  const originalWords = tokenize(original);
-  const userWords = tokenize(userText);
-
-  const entries: WordDiffEntry[] = originalWords.map((word, idx) => ({
-    word,
-    heardAs: idx < userWords.length ? userWords[idx] : null,
-    correct: userWords[idx] === word,
-  }));
-
-  const correctCount = entries.filter((e) => e.correct).length;
-  const accuracy =
-    originalWords.length === 0
-      ? 0
-      : Math.round((correctCount / originalWords.length) * 100);
-
-  return { accuracy, original: entries };
-};
-
 type Mode = "dictation" | "comprehension" | "shadowing" | "prediction";
 
 // Shared post-exercise navigation shown once a result/completion state renders.
@@ -179,7 +140,7 @@ const DictationTab = ({ cefrLevel }: { cefrLevel: string }) => {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [userInput, setUserInput] = useState("");
-  const [result, setResult] = useState<DiffResult | null>(null);
+  const [result, setResult] = useState<AlignResult | null>(null);
   const [completed, setCompleted] = useState(0);
   const [totalAccuracy, setTotalAccuracy] = useState(0);
   const [poolSentences, setPoolSentences] = useState<string[]>([]);
@@ -244,7 +205,7 @@ const DictationTab = ({ cefrLevel }: { cefrLevel: string }) => {
 
   const checkAnswer = async (): Promise<void> => {
     if (!sentence || !userInput.trim()) return;
-    const diff = diffWords(sentence, userInput);
+    const diff = alignWords(sentence, userInput);
     setResult(diff);
     setCompleted((c) => c + 1);
     setTotalAccuracy((sum) => sum + diff.accuracy);
@@ -749,7 +710,7 @@ const ShadowingTab = ({ cefrLevel }: { cefrLevel: string }) => {
   const mountedRef = useRef(true);
   const [approximate, setApproximate] = useState(false); // last attempt used the SpeechRecognition fallback (auto-corrected → unreliable for a repeat check)
   const [transcript, setTranscript] = useState<string | null>(null);
-  const [result, setResult] = useState<DiffResult | null>(null);
+  const [result, setResult] = useState<AlignResult | null>(null);
   const [speechSupported, setSpeechSupported] = useState(true);
   const hasCheckedSupport = useRef(false);
 
@@ -848,7 +809,7 @@ const ShadowingTab = ({ cefrLevel }: { cefrLevel: string }) => {
       }
       setTranscript(said);
       setApproximate(approx);
-      const shadowResult = diffWords(currentSentence, said);
+      const shadowResult = alignWords(currentSentence, said);
       setResult(shadowResult);
       // Persistence is best-effort: a DB write failure must not masquerade as
       // a transcription error (the result above already stands).
@@ -1183,7 +1144,7 @@ const PredictionTab = ({ cefrLevel }: { cefrLevel: string }) => {
         "prediction",
         `${passage.firstHalf} ${passage.secondHalf}`,
         userInput,
-        parsed.score * 10
+        normalizeTo100(parsed.score)
       );
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to evaluate prediction");
@@ -1282,8 +1243,8 @@ const PredictionTab = ({ cefrLevel }: { cefrLevel: string }) => {
               <CardHeader className="pb-2">
                 <CardTitle className="text-sm font-medium flex items-center justify-between">
                   Result
-                  <Badge variant={evaluation.score >= 7 ? "default" : "secondary"}>
-                    {evaluation.score}/10
+                  <Badge variant={normalizeTo100(evaluation.score) >= 70 ? "default" : "secondary"}>
+                    {normalizeTo100(evaluation.score)}/100
                   </Badge>
                 </CardTitle>
               </CardHeader>
