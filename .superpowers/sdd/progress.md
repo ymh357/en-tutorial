@@ -411,3 +411,14 @@ SUB-PROJECT D: fully IMPLEMENTED (D1 scoring 0-100 + D2 SRS correctness + D3a as
 PENDING: D broad whole-branch review (D1+D2+D3a+D3b integrated), deferred here per decision. Base = 62273dd (ledger commit before first D code a4c8c8a) → HEAD 24a2055.
 After D broad review + fixes: ENTIRE branch feat/data-correctness-foundation (A+B+C+D) complete → finishing-a-development-branch (merge/PR is the USER's decision — present options).
 ##############################################################
+
+## D broad whole-branch review (opus, 62273dd..24a2055) — NO Critical, no data-corruption, no type/lint regression.
+Both headline risks ADJUDICATED SOUND: (1) v5→v6 Dexie migration composition (monotonic, stores byte-identical, composes on fresh-from-v4, no un-backfilled read); (2) 0-100 consistency end-to-end (every producer normalizeTo100 once, no double-×10, assessment subjectiveAvg both 0-100, assessments table untouched by v5). Also verified sound: relearning threading (all Record<MasteryLevel> exhaustive), session-queue/dashboard/study-plan single-source (useSessionQueue), assessment↔profile↔content loop (no self-ref cefrLevel survives; settings + confirmStudyLevelUpdate both update studyLevel+knownWordsBase), shared-file churn (db/db-helpers/types/page/roadmap) no cross-plan undermining.
+1 Important (survived per-plan reviews, spans D3b×roadmap): roadmap level-assessment threshold hardcoded 50 (B1→B2 floor) but nextLevel is dynamic full-ladder after D3b A1-C2 widening → A1 learner sees wrong "50 (A2 threshold)", C1 learner false "C2 reached" at 50 + inflated progress. FIXED 91528c5: derive threshold from CEFR_RANGES[nextLevel].min (import CEFR_RANGES; removed the B2_ASSESSMENT_THRESHOLD literal). tsc+eslint 0.
+1 Minor (accepted, folds into overallScore discontinuity): per-dimension "compared to last time" also mixes pre/post-D3a scales — no code change.
+
+##############################################################
+SUB-PROJECT D: COMPLETE (D1+D2+D3a+D3b + broad review + fix 91528c5). Code commits a4c8c8a..91528c5.
+ENTIRE BRANCH feat/data-correctness-foundation COMPLETE: A (data foundation) + B (AI contract+cost) + C (voice/whisper) + D (scoring/SRS/assessment). All sub-projects per-task + broad reviewed clean. Branch still un-merged/un-pushed.
+NEXT: finishing-a-development-branch — present merge/PR/keep/discard options to the USER (the unified-landing decision the user reserved; NOT covered by "autonomous, don't ask" which was per-phase execution).
+##############################################################
