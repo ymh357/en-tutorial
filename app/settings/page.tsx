@@ -126,7 +126,9 @@ const SettingsPage = () => {
 
   const handleDailyNewLimitChange = async (value: string): Promise<void> => {
     const parsed = Number(value);
-    const nextLimit = Number.isFinite(parsed) && parsed >= 0 ? Math.round(parsed) : 20;
+    const nextLimit = Number.isFinite(parsed)
+      ? Math.min(100, Math.max(0, Math.round(parsed)))
+      : 20;
     setDailyNewLimitOverride(nextLimit);
     const updatedCount = await db.learningProfile.update("singleton", {
       dailyNewLimit: nextLimit,

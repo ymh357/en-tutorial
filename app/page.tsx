@@ -32,7 +32,7 @@ import { db } from "@/lib/db";
 import { dbHelpers } from "@/lib/db-helpers";
 import {
   useProfile,
-  useDueCards,
+  useSessionQueue,
   useVocabCounts,
   useTodayStats,
   useStatsRange,
@@ -203,7 +203,11 @@ const DashboardPage = () => {
   const profile = useProfile();
   // Display fallback: assessedLevel first, studyLevel if not yet assessed.
   const displayLevel = profile?.assessedLevel || profile?.studyLevel;
-  const dueCards = useDueCards();
+  // Use the same budgeted queue /srs serves (new cards capped by daily
+  // budget), not the raw due count, so "Review N cards" here always matches
+  // what a session will actually present.
+  const dailyNewLimit = profile?.dailyNewLimit ?? 20;
+  const sessionQueue = useSessionQueue(dailyNewLimit);
   const vocabCounts = useVocabCounts();
   const todayStats = useTodayStats();
   const conversations = useConversations(5);
@@ -459,7 +463,7 @@ const DashboardPage = () => {
   const studyPlan = useMemo<StudyStep[]>(() => {
     if (!profile || !todayStats) return [];
     return generateStudyPlan({
-      dueCards: dueCards.length,
+      dueCards: sessionQueue.length,
       lastConversation: conversations[0]?.createdAt ?? null,
       lastReading: readingSessions[0]?.createdAt ?? null,
       lastWriting: writingSessions[0]?.createdAt ?? null,
@@ -470,7 +474,7 @@ const DashboardPage = () => {
       targetMinutes: dailyGoalMinutes,
     });
   }, [
-    dueCards.length,
+    sessionQueue.length,
     conversations,
     readingSessions,
     writingSessions,

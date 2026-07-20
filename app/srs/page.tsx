@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { Flame, Library, Volume2 } from "lucide-react";
 import { db } from "@/lib/db";
@@ -99,6 +99,11 @@ const SrsPage = () => {
     null
   );
 
+  // Guards against a fast double-click double-running handleRate before the
+  // button's disabled-by-rerender state catches up (async gap between click
+  // and the state update that removes the card from the queue).
+  const ratingInFlightRef = useRef(false);
+
   const currentCard: CardType | undefined = queue?.[0];
 
   const nextIntervals = useMemo(() => {
@@ -116,37 +121,46 @@ const SrsPage = () => {
 
   const handleRate = async (rating: Rating): Promise<void> => {
     if (!currentCard || !queue) return;
-    const seen = reappear[currentCard.id] ?? 0; // 0 only on this card's first appearance
-    const wasNew = currentCard.masteryLevel === "new";
-    const result = computeNextReview(currentCard, rating);
-    await db.cards.update(currentCard.id, { ...result, lastReviewedAt: new Date() });
-    await dbHelpers.incrementTodayStat("srsReviewed");
-    // Count a new card ONCE, on first handling only. A new card that takes a
-    // learning step (Hard) stays masteryLevel "new" and re-queues, so gating on
-    // wasNew alone would double/triple-count it. seen===0 = first appearance.
-    if (wasNew && seen === 0) await dbHelpers.incrementTodayStat("newCardsIntroduced");
-    setReviewedCount((c) => c + 1);
-    setShowAnswer(false);
+    // Re-entry guard: the rating buttons stay clickable until this async
+    // function's state updates re-render the page, so a fast double-click
+    // would otherwise double-run the DB update / stat increments below.
+    if (ratingInFlightRef.current) return;
+    ratingInFlightRef.current = true;
+    try {
+      const seen = reappear[currentCard.id] ?? 0; // 0 only on this card's first appearance
+      const wasNew = currentCard.masteryLevel === "new";
+      const result = computeNextReview(currentCard, rating);
+      await db.cards.update(currentCard.id, { ...result, lastReviewedAt: new Date() });
+      await dbHelpers.incrementTodayStat("srsReviewed");
+      // Count a new card ONCE, on first handling only. A new card that takes a
+      // learning step (Hard) stays masteryLevel "new" and re-queues, so gating on
+      // wasNew alone would double/triple-count it. seen===0 = first appearance.
+      if (wasNew && seen === 0) await dbHelpers.incrementTodayStat("newCardsIntroduced");
+      setReviewedCount((c) => c + 1);
+      setShowAnswer(false);
 
-    // Short interval = a learning/relearning step → re-queue in-session, bounded.
-    const isShortStep = result.interval < 1;
-    const willReappear = isShortStep && seen < 2;
+      // Short interval = a learning/relearning step → re-queue in-session, bounded.
+      const isShortStep = result.interval < 1;
+      const willReappear = isShortStep && seen < 2;
 
-    const rest = queue.slice(1);
-    const nextQueue = willReappear
-      ? [...rest, { ...currentCard, ...result }]
-      : rest;
-    setQueue(nextQueue);
-    if (willReappear) {
-      setReappear((r) => ({ ...r, [currentCard.id]: seen + 1 }));
-    } else {
-      setGraduated((g) => new Set(g).add(currentCard.id));
-    }
-    if (nextQueue.length === 0) {
-      setFinishedAt(getNow());
-      setSessionDone(true);
-      const streakResult = await dbHelpers.updateStreak();
-      setStreak(streakResult);
+      const rest = queue.slice(1);
+      const nextQueue = willReappear
+        ? [...rest, { ...currentCard, ...result }]
+        : rest;
+      setQueue(nextQueue);
+      if (willReappear) {
+        setReappear((r) => ({ ...r, [currentCard.id]: seen + 1 }));
+      } else {
+        setGraduated((g) => new Set(g).add(currentCard.id));
+      }
+      if (nextQueue.length === 0) {
+        setFinishedAt(getNow());
+        setSessionDone(true);
+        const streakResult = await dbHelpers.updateStreak();
+        setStreak(streakResult);
+      }
+    } finally {
+      ratingInFlightRef.current = false;
     }
   };
 

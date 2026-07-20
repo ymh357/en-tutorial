@@ -323,7 +323,11 @@ const ReaderSessionPage = ({
   const learningLemmaSet = useMemo(() => {
     const set = new Set<string>();
     for (const card of srsLemmas ?? []) {
-      if (card.masteryLevel === "learning" || card.masteryLevel === "familiar") {
+      if (
+        card.masteryLevel === "learning" ||
+        card.masteryLevel === "familiar" ||
+        card.masteryLevel === "relearning"
+      ) {
         set.add(lemmatize(card.lemma));
       }
     }

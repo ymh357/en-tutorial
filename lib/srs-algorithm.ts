@@ -45,11 +45,16 @@ export const computeNextReview = (
   const inRelearning = lapses > 0 && repetitions === 0;
 
   if (rating === 0) {
-    // Again: enter/stay relearning. Capture pre-lapse interval only when
-    // coming from a graduated state (repetitions > 0), so repeated Agains in
-    // relearning don't overwrite it with the ~1min step.
-    if (repetitions > 0) lapsedInterval = interval;
-    lapses += 1;
+    // Again: enter/stay relearning. A lapse (and the pre-lapse interval
+    // capture) only counts when failing a previously-graduated card
+    // (repetitions > 0) — a brand-new or still-learning card that has never
+    // graduated hasn't "lapsed" yet, so this keeps it out of the relearning
+    // bucket. Repeated Agains while already in relearning (repetitions === 0)
+    // don't add further lapses or overwrite the captured interval.
+    if (repetitions > 0) {
+      lapsedInterval = interval;
+      lapses += 1;
+    }
     repetitions = 0;
     interval = 0.0007; // ~1 minute in days
     easeFactor = Math.max(MINIMUM_EASE, easeFactor - 0.2);
