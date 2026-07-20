@@ -319,9 +319,23 @@ export const startRecording = async (): Promise<RecordingSession> => {
   }
 };
 
-// Handle for an in-progress barge-in listen. cancel() tears down the mic
-// stream + audio graph without firing the onset callback.
-export interface SpeechOnsetListener {
+// A barge-in listen that records the whole time it is listening. Because the
+// recorder runs from the moment the assistant starts speaking, the user's
+// opening words over the assistant are already captured when onset fires --
+// there is no discard-and-reopen gap that clips the start of the utterance.
+//
+// Outcomes:
+// - No barge-in (assistant finishes, then cancel()): the recording is thrown
+//   away and everything is torn down.
+// - Barge-in (onset fired -> caller stops TTS -> stopAndTranscribe()): the
+//   already-running recording is stopped and transcribed, opening words and
+//   all.
+export interface BargeInListener {
+  // Stop recording and transcribe what was captured (call after onset). The
+  // buffer includes the pre-onset window, which is harmless: Whisper ignores
+  // the leading near-silence and transcribes the speech.
+  stopAndTranscribe: () => Promise<TranscribeResult>;
+  // Abandon without transcribing (no barge-in happened, or bailing out).
   cancel: () => void;
 }
 
@@ -334,40 +348,36 @@ const getAudioContextCtor = (): (new () => AudioContext) | undefined => {
   return w.AudioContext ?? w.webkitAudioContext;
 };
 
-// Barge-in detector. Opens its OWN short-lived AEC-enabled mic stream and
-// watches input loudness; when the user speaks over the assistant, it fires
-// onOnset ONCE and tears itself down. The caller then stops TTS and opens the
-// real recording session.
-//
-// Why a separate stream rather than reading the recorder's: recording is off
-// during playback by design, and this detector must live exactly for the
-// playback window. It closes the instant it fires (or is cancelled), so the
-// brief overlap with the subsequent startRecording() stream is bounded.
-//
-// Robustness choices:
-// - RMS over the time-domain buffer, not a single sample, to gauge loudness.
-// - Require ONSET_FRAMES consecutive above-threshold frames (~150ms) so a
-//   click, a lip smack, or residual echo transient can't trigger a false
-//   barge-in; sustained speech clears it easily.
-// - echoCancellation removes most of the assistant's own playback from the
-//   input, so the threshold reacts to the user, not the TTS.
-// These are empirical for desktop Chrome with AEC on. If false triggers show
-// up in testing (e.g. AEC residual on external speakers), raise the threshold
-// or the frame count first -- both trade a touch of interrupt latency for
-// fewer false barge-ins.
+// Onset detection tuning. RMS over the time-domain buffer (not a single
+// sample); require ONSET_FRAMES consecutive above-threshold polls (~150ms) so
+// a click or residual echo transient can't trigger a false barge-in, while
+// sustained speech clears it. echoCancellation removes most of the assistant's
+// own playback from the input so the threshold reacts to the user, not the
+// TTS. Empirical for desktop Chrome with AEC on: if false triggers show up
+// (e.g. AEC residual on external speakers), raise the threshold or frames
+// first -- both trade a little interrupt latency for fewer false barge-ins.
 const ONSET_RMS_THRESHOLD = 0.045; // speech clears it, AEC residual doesn't
 const ONSET_FRAMES = 5; // consecutive above-threshold polls (~150ms at 30ms cadence)
 const ONSET_POLL_MS = 30;
 
-// Starts listening for the user speaking. Resolves to a listener handle once
-// the mic is live (so the caller can cancel it), or null if barge-in is
-// unsupported or the mic can't be opened (in which case playback just proceeds
-// without barge-in rather than failing).
-export const listenForSpeechOnset = async (
+// Starts a barge-in listen: opens one AEC mic stream, begins recording into it
+// immediately, and watches loudness on that same stream. Fires onOnset ONCE
+// when the user speaks over the assistant. Resolves to a listener handle, or
+// null if barge-in is unsupported / the mic can't open / a recorder can't be
+// built (in which case playback just proceeds without barge-in rather than
+// failing). Requires MediaRecorder for the recording half; if only an
+// AudioContext were available we could detect but not capture, so we treat the
+// whole feature as unavailable and return null.
+export const startBargeInListen = async (
   onOnset: () => void
-): Promise<SpeechOnsetListener | null> => {
+): Promise<BargeInListener | null> => {
   const Ctor = getAudioContextCtor();
-  if (!Ctor || typeof navigator === "undefined" || !navigator.mediaDevices?.getUserMedia) {
+  if (
+    !Ctor ||
+    !hasMediaRecorder() ||
+    typeof navigator === "undefined" ||
+    !navigator.mediaDevices?.getUserMedia
+  ) {
     return null;
   }
 
@@ -382,24 +392,76 @@ export const listenForSpeechOnset = async (
   let torn = false;
   let audioCtx: AudioContext | null = null;
   let timer: ReturnType<typeof setInterval> | null = null;
+  let recorder: MediaRecorder | null = null;
+  const chunks: Blob[] = [];
 
+  const stopTracks = (): void => stream.getTracks().forEach((t) => t.stop());
+
+  // Full teardown WITHOUT transcribing. Idempotent. Stops the recorder (if
+  // still running) purely to release it -- the chunks are discarded.
   const teardown = (): void => {
     if (torn) return;
     torn = true;
     if (timer !== null) clearInterval(timer);
     timer = null;
-    stream.getTracks().forEach((t) => t.stop());
-    // close() returns a promise; ignore it -- nothing awaits teardown.
+    if (recorder && recorder.state !== "inactive") {
+      recorder.onstop = null;
+      try {
+        recorder.stop();
+      } catch {
+        // already stopping / stopped
+      }
+    }
+    recorder = null;
+    stopTracks();
     void audioCtx?.close();
     audioCtx = null;
   };
 
+  const stopAndTranscribe = (): Promise<TranscribeResult> => {
+    if (torn || !recorder) {
+      return Promise.reject(new Error("Barge-in listener already stopped"));
+    }
+    const rec = recorder;
+    // Claim the session terminally up front: set torn so a racing cancel()
+    // no-ops (this path owns the recorder stop + track release from here).
+    torn = true;
+    recorder = null;
+    if (timer !== null) clearInterval(timer);
+    timer = null;
+    void audioCtx?.close();
+    audioCtx = null;
+
+    return new Promise<TranscribeResult>((resolve, reject) => {
+      rec.onstop = () => {
+        stopTracks();
+        const bareMimeType = (rec.mimeType || "audio/webm").split(";")[0];
+        const blob = new Blob(chunks, { type: bareMimeType });
+        transcribe(blob).then(resolve, reject);
+      };
+      rec.onerror = () => {
+        stopTracks();
+        void audioCtx?.close();
+        reject(new Error("Barge-in recording device error"));
+      };
+      if (rec.state !== "inactive") rec.stop();
+    });
+  };
+
   try {
+    // Start recording immediately so the onset audio is already captured.
+    const mimeType = pickMimeType();
+    recorder = mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream);
+    recorder.ondataavailable = (event) => {
+      if (event.data.size > 0) chunks.push(event.data);
+    };
+    recorder.start();
+
     audioCtx = new Ctor();
-    // speakAndResumeListening is invoked from a setTimeout(0) (the voice
-    // auto-play effect), i.e. outside a user-gesture stack, so Chrome's
-    // autoplay policy can create the context suspended -- in which state the
-    // analyser reads silence and the detector would never fire. Resume it.
+    // startBargeInListen is invoked from a setTimeout(0) (the voice auto-play
+    // effect), i.e. outside a user-gesture stack, so Chrome's autoplay policy
+    // can create the context suspended -- in which state the analyser reads
+    // silence and the detector would never fire. Resume it.
     if (audioCtx.state === "suspended") {
       await audioCtx.resume();
     }
@@ -422,7 +484,10 @@ export const listenForSpeechOnset = async (
       if (rms >= ONSET_RMS_THRESHOLD) {
         hot++;
         if (hot >= ONSET_FRAMES) {
-          teardown();
+          // Stop analysing but KEEP recording -- the caller will stop TTS and
+          // then call stopAndTranscribe() to collect the captured utterance.
+          if (timer !== null) clearInterval(timer);
+          timer = null;
           onOnset();
         }
       } else {
@@ -430,10 +495,10 @@ export const listenForSpeechOnset = async (
       }
     }, ONSET_POLL_MS);
   } catch {
-    // AudioContext graph failed to build: abandon barge-in cleanly.
+    // Recorder/AudioContext graph failed to build: abandon barge-in cleanly.
     teardown();
     return null;
   }
 
-  return { cancel: teardown };
+  return { stopAndTranscribe, cancel: teardown };
 };
