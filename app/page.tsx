@@ -147,6 +147,7 @@ const formatDelta = (n: number): string => (n > 0 ? `+${n}` : `${n}`);
 const VOCAB_LABELS: Record<MasteryLevel, string> = {
   new: "New",
   learning: "Learning",
+  relearning: "Relearning",
   familiar: "Familiar",
   mastered: "Mastered",
 };
@@ -154,6 +155,7 @@ const VOCAB_LABELS: Record<MasteryLevel, string> = {
 const VOCAB_COLORS: Record<MasteryLevel, string> = {
   new: "bg-gray-400",
   learning: "bg-blue-400",
+  relearning: "bg-orange-400",
   familiar: "bg-amber-400",
   mastered: "bg-green-500",
 };
@@ -498,7 +500,11 @@ const DashboardPage = () => {
   const greeting = useMemo(() => getGreeting(new Date().getHours()), []);
 
   const totalVocab = vocabCounts
-    ? vocabCounts.new + vocabCounts.learning + vocabCounts.familiar + vocabCounts.mastered
+    ? vocabCounts.new +
+      vocabCounts.learning +
+      vocabCounts.relearning +
+      vocabCounts.familiar +
+      vocabCounts.mastered
     : 0;
 
   return (
@@ -780,7 +786,7 @@ const DashboardPage = () => {
             <CardTitle>Vocabulary Distribution</CardTitle>
           </CardHeader>
           <CardContent className="space-y-3">
-            {(["new", "learning", "familiar", "mastered"] as MasteryLevel[]).map(
+            {(["new", "learning", "relearning", "familiar", "mastered"] as MasteryLevel[]).map(
               (level) => {
                 const count = vocabCounts?.[level] ?? 0;
                 const pct = totalVocab > 0 ? (count / totalVocab) * 100 : 0;
