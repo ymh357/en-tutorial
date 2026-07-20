@@ -1,6 +1,7 @@
 import { put } from "@vercel/blob";
-import { generateText } from "ai";
+import { generateObject } from "ai";
 import { qualityModel } from "@/lib/ai";
+import { poolTaskSchemas } from "@/lib/ai-schemas";
 import type { PoolTaskType } from "@/lib/types";
 
 export const maxDuration = 300; // 5 min for batch generation
@@ -49,17 +50,6 @@ interface GeneratedTask {
   content: Record<string, unknown>;
 }
 
-const parseJsonContent = (text: string): Record<string, unknown> | null => {
-  try {
-    let cleaned = text.trim();
-    const fence = cleaned.match(/```(?:json)?\s*([\s\S]*?)```/);
-    if (fence) cleaned = fence[1].trim();
-    return JSON.parse(cleaned);
-  } catch {
-    return null;
-  }
-};
-
 export const GET = async (req: Request): Promise<Response> => {
   const cronSecret = process.env.CRON_SECRET;
   if (!cronSecret) {
@@ -82,16 +72,32 @@ export const GET = async (req: Request): Promise<Response> => {
     { system: string; prompt: string },
   ][]) {
     try {
-      const result = await generateText({
+      // Server-side callers pass the zod schema straight to generateObject
+      // (Standard Schema interface) — no JSON Schema transport step needed
+      // here, unlike the client (lib/task-pool-generate.ts), which must
+      // serialize the schema over `fetch` via toJsonSchema(). Sharing this
+      // exact schema with the live consumers (wired up in B2) is what makes
+      // cron-generated content match the shape the client actually expects —
+      // e.g. listening-comprehension now always includes `topic`, closing
+      // the drift where pool content silently failed client-side validation.
+      //
+      // This call is entirely server-side with no client involved, so
+      // recordCost() (localStorage-backed, client-only — see
+      // lib/cost-tracker.ts) cannot be invoked here: cron-generated content
+      // cost is not counted in the client cost dashboard.
+      const { object } = await generateObject({
         model: qualityModel,
+        schema: poolTaskSchemas[type],
         system,
         prompt,
       });
 
-      const content = parseJsonContent(result.text);
-      if (!content) continue;
-
-      tasks.push({ id: crypto.randomUUID(), type, difficulty: level, content });
+      tasks.push({
+        id: crypto.randomUUID(),
+        type,
+        difficulty: level,
+        content: object as Record<string, unknown>,
+      });
     } catch {
       // Skip failed generations, continue with next type
       continue;
