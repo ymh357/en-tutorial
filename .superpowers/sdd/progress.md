@@ -321,3 +321,22 @@ C2 Task 2: complete (commit 4bd0736 + race fix 6f403a4, task review passed after
 
 C2: COMPLETE. Code commits b546cec..6f403a4 on branch feat/data-correctness-foundation (+ plan a0b011e, revision 648ac8f). Conversation page fully on whisper (voice mode + text-mode mic); 4 mutex bugs fixed (echo/read-aloud/perm-loop/overwrite). C's broad whole-branch review still deferred to after C3.
 Next: C3 — listening shadowing STT cutover (startListening one-shot SpeechRecognition → whisper recordAndTranscribe) + content-accuracy feedback honesty (diffWords already compares transcript vs target; make naming honest + surface approximate). NOTE: shadowing record() already does content-accuracy via diffWords — C3's main value is the faithful-transcript cutover + honest labeling; NO word-level pronunciation scoring (whisper gives no word confidence per C1 smoke-test).
+
+### C3 · listening shadowing cutover + honest word-match feedback
+Plan committed a69def9; opus plan-review → NEEDS REVISION (2 must-fix): unescaped apostrophe in not-supported copy would break react/no-unescaped-entities eslint gate; missing unmount cleanup leaked mic on tab-switch/nav (Base UI Tabs.Panel unmounts hidden panels). + folded Minor: gate Next Sentence on recStatus (else advancing mid-record leaks mic). Revised plan 5a6c504. base = 5a6c504. Single task, one file (app/listening/page.tsx), shadowing tab only.
+
+C3 Task 1: complete (commit a2ec428 + fix c49b9ac, task review passed after fix; re-review of fix in flight)
+  - Deleted top-of-file one-shot SpeechRecognition setup (SR interfaces+type, getSpeechRecognitionConstructor, startListening ~62-102); stripFences KEPT (dictation uses it). Imported startRecording/isRecordingSupported/RecordingSession; added Square to lucide import.
+  - ShadowingTab: isRecording → recStatus:"idle"|"recording"|"transcribing" + sessionRef + approximate; speechSupported via isRecordingSupported(); startAttempt/stopAttempt (record→stop→transcribe→diffWords, guarded finally); unmount cleanup cancels sessionRef; button 3-state toggle (Record/Stop&Check/Transcribing); Next Sentence gated on recStatus.
+  - Honesty (spec §5): Badge "{accuracy}% word match" (not "accuracy"); "Word match against the target — not a pronunciation score." line; approximate caveat inside result card. diffWords/saveListeningExercise("shadowing")/streak/stat unchanged. NO word-level pronunciation scoring (whisper has none).
+  - Task review (opus): SPEC ✅. QUALITY changes-needed → 1 Important (double-start re-entry: startAttempt set no sync state before await startRecording() → double-click spawns 2nd MediaRecorder, orphans 1st = unstoppable live mic; originated in plan's prescribed code) + 1 Minor (DB-write failure surfaced misleading "couldn't reach transcription" while result shown). Fix c49b9ac: startingRef sync re-entry guard (set before await, reset in finally, early-return if starting||recStatus!==idle); DB writes wrapped in own try/catch (swallow, result stands).
+  - Verified after fix: tsc --noEmit 0; eslint file 0.
+  - Fix re-review (opus) PASS: (1) double-click within await window blocked by startingRef; (2) retry after permission-denied works (ref reset in finally); (3) success routes to stopAttempt, no stuck ref; (4) DB-write failure keeps result, no false transcription error, converges idle. SPEC ✅ QUALITY approved.
+  - OPEN ITEM for C broad review (pre-existing, spans C2+C3): unmount DURING `await startRecording()` → cleanup runs while sessionRef still null → resolved session assigned to dead ref, never cancelled = narrow mic leak. Same pattern in C2 startMicSession + C3 startAttempt. Evaluate holistically in broad review; fix across both if confirmed.
+
+C3: COMPLETE. Code commits a2ec428..c49b9ac on branch feat/data-correctness-foundation (+ plan a69def9, revision 5a6c504). listening shadowing on whisper faithful transcript + honest "word match, not pronunciation" labeling + approximate caveat; mic-leak guards (unmount cleanup, double-start guard, Next-Sentence gating).
+
+##############################################################
+SUB-PROJECT C (voice/whisper): all plans (C1+C2+C3) COMPLETE. Pending: C broad whole-branch review (C1+C2+C3 integrated), deferred here per decision. Base for C broad review = 0b59902 (last commit before C1 code 5bf3a69) → HEAD c49b9ac.
+Remaining after C: D (scoring/psychometrics/SRS — needs own brainstorm/spec). Branch still NOT merged/pushed (unified landing after all sub-projects).
+##############################################################
