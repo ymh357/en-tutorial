@@ -27,6 +27,8 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { db } from "@/lib/db";
 import { useReadingSessions } from "@/hooks/use-db";
 import { completeTask } from "@/lib/task-pool";
+import { recordCost } from "@/lib/cost-tracker";
+import { readerArticleGenSchema, toJsonSchema } from "@/lib/ai-schemas";
 import { UNKNOWN_DIFFICULTY, type ReadingSession } from "@/lib/types";
 
 const DIFFICULTIES = ["A2", "B1", "B2", "C1"] as const;
@@ -89,37 +91,6 @@ interface GeneratedArticle {
   comprehensionQuestions: ComprehensionQuestion[];
 }
 
-const parseGeneratedArticle = (raw: string, fallbackTitle: string): GeneratedArticle => {
-  let text = raw.trim();
-  const fenceMatch = text.match(/```(?:json)?\s*([\s\S]*?)```/);
-  if (fenceMatch) {
-    text = fenceMatch[1].trim();
-  }
-  try {
-    const parsed = JSON.parse(text) as Partial<GeneratedArticle>;
-    if (
-      typeof parsed.title === "string" &&
-      typeof parsed.content === "string" &&
-      Array.isArray(parsed.comprehensionQuestions)
-    ) {
-      return {
-        title: parsed.title,
-        content: parsed.content,
-        comprehensionQuestions: parsed.comprehensionQuestions,
-      };
-    }
-  } catch {
-    // Fall through to plain-text handling below.
-  }
-
-  // Fallback: treat the response as plain text with the title on the first line.
-  const lines = raw.trim().split("\n");
-  const firstLine = lines[0].trim();
-  const title = firstLine.replace(/^#+\s*/, "") || fallbackTitle;
-  const body = lines.slice(1).join("\n").trim() || raw;
-  return { title, content: body, comprehensionQuestions: [] };
-};
-
 const AiGenerateTab = ({
   onSessionCreated,
 }: {
@@ -171,20 +142,38 @@ const AiGenerateTab = ({
       const res = await fetch("/api/review", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ prompt, system }),
+        body: JSON.stringify({
+          prompt,
+          system,
+          schema: toJsonSchema(readerArticleGenSchema),
+          maxOutputTokens: 8192, // full article `content`, not the schema path's default 4096
+        }),
       });
 
       if (!res.ok) {
         throw new Error(`Request failed: ${res.status}`);
       }
 
-      const data: { content?: string; error?: string } = await res.json();
-      if (data.error || !data.content) {
+      const data = (await res.json()) as {
+        object?: GeneratedArticle;
+        usage?: { inputTokens: number; outputTokens: number };
+        model?: string;
+        error?: string;
+      };
+      if (data.error || !data.object) {
         throw new Error(data.error || "No content returned");
       }
 
-      const article = parseGeneratedArticle(data.content, `AI Generated: ${topic}`);
-      setGenerated(article);
+      if (data.usage && data.model) {
+        recordCost({
+          model: data.model,
+          inputTokens: data.usage.inputTokens ?? 0,
+          outputTokens: data.usage.outputTokens ?? 0,
+          module: "reader",
+        });
+      }
+
+      setGenerated(data.object);
     } catch (err) {
       setError(
         err instanceof Error
