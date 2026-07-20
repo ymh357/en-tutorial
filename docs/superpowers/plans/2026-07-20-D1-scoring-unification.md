@@ -248,47 +248,76 @@
   ```
 - [ ] **Step 2:** `tsc` + `eslint lib/db.ts` 清。推理核对：v5 stores 与 v4 逐字一致（仅数据迁移）；只 ×10 三处、跳过 assessments/listening；`clamp100` 确定性幂等（绑版本升级只跑一次）；null review 跳过。Commit `feat(db): v5 in-place migrate legacy 1-10 scores to 0-100`.
 
-### Task 4: `getListeningAggregate` 客观/主观分离
+### Task 4: `getListeningAggregate` 客观 accuracy 分离（评审 I1）
 
 **Files:** Modify `lib/db-helpers.ts`
 
-- [ ] **Step 1:** 在文件顶部（helpers 处）加 `const SUBJECTIVE_LISTENING_MODES = new Set(["prediction"]);`。改 `getListeningAggregate`（`:201-210`）：默认聚合（无 mode filter 或"全部"口径）**只计客观 mode**（排除 `SUBJECTIVE_LISTENING_MODES`），使主观 prediction 连贯性分不再混入客观 accuracy 均值。若函数已按 mode 参数过滤，则仅在"跨 mode 汇总"分支排除主观。保持按具体 mode 查询时的行为不变。**读 `:201-210` 实际实现后按其形态最小改动**，并在 report 说明改了哪条汇总路径。
-- [ ] **Step 2:** `tsc` + `eslint lib/db-helpers.ts` 清。推理核对：客观 dictation/comprehension/shadowing 仍计入；prediction 从跨 mode 均值排除；单 mode 查询不变。Commit `refactor(db-helpers): exclude subjective prediction from objective listening aggregate`.
+- [ ] **Step 1:** 现状（`:201-210`）返回 `{count, avgAccuracy}`，无 mode filter 的默认口径**故意计所有 mode**，唯一 no-mode caller 是 `app/roadmap/page.tsx:205`（用 `listeningAll.count` 计"完成 20 次听力"，`:291`）；`listeningAll.avgAccuracy` 无消费者。因此**不能把 prediction 从 `count` 排除**（会静默回退 roadmap 计数）。仅从 `avgAccuracy` 的分子/分母排除主观：
+  - 顶部加 `const SUBJECTIVE_LISTENING_MODES = new Set(["prediction"]);`。
+  - `count` 仍 = 全部行；`avgAccuracy` 只对**客观 mode**（`!SUBJECTIVE_LISTENING_MODES.has(row.mode)`）的行求均值（无客观行时 avgAccuracy=0）。
+  - 读 `:201-210` 实际形态后按其结构最小改（保持返回 shape `{count, avgAccuracy}` 不变）。
+- [ ] **Step 2:** `tsc` + `eslint lib/db-helpers.ts` 清。推理核对：`count` 不变（prediction 仍计入，roadmap 计数不回退）；`avgAccuracy` 排除主观 prediction；返回 shape 不变。Commit `refactor(db-helpers): objective-only avgAccuracy (count unchanged)`.
 
 ---
 
-## Phase 3 — 消费页接线（5 文件）
+## Phase 3 — 写入侧归一 + 同文件展示（5 文件）
 
-> 通用：`import { scoreLabel, normalizeTo100, rubricSnippet } from "@/lib/rubric"`。主观 AI 分在**写入 DB 前**经 `normalizeTo100`（写入即 0-100）；展示用集中 `scoreLabel`；删本地重复 `scoreLabel`；prompt 用 `rubricSnippet` 注入锚（可选但推荐，至少不破坏现有 schema）。**注意**：AI schema 仍返回 1-10（不改 `lib/ai-schemas.ts` 的 min/max）——归一在消费侧。
+> 通用：`import { scoreLabel, normalizeTo100, rubricSnippet } from "@/lib/rubric"`。**关键（评审 I2/I3/I4）**：主观 AI 分不仅在**写入 DB 前**经 `normalizeTo100`，**其从组件 state 直接展示的地方也要归一**（`evaluation.score`/`contentScore`/`review.score` 等 state 持有原始 1-10，只改写入不改展示会显示 "7/100"）。删本地重复 `scoreLabel`；AI schema 仍返回 1-10（**不改** `lib/ai-schemas.ts` min/max）——归一全在消费侧。展示单位统一 `/100`（或 `%`）。prompt 可加 `rubricSnippet`（不破坏 schema）。
 
-### Task 5: writing 接线
-**Files:** Modify `app/writing/[id]/page.tsx`
-- [ ] 删本地 `scoreLabel`（`:125-130`）→ import 集中版。round2 拿到 `review.score`（1-10）后 `normalizeTo100` 再存入 `WritingSession.review.score`（写入即 0-100）。展示点 `:608,688` 由 /10 改 /100（用 scoreLabel + 显示 `{score}/100` 或 `{score}%`，与全 app 一致）。round2 prompt 可加 `rubricSnippet("overall writing quality")`。`tsc`+`eslint`；Commit `refactor(writing): 0-100 score via central rubric`.
+### Task 5: writing detail 接线（`app/writing/[id]/page.tsx`）
+- [ ] 删本地 `scoreLabel`（`:125-130`）→ 集中版。
+- [ ] **round2**：`review.score`（1-10）在 `setReview`（`:412`）**和**存 DB 前都用 `normalizeTo100` 归一（in-session 展示与存储/恢复一致，评审 M4）。展示 `:686`（`{review.score}`）现即 0-100；`:688` `scoreLabel(review.score) · out of 10` → `· out of 100`。
+- [ ] **round1 contentScore（评审 I3）**：`setRound1Review(data.object)`（`:336`）处把 `contentScore` 归一（`{...data.object, contentScore: normalizeTo100(data.object.contentScore)}`）；这样恢复占位 `:251`（`contentScore: existingSession.review.score`，迁移后已 0-100）与新算一致；展示 `:605/:608`（`{round1Review.contentScore}` `/ 10`）→ `/ 100`。
+- [ ] round2 prompt 可加 `rubricSnippet("overall writing quality")`。`tsc`+`eslint`；Commit `refactor(writing): 0-100 scores (store+state+display) via central rubric`.
 
-### Task 6: translate 接线
-**Files:** Modify `app/translate/page.tsx`
-- [ ] 删本地 `scoreLabel`（`:100-105`）→ 集中版。eval 分数 `normalizeTo100` 后存 `TranslationExercise.score`。展示 `:721` /10→/100。session 均值（组件 state）改按 0-100。eval prompt 可加 `rubricSnippet("translation accuracy and naturalness")`。`tsc`+`eslint`；Commit `refactor(translate): 0-100 score via central rubric`.
+### Task 6: translate 接线（`app/translate/page.tsx`）
+- [ ] 删本地 `scoreLabel`（`:100-105`）→ 集中版。
+- [ ] **写入**：eval 分数存 `TranslationExercise.score`（`:450` 附近）前 `normalizeTo100`。
+- [ ] **state 展示（评审 I4）**：`evaluation.score`（state，原始 1-10）在 `:719`（大数字）与 `:721`（`scoreLabel(evaluation.score) · out of 10`）处归一 → `{normalizeTo100(evaluation.score)}` + `scoreLabel(normalizeTo100(evaluation.score)) · out of 100`。
+- [ ] **session 均值**：累加器（`:439` 用 `parsed.score`）改累加 `normalizeTo100(parsed.score)`；展示 `:546` `{averageScore}/10` → `/100`。
+- [ ] eval prompt 可加 `rubricSnippet("translation accuracy and naturalness")`。`tsc`+`eslint`；Commit `refactor(translate): 0-100 scores (store+state+display)`.
 
-### Task 7: conversation review 接线
-**Files:** Modify `app/conversation/[id]/review/page.tsx`
-- [ ] 4 维分数（fluency/accuracy/vocabulary/complexity）拿到后各 `normalizeTo100` 再存入 `ConversationReview.scores`（写入即 0-100）。渲染（`:294-307`）4 个 tile 由 `X/10` 改 `X/100`（可加 scoreLabel）。review prompt 各维可加 `rubricSnippet(<dim>)`。`tsc`+`eslint`；Commit `refactor(conversation-review): 0-100 dimension scores`.
+### Task 7: conversation review 接线（`app/conversation/[id]/review/page.tsx`）
+- [ ] 4 维分数（fluency/accuracy/vocabulary/complexity）拿到后各 `normalizeTo100` 再存入 `ConversationReview.scores`（写入即 0-100；同一归一对象也用于 in-session 渲染）。渲染（`:294-307`）4 个 tile `X/10` → `X/100`（可加 scoreLabel）。review prompt 各维可加 `rubricSnippet(<dim>)`。`tsc`+`eslint`；Commit `refactor(conversation-review): 0-100 dimension scores`.
 
-### Task 8: listening 接线（diffWords → alignWords；prediction 归一）
+### Task 8: listening 接线（diffWords→alignWords + prediction 归一，评审 I5）
 **Files:** Modify `app/listening/page.tsx`
-- [ ] 删本地 `diffWords`（`:134-151`）→ `import { alignWords, type AlignResult, type WordDiffEntry } from "@/lib/word-align"`；所有 `diffWords(...)` 调用点改 `alignWords(...)`（dictation + shadowing；返回形状 `{accuracy, original:[{word,heardAs,correct}]}` 与原一致，UI 无需改结构）。prediction eval 分数（`:1186`）用 `normalizeTo100(parsed.score)` 取代 `parsed.score * 10`。展示 `:1286` 如涉 /10 改 /100。`tsc`+`eslint`；推理核对 alignWords 与旧 diffWords 返回形状兼容（`WordDiffEntry` 同字段）。Commit `refactor(listening): word-align accuracy + 0-100 prediction score`.
+- [ ] **删除**本地 `normalizeWord`/`tokenize`（`:112-121`）、`interface WordDiffEntry`（`:123-127`）、`interface DiffResult`（`:129-132`）、`diffWords`（`:134-151`）——全部由 `lib/word-align` 取代（否则重复标识符 TS2300 + 未用 lint 错）。
+- [ ] `import { alignWords, type AlignResult } from "@/lib/word-align"`（**不 import `WordDiffEntry`**——UI 从 `result.original` 推断，import 会成未用；评审 I5）。
+- [ ] 两处 `useState<DiffResult | null>`（`:182`、`:752`）改 `useState<AlignResult | null>`；所有 `diffWords(...)` 调用改 `alignWords(...)`（dictation + shadowing）。返回 shape `{accuracy, original:[{word,heardAs,correct}]}` 与旧一致，结果 UI 无需改结构。
+- [ ] **prediction（评审 I2）**：写入（`:1186`）`parsed.score * 10` → `normalizeTo100(parsed.score)`；**展示 state**：`evaluation.score`（原始 1-10）在 `:1286`（`{evaluation.score}/10`）→ `{normalizeTo100(evaluation.score)}/100`，且 badge 门槛 `:1285` `evaluation.score >= 7` → `normalizeTo100(evaluation.score) >= 70`。
+- [ ] `tsc`+`eslint`；推理核对无悬空 diffWords/DiffResult/WordDiffEntry/tokenize/normalizeWord 引用（grep）。Commit `refactor(listening): word-align accuracy + 0-100 prediction (store+state)`.
 
-### Task 9: assessment 接线（×10 → normalizeTo100）
-**Files:** Modify `app/assessment/page.tsx`
-- [ ] writing 分（`:684`）`Math.round(score*10)` → `normalizeTo100(score)`；conversation（`:778-781`）`avg(...)*10` → `normalizeTo100(avg(...))`（avg 仍 1-10 再归一）。这些已是 0-100 语义，仅统一入口（**不重复 ×10**）。**不动** D3 的合成逻辑（那是 D3a）。`tsc`+`eslint`；Commit `refactor(assessment): use central normalizeTo100 for subjective sections`.
+### Task 9: assessment 主观 section 归一入口（`app/assessment/page.tsx`）
+- [ ] writing（`:684`）`Math.round(score*10)` → `normalizeTo100(score)`；conversation（`:778-781`）`avg(...)*10` → `normalizeTo100(avg(...))`（avg 仍 1-10 再归一，**不重复 ×10**）。这些已是 0-100 语义，仅统一入口。**不动** D3 的 composite/合成（D3a）。`tsc`+`eslint`；Commit `refactor(assessment): central normalizeTo100 for subjective sections`.
 
 ---
 
-## Self-Review（已执行）
+## Phase 4 — 纯 reader 页（迁移后字段已 0-100，必须同步；评审 C1/C2/C3）
 
-- **覆盖**：spec §2（0-100 统一、rubric.ts、word-align、listening 客观/主观分离）、§5（v5 就地 ×10 迁移含对话嵌套、跳过已 0-100/已 ×10、展示点 /10→/100）。level-signal 已按评审砍掉不在此。
-- **占位符**：两新文件给完整代码 + 手算核对样例；迁移给完整 upgrade 代码；接线按精确 file:line + 明确变换（归一入口/删重复/展示单位）。`getListeningAggregate` 因需读实际实现，给"读后最小改 + report 说明"的明确约束（非占位——目标明确：跨 mode 汇总排除 prediction）。
-- **类型一致**：`alignWords` 的 `WordDiffEntry` 与旧 `diffWords` 同字段（word/heardAs/correct），UI 结构不变；`normalizeTo100` 唯一 ×10 入口；schema 仍 1-10（不改 ai-schemas）。
-- **迁移安全**：v5 stores 逐字复制 v4；仅数据 ×10；确定性幂等；绑版本一次性；null-review/缺字段跳过；不碰 assessments/listening.accuracy（避免双迁移）。
-- **风险**：alignWords 改变历史 listening accuracy 可比性（新旧算法不同）——单用户可接受，已在 spec §M3 记录；旧存量分迁移后展示单位统一。
-- **验证**：tsc+eslint + NW/迁移手算样例；不起 dev server。
-- **顺序**：Phase 1（模块）→ Phase 2（迁移/聚合）→ Phase 3（接线）；Phase 3 各 task 独立可编译（同 import 集中模块）。
+> 这些文件**只读**迁移后的字段。不改会显示 "70/10"、roadmap 门控恒真、profile 图表越界。
+
+### Task 10: history 展示单位（`app/history/page.tsx`）
+- [ ] `:136` `Fluency ${c.review.scores.fluency}/10` → `/100`；`:160` `Score ${w.review.score}/10` → `/100`；`:183` `Score ${t.score}/10` → `/100`。`tsc`+`eslint`；Commit `fix(history): display migrated scores as /100`.
+
+### Task 11: roadmap 门控 + 单位（`app/roadmap/page.tsx`，评审 C2）
+- [ ] 对话流畅度需求（`:234` 读 `c.review.scores.fluency` 的 avgFluency）：`target` 由 6 → **60**，`unit` `/10` → `/100`（否则 `70>=6` 恒真使 conversationDone 恒满足）。写作需求（`:276` 读 `s.review.score` 的 avgWritingScore）：`target` 6 → **60**，`unit` `/10` → `/100`。**读 `:230-246`、`:270-282` 实际 requirement 对象结构后精确改 target/unit/current 三者一致**（current 已是 0-100 均值，无需再乘）。`tsc`+`eslint`；推理核对门控在 0-100 下语义正确（60/100 ≈ 旧 6/10）。Commit `fix(roadmap): rescale conversation/writing gates to 0-100`.
+
+### Task 12: profile 图表 + 能力阈值（`app/profile/page.tsx`，评审 C3-profile）
+- [ ] `ScoreTrendChart`（`:127-173`）：`yFor` 的 `(score/10)` → `(score/100)`；Y 轴 gridlines `[0,2.5,5,7.5,10]` → `[0,25,50,75,100]`（或等比）。`scorePoints`（`:242-245`）源字段迁移后已 0-100，无需改取值、仅图表刻度改。`abilityStatements`（`:359` avgConversationScore、`:365` avgWritingScore）比较阈值 `>= 6` → `>= 60`。`tsc`+`eslint`；推理核对图表点落在新 0-100 轴内、能力语句阈值等价。Commit `fix(profile): rescale score-trend chart + ability thresholds to 0-100`.
+
+### Task 13: writing list 页展示（`app/writing/page.tsx`，评审 M1）
+- [ ] `:398` `Score: {session.review.score}`（迁移后裸 0-100）→ 统一为 `Score: {session.review.score}/100`（或 `{scoreLabel(session.review.score)}`），与全 app 一致。`tsc`+`eslint`；Commit `fix(writing-list): display score as /100`.
+
+---
+
+## Self-Review（已按评审修订）
+
+- **覆盖**：spec §2/§5 全部；**并据 opus plan-review 补齐迁移波及的全部 reader**——写入侧归一（Phase 3，含 state 展示点 I2/I3/I4）+ 纯 reader 页（Phase 4：history C1 / roadmap 门控 C2 / profile 图表 C3 / writing-list M1）。grep 已确认迁移三字段的 reader 全集：conversation scores → history:136 / roadmap:234 / profile:242-245,359 / page.tsx:385(**relative，安全，不改**)；writing score → history:160 / writing-list:398 / writing-detail:251,686,688 / roadmap:276 / profile:365；translation score → history:183 / translate 展示。
+- **getListeningAggregate（I1）**：`count` 保持全 mode（roadmap 计数不回退），仅 `avgAccuracy` 排除主观 prediction。
+- **state 展示归一（I2/I3/I4）**：listening prediction、writing contentScore、translate evaluation.score 的 state 展示点与门槛均归一，杜绝 "7/100"。
+- **listening 类型清理（I5）**：删 `:112-132`（tokenize/normalizeWord/WordDiffEntry/DiffResult），两处 `useState` 改 `AlignResult`，不 import 未用的 `WordDiffEntry`。
+- **迁移安全**：v5 stores 逐字复制 v4；仅数据 ×10 三字段；确定性幂等一次性；null-review/缺字段跳过；跳过 assessments/listening.accuracy（NW 手算 100/83/83 已验证；migration ×10 clamp 已核）。
+- **band 语义位移（评审 M3，如实记录）**：集中 `scoreLabel` 带（≥90/75/60）与旧本地带（≥9/7/5×10）不完全等价（旧 70=Good 现=Fair）——spec §2 有意统一，历史 label 会位移，可接受。
+- **顺序**：Phase 1 模块 → Phase 2 迁移/聚合 → Phase 3 写入+同文件展示 → Phase 4 纯 reader。Phase 4 依赖 Phase 2 迁移语义（0-100），须在其后。各 task 独立可编译。
+- **验证**：tsc+eslint + NW/迁移/门控手算；不起 dev server。
