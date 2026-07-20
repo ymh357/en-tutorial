@@ -47,7 +47,10 @@ export const dbHelpers = {
     await db.learningProfile.put({
       ...DEFAULT_PROFILE,
       initialCefrLevel: cefrLevel,
-      assessedLevel: cefrLevel,
+      // Self-reported onboarding level is not a psychometric result, so
+      // assessedLevel stays empty until a real assessment (finishAssessment)
+      // fills it in. Readers fall back to studyLevel when this is "".
+      assessedLevel: "",
       studyLevel: cefrLevel,
       knownWordsBase: knownWords,
     });

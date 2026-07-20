@@ -19,6 +19,12 @@ import { Button } from "@/components/ui/button";
 const LEVELS: Array<{ value: CefrLevel; label: string; description: string }> =
   [
     {
+      value: "A1",
+      label: "A1 - Beginner",
+      description:
+        "I know a few basic words and phrases. I am just starting out.",
+    },
+    {
       value: "A2",
       label: "A2 - Elementary",
       description:
@@ -41,6 +47,12 @@ const LEVELS: Array<{ value: CefrLevel; label: string; description: string }> =
       label: "C1 - Advanced",
       description:
         "I can express ideas fluently and spontaneously. I can use language flexibly for social, academic, and professional purposes.",
+    },
+    {
+      value: "C2",
+      label: "C2 - Proficient",
+      description:
+        "I use English with near-native ease across virtually any context.",
     },
   ];
 
