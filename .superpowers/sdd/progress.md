@@ -358,5 +358,17 @@ Benign non-blocking notes (ACCEPTED, not fixing): (a) handleToggleVoiceInput cat
 ##############################################################
 SUB-PROJECT C (voice/whisper): COMPLETE (C1+C2+C3 + broad review + fix wave, all reviewed clean). Code commits 5bf3a69..efe97aa on feat/data-correctness-foundation.
 DONE SO FAR: A (data foundation), B (AI contract+cost), C (voice/whisper). Branch NOT merged/pushed (unified landing after D).
-REMAINING: D — scoring alignment / assessment psychometrics / SRS scheduling. Needs own brainstorm→spec→plans. (Explore survey of D subsystems → scratchpad/d-subsystems.md, in flight.)
+REMAINING: D — scoring alignment / assessment psychometrics / SRS scheduling.
 ##############################################################
+
+## Sub-project D — scoring / assessment / SRS
+Survey: scratchpad/d-subsystems.md (three subsystems, current-state + weaknesses w/ file:line).
+Spec: docs/superpowers/specs/2026-07-20-scoring-assessment-srs-design.md (b8ad2ed, revised 88b6cba). opus design-review → NEEDS REVISION (C1 in-place ×10 migration not read-path; C2 lapse model needs lapsedInterval + LAPSE_FACTOR at graduation; C3 pick reading-localizer + subjective-adjustment, concrete numbers; I1 D1→D3 order + reserve v5/v6/v7; I3 drop scoreKind→mode-derived; I6 CEFR A1/C2; I8 cut level-signal; M4 keep localStorage progress; M5 no profile confidence field). All incorporated in 88b6cba.
+Decomposition (pure-local, no group IRT): D1 scoring unification (v5) → D2 SRS correctness (v6) → D3a assessment algorithm (v7) → D3b assessment UX. Sequenced D1→D2→D3.
+
+### D1 · scoring unification (v5)
+Plan: docs/superpowers/plans/2026-07-20-D1-scoring-unification.md (2775034, revised 567fae6). base = 567fae6.
+opus plan-review → NEEDS REVISION (new modules + NW align + v5 migration correct in isolation, but Phase 3 reader coverage incomplete): C1 add history page; C2 roadmap gating (target 6 on 0-100 → always true) + unit; C3 profile ScoreTrendChart axis + ability thresholds; I1 getListeningAggregate keep count=all, exclude subjective only from avgAccuracy; I2/I3/I4 normalize STATE-display sites not just stores (listening prediction, writing contentScore, translate evaluation.score); I5 delete listening local types :112-132 + useState<AlignResult> + drop unused import. All incorporated in 567fae6 (now 13 tasks / 4 phases).
+Migrated fields (v5 in-place ×10): conversations[].review.scores.{4}, writingSessions[].review.score, translationExercises[].score. SKIP AssessmentResult.* + ListeningExercise.accuracy.
+Reader blast radius (grep-confirmed): history:136/160/183, roadmap:234/276 (gating), profile:242-245/359/365 + ScoreTrendChart, writing-list:398, writing-detail:251/686/688, page.tsx:385 (relative=safe).
+D1 execution: PENDING (Phase 1 rubric.ts+word-align.ts → Phase 2 db v5+db-helpers → Phase 3 writing/translate/conv-review/listening/assessment → Phase 4 history/roadmap/profile/writing-list).
