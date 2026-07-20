@@ -420,5 +420,6 @@ Both headline risks ADJUDICATED SOUND: (1) v5→v6 Dexie migration composition (
 ##############################################################
 SUB-PROJECT D: COMPLETE (D1+D2+D3a+D3b + broad review + fix 91528c5). Code commits a4c8c8a..91528c5.
 ENTIRE BRANCH feat/data-correctness-foundation COMPLETE: A (data foundation) + B (AI contract+cost) + C (voice/whisper) + D (scoring/SRS/assessment). All sub-projects per-task + broad reviewed clean. Branch still un-merged/un-pushed.
-NEXT: finishing-a-development-branch — present merge/PR/keep/discard options to the USER (the unified-landing decision the user reserved; NOT covered by "autonomous, don't ask" which was per-phase execution).
+LANDED: user chose "Push and create PR". Branch pushed to origin; PR opened → https://github.com/ymh357/en-tutorial/pull/1 (base main ← feat/data-correctness-foundation). Branch kept for PR iteration (per finishing skill Option 2). Final full-branch sanity before push: tsc --noEmit 0 + eslint . --quiet 0.
+PROJECT COMPLETE.
 ##############################################################
