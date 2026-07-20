@@ -156,4 +156,65 @@ db.version(4)
     }
   });
 
+db.version(5)
+  .stores({
+    // identical stores to v4 (no schema change; data-only migration)
+    cards: "id, type, lemma, source, sourceId, nextReview, masteryLevel, createdAt",
+    conversations: "id, scenarioType, createdAt",
+    readingSessions: "id, source, createdAt",
+    writingSessions: "id, taskType, createdAt",
+    learningProfile: "id",
+    dailyStats: "id",
+    listeningExercises: "id, mode, createdAt",
+    translationExercises: "id, mode, createdAt",
+    poolTasks: "id, type, assignedDate, completed, createdAt",
+    assessments: "id, date",
+  })
+  .upgrade(async (tx) => {
+    // One-time in-place 1-10 → 0-100 for the three legacy subjective-score
+    // fields. Runs exactly once (tied to the version bump), so it is safe to
+    // multiply unconditionally — there is no read-path ambiguity.
+    const clamp100 = (v: number): number =>
+      Math.round(Math.max(0, Math.min(100, v * 10)));
+
+    // writingSessions[].review.score
+    const ws = tx.table("writingSessions");
+    for (const row of await ws.toArray()) {
+      if (row.review && typeof row.review.score === "number") {
+        await ws.put({
+          ...row,
+          review: { ...row.review, score: clamp100(row.review.score) },
+        });
+      }
+    }
+
+    // translationExercises[].score
+    const te = tx.table("translationExercises");
+    for (const row of await te.toArray()) {
+      if (typeof row.score === "number") {
+        await te.put({ ...row, score: clamp100(row.score) });
+      }
+    }
+
+    // conversations[].review.scores.{fluency,accuracy,vocabulary,complexity}
+    const cv = tx.table("conversations");
+    for (const row of await cv.toArray()) {
+      if (row.review && row.review.scores) {
+        const s = row.review.scores;
+        await cv.put({
+          ...row,
+          review: {
+            ...row.review,
+            scores: {
+              fluency: clamp100(s.fluency),
+              accuracy: clamp100(s.accuracy),
+              vocabulary: clamp100(s.vocabulary),
+              complexity: clamp100(s.complexity),
+            },
+          },
+        });
+      }
+    }
+  });
+
 export { db };
