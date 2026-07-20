@@ -1,6 +1,6 @@
 export type CardType = "vocabulary" | "error" | "expression";
 export type CardSource = "conversation" | "reading" | "writing" | "translate" | "manual";
-export type MasteryLevel = "new" | "learning" | "familiar" | "mastered";
+export type MasteryLevel = "new" | "learning" | "relearning" | "familiar" | "mastered";
 export type ScenarioType = "preset" | "custom" | "free" | "recommended";
 export type WritingTaskType =
   | "email"
@@ -30,6 +30,8 @@ export interface Card {
   lastReviewedAt: Date | null;
   collocations?: string[]; // Common collocations/word partnerships
   wordFamily?: string; // Related word from the same family
+  lapses?: number; // cumulative failure count; algorithm reads `card.lapses ?? 0`
+  lapsedInterval?: number; // interval right before entering relearning, for graduation scaling; cleared once graduated
 }
 
 export interface ConversationMessage {
@@ -139,6 +141,7 @@ export interface LearningProfile {
   assessedLevel: string; // most recent assessed level, for display only
   studyLevel: string; // difficulty used for generation/content, user-adjustable
   knownWordsBase: string[];
+  dailyNewLimit?: number; // new SRS cards per day (default 20 when absent)
 }
 
 export interface DailyStats {
@@ -152,6 +155,7 @@ export interface DailyStats {
   listeningCount: number;
   translationCount: number;
   timeSpent: number;
+  newCardsIntroduced: number;
 }
 
 export interface ListeningExercise {
