@@ -46,6 +46,13 @@ import { dbHelpers } from "@/lib/db-helpers";
 import { recordCost } from "@/lib/cost-tracker";
 import { formatDate, parseDate } from "@/lib/date";
 import { getKnownWordsForLevel, type CefrLevel } from "@/lib/frequency-list";
+import {
+  assessmentReadingGenSchema,
+  assessmentClozeGenSchema,
+  assessmentWritingScoreSchema,
+  assessmentConversationScoreSchema,
+  toJsonSchema,
+} from "@/lib/ai-schemas";
 import type { AssessmentResult } from "@/lib/types";
 
 type Phase =
@@ -107,15 +114,10 @@ const CONVERSATION_TOPICS = [
 
 const TOTAL_CONVERSATION_TURNS = 5;
 
-const stripFences = (raw: string): string => {
-  let text = raw.trim();
-  const fenceMatch = text.match(/```(?:json)?\s*([\s\S]*?)```/);
-  if (fenceMatch) {
-    text = fenceMatch[1].trim();
-  }
-  return text;
-};
-
+// Free-text path — used only by sendConversationTurn's mid-conversation reply
+// generation, which is a natural-language chat turn, not a JSON shape.
+// Reading/cloze/writing-score/conversation-score all use the structured
+// object path inlined per call site below.
 const callReview = async (
   prompt: string,
   system: string
@@ -132,13 +134,14 @@ const callReview = async (
     content?: string;
     error?: string;
     usage?: { promptTokens: number; completionTokens: number };
+    model?: string;
   };
   if (data.error || !data.content) {
     throw new Error(data.error || "No content returned");
   }
-  if (data.usage) {
+  if (data.usage && data.model) {
     recordCost({
-      model: "claude-sonnet-5",
+      model: data.model,
       inputTokens: data.usage.promptTokens ?? 0,
       outputTokens: data.usage.completionTokens ?? 0,
       module: "assessment",
@@ -147,76 +150,10 @@ const callReview = async (
   return data.content;
 };
 
-const parseReadingData = (raw: string): ReadingData | null => {
-  try {
-    const parsed = JSON.parse(stripFences(raw)) as ReadingData;
-    if (
-      !parsed ||
-      typeof parsed.passage !== "string" ||
-      !Array.isArray(parsed.questions) ||
-      parsed.questions.length === 0 ||
-      parsed.questions.some(
-        (q) =>
-          typeof q.question !== "string" ||
-          !Array.isArray(q.options) ||
-          typeof q.correctIndex !== "number"
-      )
-    ) {
-      return null;
-    }
-    return parsed;
-  } catch {
-    return null;
-  }
-};
-
-const parseClozeData = (raw: string): ClozeData | null => {
-  try {
-    const parsed = JSON.parse(stripFences(raw)) as ClozeData;
-    if (
-      !parsed ||
-      typeof parsed.passage !== "string" ||
-      !Array.isArray(parsed.blanks) ||
-      parsed.blanks.length === 0 ||
-      parsed.blanks.some(
-        (b) =>
-          typeof b.index !== "number" || typeof b.answer !== "string"
-      )
-    ) {
-      return null;
-    }
-    return {
-      ...parsed,
-      blanks: parsed.blanks.map((b) => ({
-        ...b,
-        acceptAlso: Array.isArray(b.acceptAlso) ? b.acceptAlso : [],
-      })),
-    };
-  } catch {
-    return null;
-  }
-};
-
 interface WritingScoreData {
   score: number;
   feedback: string;
 }
-
-const parseWritingScore = (raw: string): WritingScoreData | null => {
-  try {
-    const parsed = JSON.parse(stripFences(raw)) as WritingScoreData;
-    if (
-      !parsed ||
-      typeof parsed.score !== "number" ||
-      typeof parsed.feedback !== "string"
-    ) {
-      return null;
-    }
-    return parsed;
-  } catch {
-    return null;
-  }
-};
 
 interface ConversationScoreData {
   fluency: number;
@@ -224,24 +161,6 @@ interface ConversationScoreData {
   vocabulary: number;
   feedback: string;
 }
-
-const parseConversationScore = (raw: string): ConversationScoreData | null => {
-  try {
-    const parsed = JSON.parse(stripFences(raw)) as ConversationScoreData;
-    if (
-      !parsed ||
-      typeof parsed.fluency !== "number" ||
-      typeof parsed.accuracy !== "number" ||
-      typeof parsed.vocabulary !== "number" ||
-      typeof parsed.feedback !== "string"
-    ) {
-      return null;
-    }
-    return parsed;
-  } catch {
-    return null;
-  }
-};
 
 const normalizeAnswer = (value: string): string =>
   value.trim().toLowerCase().replace(/[.,!?;:'"]/g, "");
@@ -595,12 +514,36 @@ Return ONLY valid JSON (no markdown fences, no explanation) in this exact format
   ]
 }`;
       const prompt = `Generate a reading comprehension test at ${cefrLevel} level.`;
-      const content = await callReview(prompt, system);
-      const parsed = parseReadingData(content);
-      if (!parsed) {
-        throw new Error("Could not parse the reading passage. Please try again.");
+      const res = await fetch("/api/review", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          prompt,
+          system,
+          schema: toJsonSchema(assessmentReadingGenSchema),
+        }),
+      });
+      if (!res.ok) {
+        throw new Error(`Request failed: ${res.status}`);
       }
-      setReadingData(parsed);
+      const data = (await res.json()) as {
+        object?: ReadingData;
+        error?: string;
+        usage?: { inputTokens: number; outputTokens: number };
+        model?: string;
+      };
+      if (data.error || !data.object) {
+        throw new Error(data.error || "Could not parse the reading passage. Please try again.");
+      }
+      if (data.usage && data.model) {
+        recordCost({
+          model: data.model,
+          inputTokens: data.usage.inputTokens ?? 0,
+          outputTokens: data.usage.outputTokens ?? 0,
+          module: "assessment",
+        });
+      }
+      setReadingData(data.object);
       setReadingAnswers({});
       setPhase("reading");
     } catch (err) {
@@ -635,12 +578,48 @@ Return ONLY valid JSON (no markdown fences, no explanation) in this exact format
   ]
 }`;
       const prompt = `Generate a cloze test at ${cefrLevel} level with exactly 8 blanks.`;
-      const content = await callReview(prompt, system);
-      const parsed = parseClozeData(content);
-      if (!parsed) {
-        throw new Error("Could not parse the cloze passage. Please try again.");
+      const res = await fetch("/api/review", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          prompt,
+          system,
+          schema: toJsonSchema(assessmentClozeGenSchema),
+        }),
+      });
+      if (!res.ok) {
+        throw new Error(`Request failed: ${res.status}`);
       }
-      setClozeData(parsed);
+      const data = (await res.json()) as {
+        object?: {
+          passage: string;
+          blanks: Array<{ index: number; answer: string; acceptAlso?: string[] }>;
+        };
+        error?: string;
+        usage?: { inputTokens: number; outputTokens: number };
+        model?: string;
+      };
+      if (data.error || !data.object) {
+        throw new Error(data.error || "Could not parse the cloze passage. Please try again.");
+      }
+      if (data.usage && data.model) {
+        recordCost({
+          model: data.model,
+          inputTokens: data.usage.inputTokens ?? 0,
+          outputTokens: data.usage.outputTokens ?? 0,
+          module: "assessment",
+        });
+      }
+      // acceptAlso is optional in the schema — normalize to [] so ClozeBlank's
+      // required array field always has a value (mirrors the old
+      // parseClozeData behavior). [B2-4]
+      setClozeData({
+        ...data.object,
+        blanks: data.object.blanks.map((b) => ({
+          ...b,
+          acceptAlso: b.acceptAlso ?? [],
+        })),
+      });
       setClozeAnswers({});
       setPhase("cloze");
     } catch (err) {
@@ -673,13 +652,37 @@ Return ONLY valid JSON (no markdown fences, no explanation) in this exact format
   "feedback": "<brief feedback>"
 }`;
       const prompt = `Task: ${writingPrompt}\n\nStudent's writing:\n${writingContent}\n\nScore this writing.`;
-      const content = await callReview(prompt, system);
-      const parsed = parseWritingScore(content);
-      if (!parsed) {
-        throw new Error("Could not parse the writing score. Please try again.");
+      const res = await fetch("/api/review", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          prompt,
+          system,
+          schema: toJsonSchema(assessmentWritingScoreSchema),
+        }),
+      });
+      if (!res.ok) {
+        throw new Error(`Request failed: ${res.status}`);
       }
-      setWritingScore(Math.round(parsed.score * 10));
-      setWritingFeedback(parsed.feedback);
+      const data = (await res.json()) as {
+        object?: WritingScoreData;
+        error?: string;
+        usage?: { inputTokens: number; outputTokens: number };
+        model?: string;
+      };
+      if (data.error || !data.object) {
+        throw new Error(data.error || "Could not parse the writing score. Please try again.");
+      }
+      if (data.usage && data.model) {
+        recordCost({
+          model: data.model,
+          inputTokens: data.usage.inputTokens ?? 0,
+          outputTokens: data.usage.outputTokens ?? 0,
+          module: "assessment",
+        });
+      }
+      setWritingScore(Math.round(data.object.score * 10));
+      setWritingFeedback(data.object.feedback);
       setPhase("conversation");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to score writing");
@@ -743,15 +746,40 @@ Return ONLY valid JSON (no markdown fences, no explanation) in this exact format
   "feedback": "<brief feedback>"
 }`;
       const prompt = `Conversation transcript:\n${transcript}\n\nEvaluate only the Student's turns.`;
-      const content = await callReview(prompt, system);
-      const parsed = parseConversationScore(content);
-      if (!parsed) {
-        throw new Error("Could not parse the conversation score. Please try again.");
+      const res = await fetch("/api/review", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          prompt,
+          system,
+          schema: toJsonSchema(assessmentConversationScoreSchema),
+        }),
+      });
+      if (!res.ok) {
+        throw new Error(`Request failed: ${res.status}`);
       }
-      const avg = (parsed.fluency + parsed.accuracy + parsed.vocabulary) / 3;
+      const data = (await res.json()) as {
+        object?: ConversationScoreData;
+        error?: string;
+        usage?: { inputTokens: number; outputTokens: number };
+        model?: string;
+      };
+      if (data.error || !data.object) {
+        throw new Error(data.error || "Could not parse the conversation score. Please try again.");
+      }
+      if (data.usage && data.model) {
+        recordCost({
+          model: data.model,
+          inputTokens: data.usage.inputTokens ?? 0,
+          outputTokens: data.usage.outputTokens ?? 0,
+          module: "assessment",
+        });
+      }
+      const avg =
+        (data.object.fluency + data.object.accuracy + data.object.vocabulary) / 3;
       const score = Math.round(avg * 10);
       setConversationScore(score);
-      setConversationFeedback(parsed.feedback);
+      setConversationFeedback(data.object.feedback);
       await finishAssessment(score);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to score conversation");
