@@ -64,7 +64,7 @@ export const POST = async (req: Request): Promise<Response> => {
         system,
         prompt,
         temperature: temperature ?? 0,
-        maxOutputTokens: maxOutputTokens ?? 2048,
+        maxOutputTokens: maxOutputTokens ?? 4096,
       });
 
       return Response.json({
@@ -77,11 +77,17 @@ export const POST = async (req: Request): Promise<Response> => {
       });
     }
 
+    // No maxOutputTokens cap here: this is the legacy path every current
+    // consumer still uses (none pass a schema yet), and some of them produce
+    // large output (full round2 polishedVersion rewrites, full reader
+    // articles, long conversation reviews). The old route never sent
+    // max_tokens either, so leaving it unset preserves that behavior and lets
+    // the provider default (higher than any cap we'd pick) apply.
     const { text, usage, response } = await generateText({
       model: qualityModel,
       system,
       prompt,
-      maxOutputTokens: maxOutputTokens ?? 2048,
+      maxOutputTokens,
     });
 
     return Response.json({
