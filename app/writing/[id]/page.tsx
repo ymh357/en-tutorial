@@ -302,6 +302,7 @@ const WritingEditorPage = () => {
           prompt,
           system: WRITING_REVIEW_ROUND1_SYSTEM,
           schema: toJsonSchema(writingRound1Schema),
+          disableThinking: true, // structured scoring — no reasoning pass needed
         }),
       });
 
@@ -356,6 +357,7 @@ const WritingEditorPage = () => {
           system: WRITING_REVIEW_ROUND2_SYSTEM + REVIEW_JSON_SCHEMA,
           schema: toJsonSchema(writingReviewSchema),
           maxOutputTokens: 8192,
+          disableThinking: true, // structured scoring — no reasoning pass needed
         }),
       });
 

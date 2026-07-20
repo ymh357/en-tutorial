@@ -130,6 +130,7 @@ const ReviewPage = () => {
           system: REVIEW_SYSTEM_PROMPT,
           schema: toJsonSchema(conversationReviewSchema),
           maxOutputTokens: 8192,
+          disableThinking: true, // scoring/extraction — no reasoning pass needed
         }),
       });
 

@@ -402,6 +402,7 @@ const TranslatePage = () => {
           prompt,
           system: EVAL_SYSTEM_PROMPT,
           schema: toJsonSchema(translateEvalSchema),
+          disableThinking: true, // translation scoring — no reasoning pass needed
         }),
       });
 

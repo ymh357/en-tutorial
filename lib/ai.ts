@@ -22,15 +22,18 @@ import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
 // `false`, generateObject falls back to injecting the schema into the
 // prompt and validates/repairs the result SDK-side — strictly better than
 // the old manual fence-strip, and works regardless of native support.
-// Flip to `true` only after a production smoke test confirms native
-// json_schema support there too (optionally gate behind an env var, e.g.
-// `OG_NATIVE_JSON_SCHEMA === "1"`, if a toggle without a code change is
-// wanted).
+// Now gated behind OG_NATIVE_JSON_SCHEMA: set it to "1" once the target
+// router is confirmed to honor native json_schema mode (staging IS confirmed,
+// per the smoke test above; production has not been). With native mode,
+// generateObject sends response_format instead of injecting the schema into
+// the prompt + repairing SDK-side -- fewer input tokens and no repair
+// round-trip. Defaults to off so an unverified production endpoint degrades
+// gracefully rather than hard-erroring.
 const og = createOpenAICompatible({
   name: "0g",
   baseURL: process.env.OG_API_BASE_URL ?? "https://router-api.0g.ai/v1",
   apiKey: process.env.OG_API_KEY ?? "",
-  supportsStructuredOutputs: false,
+  supportsStructuredOutputs: process.env.OG_NATIVE_JSON_SCHEMA === "1",
 });
 
 export const defaultModel = og(
