@@ -18,6 +18,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { db } from "@/lib/db";
 import { dbHelpers } from "@/lib/db-helpers";
 import { recordCost } from "@/lib/cost-tracker";
+import { conversationReviewSchema, toJsonSchema } from "@/lib/ai-schemas";
 import type { Card as SrsCard, ConversationReview } from "@/lib/types";
 
 const SCORE_LABELS: Array<{ key: keyof ConversationReview["scores"]; label: string }> = [
@@ -76,31 +77,6 @@ const buildReviewPrompt = (
   return `Here is the full transcript of an English conversation practice session:\n\n${transcript}\n\nAnalyze this conversation and return the JSON review described in the system prompt.`;
 };
 
-const parseReviewResponse = (raw: string): ConversationReview | null => {
-  let text = raw.trim();
-  const fenceMatch = text.match(/```(?:json)?\s*([\s\S]*?)```/);
-  if (fenceMatch) {
-    text = fenceMatch[1].trim();
-  }
-  try {
-    const parsed = JSON.parse(text) as ConversationReview;
-    if (
-      !parsed ||
-      typeof parsed !== "object" ||
-      !parsed.scores ||
-      !Array.isArray(parsed.errors) ||
-      !Array.isArray(parsed.improvements) ||
-      !Array.isArray(parsed.highlights) ||
-      !Array.isArray(parsed.newVocabulary)
-    ) {
-      return null;
-    }
-    return parsed;
-  } catch {
-    return null;
-  }
-};
-
 const extractKeyWord = (text: string): string =>
   text
     .toLowerCase()
@@ -148,7 +124,12 @@ const ReviewPage = () => {
       const res = await fetch("/api/review", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ prompt, system: REVIEW_SYSTEM_PROMPT }),
+        body: JSON.stringify({
+          prompt,
+          system: REVIEW_SYSTEM_PROMPT,
+          schema: toJsonSchema(conversationReviewSchema),
+          maxOutputTokens: 8192,
+        }),
       });
 
       if (!res.ok) {
@@ -156,28 +137,24 @@ const ReviewPage = () => {
       }
 
       const data = (await res.json()) as {
-        content?: string;
-        usage?: { promptTokens: number; completionTokens: number };
+        object?: ConversationReview;
+        usage?: { inputTokens: number; outputTokens: number };
+        model?: string;
       };
-      if (!data.content) {
+      if (!data.object) {
         throw new Error("Empty response from review service");
       }
 
-      if (data.usage) {
+      if (data.usage && data.model) {
         recordCost({
-          model: "claude-sonnet-5",
-          inputTokens: data.usage.promptTokens ?? 0,
-          outputTokens: data.usage.completionTokens ?? 0,
+          model: data.model,
+          inputTokens: data.usage.inputTokens ?? 0,
+          outputTokens: data.usage.outputTokens ?? 0,
           module: "conversation",
         });
       }
 
-      const review = parseReviewResponse(data.content);
-      if (!review) {
-        throw new Error("Could not parse the AI's review response");
-      }
-
-      await db.conversations.update(conversationId, { review });
+      await db.conversations.update(conversationId, { review: data.object });
     } catch (err) {
       setGenerationError(
         err instanceof Error ? err.message : "Failed to generate review"
