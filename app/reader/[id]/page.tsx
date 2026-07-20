@@ -13,6 +13,7 @@ import { db } from "@/lib/db";
 import { dbHelpers } from "@/lib/db-helpers";
 import { ensureLemmatizer, lemmatize } from "@/lib/lemma";
 import { recordCost } from "@/lib/cost-tracker";
+import { readerComprehensionEvalSchema, toJsonSchema } from "@/lib/ai-schemas";
 import { UNKNOWN_DIFFICULTY, type Card as SrsCard, type ReadingLookup } from "@/lib/types";
 import { speak } from "@/lib/tts";
 
@@ -47,28 +48,6 @@ const loadComprehensionQuestions = (id: string): ComprehensionQuestion[] => {
     );
   } catch {
     return [];
-  }
-};
-
-const parseEvaluationResponse = (raw: string): QuestionEvaluation[] | null => {
-  let text = raw.trim();
-  const fenceMatch = text.match(/```(?:json)?\s*([\s\S]*?)```/);
-  if (fenceMatch) {
-    text = fenceMatch[1].trim();
-  }
-  try {
-    const parsed = JSON.parse(text) as { evaluations?: unknown };
-    if (!parsed || !Array.isArray(parsed.evaluations)) return null;
-    const evaluations = parsed.evaluations.filter(
-      (e): e is QuestionEvaluation =>
-        e &&
-        typeof e === "object" &&
-        typeof (e as QuestionEvaluation).correct === "boolean" &&
-        typeof (e as QuestionEvaluation).feedback === "string"
-    );
-    return evaluations.length > 0 ? evaluations : null;
-  } catch {
-    return null;
   }
 };
 
@@ -268,34 +247,36 @@ const ReaderSessionPage = ({
             `${i + 1}. Q: "${q.question}" A: "${comprehensionAnswers[i] ?? ""}"`
         )
         .join("\n");
-      const prompt = `Article: "${session.content}"\n\nQuestions and student answers:\n${questionsAndAnswers}\n\nEvaluate each answer. Return JSON:\n{\n  "evaluations": [\n    { "correct": true/false, "feedback": "brief feedback" }\n  ]\n}`;
+      const prompt = `Article: "${session.content}"\n\nQuestions and student answers:\n${questionsAndAnswers}\n\nEvaluate each answer.`;
 
       const res = await fetch("/api/review", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ prompt }),
+        body: JSON.stringify({
+          prompt,
+          schema: toJsonSchema(readerComprehensionEvalSchema),
+        }),
       });
 
       if (!res.ok) throw new Error(`Request failed: ${res.status}`);
-      const data: { content?: string; error?: string; usage?: ReviewUsage } =
-        await res.json();
-      if (data.error || !data.content) throw new Error(data.error || "No evaluation returned");
+      const data: {
+        object?: { evaluations: QuestionEvaluation[] };
+        error?: string;
+        usage?: { inputTokens: number; outputTokens: number };
+        model?: string;
+      } = await res.json();
+      if (data.error || !data.object) throw new Error(data.error || "No evaluation returned");
 
-      if (data.usage) {
+      if (data.usage && data.model) {
         recordCost({
-          model: "claude-sonnet-5",
-          inputTokens: data.usage.promptTokens ?? 0,
-          outputTokens: data.usage.completionTokens ?? 0,
+          model: data.model,
+          inputTokens: data.usage.inputTokens ?? 0,
+          outputTokens: data.usage.outputTokens ?? 0,
           module: "reader",
         });
       }
 
-      const evaluations = parseEvaluationResponse(data.content);
-      if (!evaluations) {
-        throw new Error("Could not parse the AI's evaluation response");
-      }
-
-      setComprehensionEvaluations(evaluations);
+      setComprehensionEvaluations(data.object.evaluations);
     } catch (err) {
       setComprehensionError(
         err instanceof Error ? err.message : "Failed to check answers"
@@ -482,13 +463,13 @@ const ReaderSessionPage = ({
       });
 
       if (!res.ok) throw new Error(`Request failed: ${res.status}`);
-      const data: { content?: string; error?: string; usage?: ReviewUsage } =
+      const data: { content?: string; error?: string; usage?: ReviewUsage; model?: string } =
         await res.json();
       if (data.error || !data.content) throw new Error(data.error || "No analysis returned");
 
-      if (data.usage) {
+      if (data.usage && data.model) {
         recordCost({
-          model: "claude-sonnet-5",
+          model: data.model,
           inputTokens: data.usage.promptTokens ?? 0,
           outputTokens: data.usage.completionTokens ?? 0,
           module: "reader",
