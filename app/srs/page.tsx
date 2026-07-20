@@ -5,7 +5,7 @@ import Link from "next/link";
 import { Flame, Library, Volume2 } from "lucide-react";
 import { db } from "@/lib/db";
 import { dbHelpers } from "@/lib/db-helpers";
-import { useDueCards } from "@/hooks/use-db";
+import { useProfile, useSessionQueue } from "@/hooks/use-db";
 import {
   computeNextReview,
   getNextIntervals,
@@ -36,6 +36,7 @@ const sourceLabels: Record<CardSource, string> = {
 const masteryLabels: Record<MasteryLevel, string> = {
   new: "New",
   learning: "Learning",
+  relearning: "Relearning",
   familiar: "Familiar",
   mastered: "Mastered",
 };
@@ -70,20 +71,25 @@ const formatTimeSpent = (ms: number): string => {
 };
 
 const SrsPage = () => {
-  const dueCards = useDueCards(50);
-  // Snapshot the due set once at session start so the review loop iterates a
-  // stable list — `dueCards` is a live query that shrinks as ratings move
-  // cards out of the due set, which previously caused skipped cards and
-  // premature "session complete" as the array shifted under the index.
-  // Adjusted directly during render (React's documented pattern for
-  // deriving state from props, rather than a setState-in-effect) since
-  // dueCards resolving already re-renders this component.
-  const [sessionCards, setSessionCards] = useState<CardType[] | null>(null);
-  if (sessionCards === null && dueCards.length > 0) {
-    setSessionCards(dueCards);
+  const profile = useProfile();
+  const dailyNewLimit = profile?.dailyNewLimit ?? 20;
+  const sessionQueue = useSessionQueue(dailyNewLimit);
+
+  // Snapshot the session queue once at session start, then mutate it locally
+  // as ratings come in — `sessionQueue` is a live query that would otherwise
+  // shift under an index as cards move in/out of the due set. Adjusted
+  // directly during render (React's documented pattern for deriving state
+  // from props, rather than a setState-in-effect) since sessionQueue
+  // resolving already re-renders this component.
+  const [queue, setQueue] = useState<CardType[] | null>(null);
+  const [reappear, setReappear] = useState<Record<string, number>>({});
+  const [graduated, setGraduated] = useState<Set<string>>(new Set());
+  const [totalDistinct, setTotalDistinct] = useState(0);
+  if (queue === null && sessionQueue.length > 0) {
+    setQueue(sessionQueue);
+    setTotalDistinct(sessionQueue.length);
   }
 
-  const [index, setIndex] = useState(0);
   const [showAnswer, setShowAnswer] = useState(false);
   const [reviewedCount, setReviewedCount] = useState(0);
   const [sessionDone, setSessionDone] = useState(false);
@@ -93,8 +99,7 @@ const SrsPage = () => {
     null
   );
 
-  const totalCards = sessionCards?.length ?? 0;
-  const currentCard: CardType | undefined = sessionCards?.[index];
+  const currentCard: CardType | undefined = queue?.[0];
 
   const nextIntervals = useMemo(() => {
     if (!currentCard) return null;
@@ -110,31 +115,45 @@ const SrsPage = () => {
   };
 
   const handleRate = async (rating: Rating): Promise<void> => {
-    if (!currentCard) return;
+    if (!currentCard || !queue) return;
+    const seen = reappear[currentCard.id] ?? 0; // 0 only on this card's first appearance
+    const wasNew = currentCard.masteryLevel === "new";
     const result = computeNextReview(currentCard, rating);
-    await db.cards.update(currentCard.id, {
-      ...result,
-      lastReviewedAt: new Date(),
-    });
+    await db.cards.update(currentCard.id, { ...result, lastReviewedAt: new Date() });
     await dbHelpers.incrementTodayStat("srsReviewed");
-
-    setReviewedCount((count) => count + 1);
+    // Count a new card ONCE, on first handling only. A new card that takes a
+    // learning step (Hard) stays masteryLevel "new" and re-queues, so gating on
+    // wasNew alone would double/triple-count it. seen===0 = first appearance.
+    if (wasNew && seen === 0) await dbHelpers.incrementTodayStat("newCardsIntroduced");
+    setReviewedCount((c) => c + 1);
     setShowAnswer(false);
 
-    if (index + 1 >= totalCards) {
+    // Short interval = a learning/relearning step → re-queue in-session, bounded.
+    const isShortStep = result.interval < 1;
+    const willReappear = isShortStep && seen < 2;
+
+    const rest = queue.slice(1);
+    const nextQueue = willReappear
+      ? [...rest, { ...currentCard, ...result }]
+      : rest;
+    setQueue(nextQueue);
+    if (willReappear) {
+      setReappear((r) => ({ ...r, [currentCard.id]: seen + 1 }));
+    } else {
+      setGraduated((g) => new Set(g).add(currentCard.id));
+    }
+    if (nextQueue.length === 0) {
       setFinishedAt(getNow());
       setSessionDone(true);
       const streakResult = await dbHelpers.updateStreak();
       setStreak(streakResult);
-    } else {
-      setIndex((i) => i + 1);
     }
   };
 
-  // Empty state: nothing due at all. Checked against the live `dueCards`
-  // (not the frozen `sessionCards` snapshot) so this reflects the current
-  // due set, not just "haven't snapshotted yet".
-  if (dueCards.length === 0 && sessionCards === null && !sessionDone) {
+  // Empty state: nothing due at all. Checked against the live `sessionQueue`
+  // (not the local `queue` snapshot) so this reflects the current due set,
+  // not just "haven't snapshotted yet".
+  if (sessionQueue.length === 0 && queue === null && !sessionDone) {
     return (
       <div className="mx-auto w-full space-y-6 md:max-w-2xl">
         <div className="flex items-center justify-between">
@@ -220,8 +239,8 @@ const SrsPage = () => {
 
   if (!currentCard || !nextIntervals) return null;
 
-  const remaining = totalCards - index;
-  const progressValue = (index / totalCards) * 100;
+  const remaining = totalDistinct - graduated.size;
+  const progressValue = totalDistinct === 0 ? 0 : (graduated.size / totalDistinct) * 100;
 
   return (
     <div className="mx-auto w-full space-y-6 md:max-w-2xl">
