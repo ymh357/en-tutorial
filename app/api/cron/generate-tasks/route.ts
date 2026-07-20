@@ -50,6 +50,25 @@ interface GeneratedTask {
   content: Record<string, unknown>;
 }
 
+// Creative/open-ended types need variety across runs — generateObject's
+// default temperature favors exact schema compliance over diversity, which
+// would make every cron-generated writing prompt/article/scenario near-
+// identical. Mirrors CREATIVE_TASK_TYPES in lib/task-pool-generate.ts (the
+// client pool-gen path).
+const CREATIVE_TASK_TYPES = new Set<PoolTaskType>([
+  "writing-prompt",
+  "reading-article",
+  "translation-situational",
+]);
+const CREATIVE_TEMPERATURE = 0.7;
+
+// reading-article targets a 300-500 word article; generateObject's default
+// max output can truncate that, which throws and gets silently skipped by
+// the catch below. Mirrors MAX_OUTPUT_TOKENS in lib/task-pool-generate.ts.
+const MAX_OUTPUT_TOKENS: Partial<Record<PoolTaskType, number>> = {
+  "reading-article": 8192,
+};
+
 export const GET = async (req: Request): Promise<Response> => {
   const cronSecret = process.env.CRON_SECRET;
   if (!cronSecret) {
@@ -90,6 +109,12 @@ export const GET = async (req: Request): Promise<Response> => {
         schema: poolTaskSchemas[type],
         system,
         prompt,
+        ...(CREATIVE_TASK_TYPES.has(type)
+          ? { temperature: CREATIVE_TEMPERATURE }
+          : {}),
+        ...(MAX_OUTPUT_TOKENS[type]
+          ? { maxOutputTokens: MAX_OUTPUT_TOKENS[type] }
+          : {}),
       });
 
       tasks.push({
@@ -98,8 +123,8 @@ export const GET = async (req: Request): Promise<Response> => {
         difficulty: level,
         content: object as Record<string, unknown>,
       });
-    } catch {
-      // Skip failed generations, continue with next type
+    } catch (err) {
+      console.warn(`[cron] failed to generate ${type}`, err);
       continue;
     }
   }

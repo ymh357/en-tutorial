@@ -14,6 +14,7 @@ import { recordCost } from "@/lib/cost-tracker";
 import { useProfile } from "@/hooks/use-db";
 import { getScenarioById } from "@/lib/scenarios";
 import type { Conversation, ConversationMessage, ScenarioType } from "@/lib/types";
+import type { ChatMessageMetadata } from "@/app/api/chat/route";
 import { speak, stopSpeaking } from "@/lib/tts";
 
 const MIN_EXCHANGES_TO_END = 3;
@@ -62,8 +63,13 @@ const getMessageText = (parts: Array<{ type: string; text?: string }>): string =
     .join("");
 
 // Convert stored ConversationMessage records (used for db persistence) into
-// UIMessage objects that useChat can be seeded with on restore.
-const toUIMessages = (messages: ConversationMessage[]): UIMessage[] =>
+// UIMessage objects that useChat can be seeded with on restore. Restored
+// messages have no real usage metadata (it isn't persisted), so metadata is
+// left undefined — handleEndAndReview treats that the same as a turn whose
+// metadata never arrived.
+const toUIMessages = (
+  messages: ConversationMessage[]
+): UIMessage<ChatMessageMetadata>[] =>
   messages.map((m, idx) => ({
     id: `restored-${idx}`,
     role: m.role,
@@ -163,7 +169,9 @@ const ConversationPage = () => {
     [system]
   );
 
-  const { messages, sendMessage, status, stop, error, setMessages } = useChat({
+  const { messages, sendMessage, status, stop, error, setMessages } = useChat<
+    UIMessage<ChatMessageMetadata>
+  >({
     id: conversationId,
     transport,
   });
@@ -517,19 +525,30 @@ const ConversationPage = () => {
     await dbHelpers.incrementTodayStat("conversationCount");
     await dbHelpers.updateStreak();
 
-    // Streaming responses don't expose token usage on the client, so estimate
-    // from character count (roughly 1 token per 4 chars of English).
-    const totalChars = conversationMessages.reduce(
-      (sum, m) => sum + m.content.length,
-      0
-    );
-    const estimatedTokens = Math.ceil(totalChars / 4);
-    recordCost({
-      model: "deepseek-v4-flash",
-      inputTokens: Math.ceil(estimatedTokens * 0.6),
-      outputTokens: Math.ceil(estimatedTokens * 0.4),
-      module: "conversation",
-    });
+    // Sum the real per-turn usage the server attached to each assistant
+    // message via messageMetadata (see ChatMessageMetadata in
+    // app/api/chat/route.ts), instead of estimating tokens from character
+    // count. A turn whose metadata never arrived (stream interrupted, or an
+    // older message restored from IndexedDB before this field existed)
+    // contributes 0 rather than falling back to an estimate.
+    let inputTokens = 0;
+    let outputTokens = 0;
+    let lastModel: string | undefined;
+    for (const m of messages) {
+      if (m.role !== "assistant" || !m.metadata) continue;
+      inputTokens += m.metadata.usage.inputTokens;
+      outputTokens += m.metadata.usage.outputTokens;
+      lastModel = m.metadata.model;
+    }
+
+    if (lastModel && (inputTokens > 0 || outputTokens > 0)) {
+      recordCost({
+        model: lastModel,
+        inputTokens,
+        outputTokens,
+        module: "conversation",
+      });
+    }
 
     router.push(`/conversation/${conversationId}/review`);
   };

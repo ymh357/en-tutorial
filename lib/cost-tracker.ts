@@ -19,7 +19,7 @@ export interface CostRecord {
   inputTokens: number;
   outputTokens: number;
   costA0GI: number;
-  module: string; // which feature used it: conversation, reader, writing, listening, translate, assessment, tts
+  module: string; // which feature used it: conversation, reader, writing, listening, translate, assessment, tts, pool
 }
 
 export interface CostSummary {
