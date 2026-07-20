@@ -155,11 +155,12 @@
     return { overallScore: score, cefr, band: `${cefr} (${sub})`, lowConfidence };
   };
   ```
-- [ ] **Step 2:** `tsc` + `eslint lib/assessment-scoring.ts` 清。**手算样例（report）**：
-  - current B1 → spreadLevels ["A2","B1","B2"]；subtests A2 3/3, B1 2/3, B2 0/3 → locate B1（B1 passed，B2 not），atCeiling false（B2 fail），atFloor false（A2 pass）。
-  - cloze 80% @B1（range 50-67 mid 58, width 17）→ clozeOffset=(0.8-0.5)*17=+5.1 → score≈63；subjectiveAvg 60 → subjDelta clamp((60-63)*0.3=-0.9)→-0.9 → ≈62；band B1 Upper（62≥58）。
-  - current C2 → spreadLevels ["C1","C2"]（触顶 clamp，2 档）；全 pass → atCeiling true → lowConfidence true。
-  - current A1 → ["A1","A2"]（触底 clamp）。
+- [ ] **Step 2:** `tsc` + `eslint lib/assessment-scoring.ts` 清。**手算样例（report——实现者须按写出的代码实算并核对，勿照抄；6 级均分 width=100/6≈16.67，故 CEFR_RANGES：A1[0,17]mid9 / A2[17,33]mid25 / B1[33,50]mid42 / B2[50,67]mid59 / C1[67,83]mid75 / C2[83,100]mid92）**：
+  - locateLevel：current B1 → spreadLevels ["A2","B1","B2"]；subtests A2 3/3, B1 2/3, B2 0/3 → locate B1（B1 passed 2/3≥2/3，B2 0/3 not），atCeiling false（B2 fail），atFloor false（A2 pass）。
+  - computeFinalBand（within-level 例）：loc B1（range{33,42,50} width 17）, cloze 60%, subjectiveAvg 45 → clozeOffset=(0.6−0.5)*17=1.7 → 43.7；subjDelta=clamp(±8.5,(45−43.7)*0.3=0.39)=0.39 → 44.09 → clamp[16,67] ok → round 44；finalRange 44∈B1[33,50]，44≥mid42 → **"B1 (Upper)"**，overallScore 44，lowConfidence false。
+  - computeFinalBand（跨 ±1 sub-band 例，设计允许，band 仍自洽）：loc B1, cloze 80%, subjectiveAvg 60 → clozeOffset=5.1 → 47.1；subjDelta=clamp(±8.5,(60−47.1)*0.3=3.87)=3.87 → 50.97 → round 51；51∈B2[50,67]，51<mid59 → **"B2 (Lower)"**，overallScore 51（cloze+主观合计把 B1-located 上推约 1 sub-band 越界到 B2 Lower——有界且 band 与 overallScore 自洽，符合"主观 ≤±1 sub-band"设计）。
+  - 触顶：current C2 → spreadLevels ["C1","C2"]（clamp，2 档）；全 pass → atCeiling true → lowConfidence true。触底：current A1 → ["A1","A2"]。
+  - 空/边界：subtest total=0 时 passed 为 false（不 /0）；subjectiveAvg 极端仍被 clamp 到 ±width/2 且总偏移 clamp 到 ±width。
 - [ ] **Step 3:** Commit `feat(assessment-scoring): heuristic spread-probe leveling + bounded subjective bridge`.
 
 ### Task 2: graded reading schema（`lib/ai-schemas.ts`）
