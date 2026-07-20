@@ -553,7 +553,10 @@ Return ONLY valid JSON (no markdown fences, no explanation) in this exact format
           module: "assessment",
         });
       }
-      setReadingData(data.object);
+      // Normalize to exactly the requested spread size at ingestion, so
+      // render, the answered-all gate, and scoring all operate on the same
+      // subtests (the model can over-produce vs the 2 requested at a ladder end).
+      setReadingData({ subtests: data.object.subtests.slice(0, levels.length) });
       setReadingAnswers({});
       setPhase("reading");
     } catch (err) {
