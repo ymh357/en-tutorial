@@ -217,4 +217,35 @@ db.version(5)
     }
   });
 
+db.version(6)
+  .stores({
+    // identical stores to v5 (no schema change; data-only backfill)
+    cards: "id, type, lemma, source, sourceId, nextReview, masteryLevel, createdAt",
+    conversations: "id, scenarioType, createdAt",
+    readingSessions: "id, source, createdAt",
+    writingSessions: "id, taskType, createdAt",
+    learningProfile: "id",
+    dailyStats: "id",
+    listeningExercises: "id, mode, createdAt",
+    translationExercises: "id, mode, createdAt",
+    poolTasks: "id, type, assignedDate, completed, createdAt",
+    assessments: "id, date",
+  })
+  .upgrade(async (tx) => {
+    // Backfill required new fields on existing rows (non-indexed additions).
+    const cards = tx.table("cards");
+    for (const row of await cards.toArray()) {
+      if (typeof row.lapses !== "number") {
+        await cards.put({ ...row, lapses: 0 });
+      }
+    }
+    const daily = tx.table("dailyStats");
+    for (const row of await daily.toArray()) {
+      if (typeof row.newCardsIntroduced !== "number") {
+        await daily.put({ ...row, newCardsIntroduced: 0 });
+      }
+    }
+    // lapsedInterval stays undefined (optional); dailyNewLimit defaults in code.
+  });
+
 export { db };
