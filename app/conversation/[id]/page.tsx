@@ -255,6 +255,7 @@ const ConversationPage = () => {
       sessionRef.current = null;
       setMicStatus("idle");
       setVoiceError(null);
+      setLastApproximate(false); // leaving voice mode: don't let a stale banner follow the user out (M-a)
       stopSpeaking();
       isSpeakingRef.current = false;
       setIsSpeaking(false);
@@ -268,6 +269,7 @@ const ConversationPage = () => {
       sessionRef.current = null;
       setMicStatus("idle");
       setVoiceError(null);
+      setLastApproximate(false); // fresh entry into voice mode: don't carry over a text-mode banner (M-a)
       if (messages.length === 0) {
         // Let the AI open the conversation instead of prompting the user to
         // speak first. The greeting reply is spoken via the auto-play effect,
@@ -380,6 +382,8 @@ const ConversationPage = () => {
   const handleSend = () => {
     const text = input.trim();
     if (!text || isStreaming) return;
+    setVoiceError(null); // typed send is a fresh, unrelated action — drop any stale voice banner (M-a)
+    setLastApproximate(false);
     sendMessage({ text });
     setInput("");
   };
@@ -391,21 +395,61 @@ const ConversationPage = () => {
     }
   };
 
-  const handleSpeak = (text: string) => {
-    void speak(text);
+  const handleSpeak = async (text: string): Promise<void> => {
+    if (voiceModeRef.current) {
+      // Ignore read-aloud taps while TTS is already playing or a transcript
+      // is in flight: replaying would churn sessionRef and overlap speak()
+      // (M1). The user can re-tap once we return to Recording/Ready.
+      if (isSpeakingRef.current || micStatus === "transcribing") return;
+      // Voice mode: stop any live recording first so TTS is not captured,
+      // then play through the speaking mutex and resume recording after.
+      sessionRef.current?.cancel();
+      sessionRef.current = null;
+      setMicStatus("idle");
+      await speakAndResumeListening(text);
+    } else {
+      await speak(text);
+    }
   };
 
-  // TASK 2 HANDOFF BRIDGE (temporary): this used to drive the local
-  // SpeechRecognition instance via recognitionRef/isRecording, both removed
-  // in this refactor (voice mode now goes through the whisper-based
-  // startMicSession/stopAndSend/cancelMic session helpers instead). Task 2
-  // is responsible for migrating the text-mode mic onto those same helpers
-  // and restoring real function here. Until then this is an intentional
-  // no-op — the mic button below is rendered `disabled` so it is
-  // unreachable from the UI, keeping the file compiling without a dangling
-  // reference to the removed SpeechRecognition state.
-  const handleToggleVoiceInput = (): void => {
-    // no-op — see comment above.
+  // Text-mode mic: record → whisper transcribe → append to the input box
+  // (editable, not auto-sent). Same faithful-transcription path as voice mode.
+  const handleToggleVoiceInput = async (): Promise<void> => {
+    if (micStatus === "recording") {
+      const session = sessionRef.current;
+      sessionRef.current = null;
+      setMicStatus("transcribing");
+      try {
+        // Fresh action starting: clear stale banners from a prior attempt
+        // before this attempt's real outcome is applied below (M-a). The
+        // genuine approximate/error state for THIS attempt still lands via
+        // setLastApproximate(approximate) / the catch block below.
+        setVoiceError(null);
+        setLastApproximate(false);
+        const { text, approximate } = await (session
+          ? session.stop()
+          : Promise.resolve({ text: "", approximate: false }));
+        setLastApproximate(approximate);
+        const trimmed = text.trim();
+        if (trimmed) setInput((prev) => (prev ? `${prev} ${trimmed}` : trimmed));
+      } catch {
+        setVoiceError("Couldn't reach transcription — please try again.");
+      } finally {
+        setMicStatus("idle");
+      }
+      return;
+    }
+    if (micStatus !== "idle") return;
+    setVoiceError(null);
+    try {
+      const session = await startRecording();
+      sessionRef.current = session;
+      setMicStatus("recording");
+    } catch {
+      sessionRef.current = null;
+      setMicStatus("idle");
+      setVoiceError("Microphone unavailable (permission denied or unsupported).");
+    }
   };
 
   const handleEndAndReview = async () => {
@@ -532,7 +576,7 @@ const ConversationPage = () => {
                     variant="ghost"
                     size="icon-sm"
                     className="mt-1 -ml-1.5"
-                    onClick={() => handleSpeak(text)}
+                    onClick={() => void handleSpeak(text)}
                     aria-label="Read message aloud"
                   >
                     <Volume2 className="h-3.5 w-3.5" />
@@ -576,9 +620,9 @@ const ConversationPage = () => {
             (Task 2) surfaces its own errors here too, so this must render
             outside the ternary below to stay visible in both branches. A
             faithful send clears both via stopAndSend. */}
-        {voiceError && <p className="text-xs text-red-500">{voiceError}</p>}
+        {voiceError && <p className="text-xs text-destructive">{voiceError}</p>}
         {lastApproximate && (
-          <p className="text-xs text-amber-600">
+          <p className="text-xs text-muted-foreground">
             Approximate transcription (couldn&apos;t reach the service).
           </p>
         )}
@@ -648,20 +692,28 @@ const ConversationPage = () => {
         ) : (
           <div className="flex gap-2">
             {voiceSupported && (
-              // TASK 2 HANDOFF: disabled until the text-mode mic is migrated
-              // onto the whisper session helpers (see handleToggleVoiceInput).
               <div className="flex flex-col items-center gap-1">
                 <Button
                   type="button"
-                  variant="outline"
+                  variant={micStatus === "recording" ? "default" : "outline"}
                   size="icon"
-                  className="min-h-[44px] min-w-[44px]"
-                  onClick={handleToggleVoiceInput}
-                  disabled
-                  aria-label="Voice input"
+                  className={`min-h-[44px] min-w-[44px] ${micStatus === "recording" ? "animate-pulse bg-red-500 text-white hover:bg-red-500" : ""}`}
+                  onClick={() => void handleToggleVoiceInput()}
+                  aria-label={
+                    micStatus === "recording"
+                      ? "Stop recording"
+                      : micStatus === "transcribing"
+                        ? "Transcribing"
+                        : "Voice input"
+                  }
                 >
                   <Mic className="h-4 w-4" />
                 </Button>
+                {(micStatus === "recording" || micStatus === "transcribing") && (
+                  <span className="whitespace-nowrap text-[10px] text-muted-foreground">
+                    {micStatus === "transcribing" ? "Transcribing..." : "Recording..."}
+                  </span>
+                )}
               </div>
             )}
             <Textarea
