@@ -17,7 +17,7 @@ export const speak = async (text: string, rate?: string): Promise<void> => {
     });
 
     if (!res.ok) {
-      fallbackSpeak(text);
+      await fallbackSpeak(text, rate);
       return;
     }
 
@@ -40,7 +40,7 @@ export const speak = async (text: string, rate?: string): Promise<void> => {
       audio.play().catch(reject);
     });
   } catch {
-    fallbackSpeak(text);
+    await fallbackSpeak(text, rate);
   }
 };
 
@@ -54,10 +54,28 @@ export const stopSpeaking = (): void => {
   }
 };
 
-const fallbackSpeak = (text: string): void => {
-  if (typeof window === "undefined" || !window.speechSynthesis) return;
+// Parse an Edge-TTS rate string ("-30%", "+0%") into a SpeechSynthesisUtterance
+// rate (1 = normal speed). Defaults to 1 when absent or unparseable.
+const parseUtteranceRate = (rate?: string): number => {
+  if (!rate) return 1;
+  const match = rate.match(/^([+-]?\d+(?:\.\d+)?)%$/);
+  if (!match) return 1;
+  return Math.min(10, Math.max(0.1, 1 + Number(match[1]) / 100));
+};
+
+// Resolves only when the fallback utterance finishes (or errors), so a caller
+// awaiting speak() never resumes the mic while this audio is still playing.
+const fallbackSpeak = (text: string, rate?: string): Promise<void> => {
+  if (typeof window === "undefined" || !window.speechSynthesis) {
+    return Promise.resolve();
+  }
   window.speechSynthesis.cancel();
-  const utterance = new SpeechSynthesisUtterance(text);
-  utterance.lang = "en-US";
-  window.speechSynthesis.speak(utterance);
+  return new Promise<void>((resolve) => {
+    const utterance = new SpeechSynthesisUtterance(text);
+    utterance.lang = "en-US";
+    utterance.rate = parseUtteranceRate(rate);
+    utterance.onend = () => resolve();
+    utterance.onerror = () => resolve();
+    window.speechSynthesis.speak(utterance);
+  });
 };
