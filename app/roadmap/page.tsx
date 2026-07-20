@@ -20,6 +20,7 @@ import { db } from "@/lib/db";
 import { dbHelpers } from "@/lib/db-helpers";
 import { useProfile } from "@/hooks/use-db";
 import { SCENARIOS } from "@/lib/scenarios";
+import { CEFR_RANGES } from "@/lib/assessment-scoring";
 import type {
   AssessmentResult,
   Conversation,
@@ -37,12 +38,6 @@ const NEXT_CEFR_LEVEL: Record<string, string> = {
   C1: "C2",
   C2: "C2",
 };
-
-// Mirrors the B2 range floor from lib/assessment-scoring.ts CEFR_RANGES
-// (app/assessment/page.tsx's finishAssessment uses computeFinalBand, which
-// is built on that ladder) — kept as a literal here since roadmap only
-// needs the single B1->B2 gate, not the full ladder.
-const B2_ASSESSMENT_THRESHOLD = 50;
 
 // Stable fallback reference so useMemo deps don't churn on every render
 // while the live query is still resolving.
@@ -214,6 +209,11 @@ const RoadmapPage = () => {
 
   const currentLevel = profile?.assessedLevel || profile?.studyLevel || "B1";
   const nextLevel = NEXT_CEFR_LEVEL[currentLevel] ?? "B2";
+  // Threshold = the actual next CEFR level's score floor (from the shared
+  // ladder), so the gate/label track the user's real next level (A2…C2), not a
+  // fixed B1→B2 breakpoint (onboarding/assessment now span A1-C2).
+  const nextLevelThreshold =
+    CEFR_RANGES.find((r) => r.level === nextLevel)?.min ?? 50;
 
   const stages: RoadmapStage[] = useMemo(() => {
     const foundationDone = Boolean(profile?.assessedLevel || profile?.studyLevel);
@@ -307,9 +307,9 @@ const RoadmapPage = () => {
         unit: "taken",
       },
       {
-        label: `Score ≥ ${B2_ASSESSMENT_THRESHOLD} (${nextLevel} threshold)`,
+        label: `Score ≥ ${nextLevelThreshold} (${nextLevel} threshold)`,
         current: bestAssessmentScore,
-        target: B2_ASSESSMENT_THRESHOLD,
+        target: nextLevelThreshold,
         unit: "pts",
       },
     ];
