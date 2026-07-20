@@ -10,6 +10,11 @@ import type {
 import { formatDate, today } from "./date";
 import { ensureLemmatizer, lemmatize } from "./lemma";
 
+// Listening modes graded subjectively (AI-scored), not by objective accuracy
+// against a reference. Excluded from avgAccuracy so a subjective score never
+// gets averaged in as if it were an objective percentage.
+const SUBJECTIVE_LISTENING_MODES = new Set(["prediction"]);
+
 const DEFAULT_PROFILE: LearningProfile = {
   id: "singleton",
   streakCurrent: 0,
@@ -204,9 +209,20 @@ export const dbHelpers = {
     const rows = mode
       ? await db.listeningExercises.where("mode").equals(mode).toArray()
       : await db.listeningExercises.toArray();
-    if (rows.length === 0) return { count: 0, avgAccuracy: 0 };
-    const sum = rows.reduce((s, e) => s + e.accuracy, 0);
-    return { count: rows.length, avgAccuracy: Math.round(sum / rows.length) };
+    // count is intentionally over ALL modes (roadmap's "complete 20 listening
+    // exercises" gate relies on this); only avgAccuracy excludes subjective
+    // modes so it stays a pure objective-accuracy average.
+    const objectiveRows = rows.filter(
+      (r) => !SUBJECTIVE_LISTENING_MODES.has(r.mode)
+    );
+    const avgAccuracy =
+      objectiveRows.length === 0
+        ? 0
+        : Math.round(
+            objectiveRows.reduce((s, e) => s + e.accuracy, 0) /
+              objectiveRows.length
+          );
+    return { count: rows.length, avgAccuracy };
   },
 
   async saveAssessment(result: Omit<AssessmentResult, "id">): Promise<void> {
