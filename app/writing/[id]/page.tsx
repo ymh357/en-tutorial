@@ -31,6 +31,7 @@ import type {
   WritingSession,
   WritingTaskType,
 } from "@/lib/types";
+import { normalizeTo100, scoreLabel } from "@/lib/rubric";
 
 interface Round1Review {
   contentScore: number;
@@ -120,13 +121,6 @@ const clearDraft = (id: string): void => {
   } catch {
     // Ignore storage errors on cleanup.
   }
-};
-
-const scoreLabel = (score: number): string => {
-  if (score >= 9) return "Excellent";
-  if (score >= 7) return "Good";
-  if (score >= 5) return "Fair";
-  return "Needs Work";
 };
 
 const ANNOTATION_PRIORITY: Record<AnnotationType, number> = {
@@ -333,7 +327,10 @@ const WritingEditorPage = () => {
         });
       }
 
-      setRound1Review(data.object);
+      setRound1Review({
+        ...data.object,
+        contentScore: normalizeTo100(data.object.contentScore),
+      });
       setReviewRound(1);
       setPhase("review");
     } catch (err) {
@@ -384,7 +381,10 @@ const WritingEditorPage = () => {
         });
       }
 
-      const parsedReview = data.object;
+      const parsedReview: WritingReview = {
+        ...data.object,
+        score: normalizeTo100(data.object.score),
+      };
 
       const session: WritingSession = {
         id: sessionId,
@@ -605,7 +605,7 @@ const WritingEditorPage = () => {
                 {round1Review.contentScore}
                 <span className="text-sm font-normal text-muted-foreground">
                   {" "}
-                  / 10
+                  / 100
                 </span>
               </span>
             </CardTitle>
@@ -685,7 +685,7 @@ const WritingEditorPage = () => {
             <CardContent className="flex flex-col items-center gap-1 py-6">
               <div className="text-4xl font-bold">{review.score}</div>
               <div className="text-sm text-muted-foreground">
-                {scoreLabel(review.score)} · out of 10
+                {scoreLabel(review.score)} · out of 100
               </div>
             </CardContent>
           </Card>
