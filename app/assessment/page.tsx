@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import {
+  AlertTriangle,
   BookOpen,
   CheckCircle2,
   ClipboardCheck,
@@ -1353,6 +1354,17 @@ Return ONLY valid JSON (no markdown fences, no explanation) in this exact format
             </Badge>
           </CardHeader>
           <CardContent className="space-y-3">
+            {finalResult.lowConfidence && (
+              <Alert className="border-amber-300 bg-amber-50 text-amber-900 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-200">
+                <AlertTriangle className="h-4 w-4 text-amber-600 dark:text-amber-400" />
+                <AlertDescription className="text-amber-800 dark:text-amber-300">
+                  Low-confidence result: your performance was at the edge of
+                  the tested range, or the objective and subjective sections
+                  disagreed. Consider retaking the assessment to confirm your
+                  level.
+                </AlertDescription>
+              </Alert>
+            )}
             {scoreDelta !== null && (
               <div className="flex items-center justify-center gap-1 text-sm">
                 {scoreDelta >= 0 ? (
@@ -1367,6 +1379,10 @@ Return ONLY valid JSON (no markdown fences, no explanation) in this exact format
               </div>
             )}
             <RadarChart scores={abilityScores} />
+            <p className="text-xs text-muted-foreground text-center">
+              Reading &amp; Cloze are objective (% correct); Writing &amp;
+              Speaking are AI judgments and less precise.
+            </p>
             <p className="text-xs text-muted-foreground text-center">
               This is an approximate estimate based on limited test items. For
               official CEFR certification, take a standardized test.
