@@ -58,6 +58,15 @@
     ```
   - `speechSupported` 检测（约 783 行 `setSpeechSupported(Boolean(getSpeechRecognitionConstructor()))`）→ `setSpeechSupported(isRecordingSupported());`
   - `generateSentences` 的重置块（约 791-792 行 `setTranscript(null); setResult(null);`）后补 `setApproximate(false);`。
+- [ ] **Step 3b: 卸载清理（防 mic 泄漏）。** `ShadowingTab` 渲染在 Base UI `Tabs.Panel` 内（`components/ui/tabs.tsx`，隐藏面板默认卸载）——录音中切走 tab 或离页会卸载组件，若不 cancel 会话则 `getUserMedia` 流 + MediaRecorder 常亮无法停止。加卸载清理（对齐 `app/conversation/[id]/page.tsx` 的卸载 effect）：
+    ```ts
+    useEffect(() => {
+      return () => {
+        sessionRef.current?.cancel();
+        sessionRef.current = null;
+      };
+    }, []);
+    ```
 - [ ] **Step 4: 用 start/stop 取代一次性 `record()`（约 818-843 行整体替换）。**
     ```ts
     const startAttempt = async (): Promise<void> => {
@@ -139,6 +148,7 @@
     </Button>
     ```
     **`Square` 当前未在 lucide-react import 中（现有为 Ear/Headphones/Loader2/Mic/Play/RotateCcw/Sparkles/Turtle）——必须把 `Square` 加进该 import 列表。** `Mic`/`Loader2` 已在用。
+- [ ] **Step 6b: 门控 "Next Sentence"（约 986-994 行）防录音中前进泄漏 mic。** 底部 Next Sentence 按钮当前 `disabled={isLoading}` —— 录音/转写中前进会切句、留下未取消的活录音且与展示句失步。改为 `disabled={isLoading || recStatus !== "idle"}`（录音/转写中禁用；`ExerciseCompletionActions` 的 Try Another 仅在有 result 即 idle 时出现，无需改）。
 - [ ] **Step 7: 结果卡诚实命名 + approximate 提示（约 942-978 行）。**
   - Badge 文案 `{result.accuracy}% accuracy` → `{result.accuracy}% word match`（诚实：measures 词匹配而非发音）。
   - 在 "You said: …"（约 973-975 行）下方补一行诚实说明：
@@ -156,7 +166,7 @@
       </p>
     )}
     ```
-- [ ] **Step 8: not-supported 提示文案（约 863-870 行）。** 现文案专指 SpeechRecognition；改为覆盖录音整体：`"Recording isn't supported in this browser. Try a recent Chrome, Safari, or Firefox."`（`speechSupported` 现由 `isRecordingSupported()` 驱动 —— 只有 MediaRecorder 与 SpeechRecognition 都不可用才为假）。
+- [ ] **Step 8: not-supported 提示文案（约 863-870 行）。** 现文案专指 SpeechRecognition；改为覆盖录音整体。**该文案是 `<AlertDescription>` 内的 JSX 文本节点，仓库启用 `react/no-unescaped-entities`（见全库 `&apos;` 用法）—— 不要用裸 `'`。** 用不含撇号的措辞：`Recording is not supported in this browser. Try a recent Chrome, Safari, or Firefox.`（`speechSupported` 现由 `isRecordingSupported()` 驱动 —— 只有 MediaRecorder 与 SpeechRecognition 都不可用才为假）。
 - [ ] **Step 9:** `tsc --noEmit` + `eslint app/listening/page.tsx` 清（保持 0 error；pre-existing 无关告警如实记）。**推理核对（写进 report）**：
   - cutover：无 `startListening`/`getSpeechRecognitionConstructor`/SR 类型残留引用（grep 确认）；`record` 旧函数已被 start/stop 取代且无悬空调用。
   - STT 忠实：whisper 成功 = 忠实转写（`approximate:false`）；失败 = SpeechRecognition 近似回退（`approximate:true`）显式标注可靠性下降，不静默。
@@ -176,5 +186,6 @@
   - UX 变化：录音从"一次性自动停"变为"Record → Stop & Check → Transcribing… → 反馈"，一次上传延迟；符合忠实度优先。
   - approximate（whisper 失败回退）转写已被浏览器纠正 → 词匹配虚高；已显式提示，不静默、不宣称准确。
   - whisper 对非词的规范化（C1 smoke-test：goed→go）意味着词匹配仍非完美发音信号——诚实命名"word match, not a pronunciation score"正是为此。
+  - **有意识取舍**：`approximate`（回退）尝试仍会 `saveListeningExercise` 存 accuracy 且 DB 无 approximate 字段（History/stats 处看不到回退警示）。加字段需动 `lib/db`（超出 C3 单文件范围），且与 C2 先例一致（C2 也未在持久层标记 approximate）。in-session UI 已诚实提示，持久层不标记为本轮明确接受项，非静默遗漏。
   - 单文件单 task；改动集中在 `ShadowingTab` + 顶部删除。
 - **验证**：`tsc` + `eslint` + 代码走查；不起 dev server、不实操麦克风。C3 完成后做 **C 整体 broad whole-branch review**（覆盖 C1+C2+C3，见 ledger 决策）。
