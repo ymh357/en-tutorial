@@ -18,6 +18,7 @@ import { Badge } from "@/components/ui/badge";
 import { db } from "@/lib/db";
 import { dbHelpers } from "@/lib/db-helpers";
 import { recordCost } from "@/lib/cost-tracker";
+import { writingRound1Schema, writingReviewSchema, toJsonSchema } from "@/lib/ai-schemas";
 import {
   WRITING_REVIEW_ROUND1_SYSTEM,
   WRITING_REVIEW_ROUND2_SYSTEM,
@@ -87,31 +88,6 @@ Guidelines:
 const buildReviewPrompt = (taskPrompt: string, content: string): string =>
   `Task: ${taskPrompt || "Free writing"}\n\nStudent's writing:\n${content}\n\nAnalyze this writing and return the JSON review described in the system prompt.`;
 
-const parseRound1Response = (raw: string): Round1Review | null => {
-  let text = raw.trim();
-  const fenceMatch = text.match(/```(?:json)?\s*([\s\S]*?)```/);
-  if (fenceMatch) {
-    text = fenceMatch[1].trim();
-  }
-  try {
-    const parsed = JSON.parse(text) as Round1Review;
-    if (
-      !parsed ||
-      typeof parsed !== "object" ||
-      typeof parsed.contentScore !== "number" ||
-      typeof parsed.structureFeedback !== "string" ||
-      !Array.isArray(parsed.suggestions) ||
-      !Array.isArray(parsed.strengths) ||
-      typeof parsed.revisionPriority !== "string"
-    ) {
-      return null;
-    }
-    return parsed;
-  } catch {
-    return null;
-  }
-};
-
 const DRAFT_SAVE_DEBOUNCE_MS = 500;
 
 const getDraftKey = (id: string): string => `en-tutor-writing-draft-${id}`;
@@ -143,30 +119,6 @@ const clearDraft = (id: string): void => {
     window.localStorage.removeItem(getDraftKey(id));
   } catch {
     // Ignore storage errors on cleanup.
-  }
-};
-
-const parseReviewResponse = (raw: string): WritingReview | null => {
-  let text = raw.trim();
-  const fenceMatch = text.match(/```(?:json)?\s*([\s\S]*?)```/);
-  if (fenceMatch) {
-    text = fenceMatch[1].trim();
-  }
-  try {
-    const parsed = JSON.parse(text) as WritingReview;
-    if (
-      !parsed ||
-      typeof parsed !== "object" ||
-      typeof parsed.score !== "number" ||
-      !Array.isArray(parsed.annotations) ||
-      typeof parsed.polishedVersion !== "string" ||
-      !Array.isArray(parsed.errorPatterns)
-    ) {
-      return null;
-    }
-    return parsed;
-  } catch {
-    return null;
   }
 };
 
@@ -352,7 +304,11 @@ const WritingEditorPage = () => {
       const res = await fetch("/api/review", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ prompt, system: WRITING_REVIEW_ROUND1_SYSTEM }),
+        body: JSON.stringify({
+          prompt,
+          system: WRITING_REVIEW_ROUND1_SYSTEM,
+          schema: toJsonSchema(writingRound1Schema),
+        }),
       });
 
       if (!res.ok) {
@@ -360,28 +316,24 @@ const WritingEditorPage = () => {
       }
 
       const data = (await res.json()) as {
-        content?: string;
-        usage?: { promptTokens: number; completionTokens: number };
+        object?: Round1Review;
+        usage?: { inputTokens: number; outputTokens: number };
+        model?: string;
       };
-      if (!data.content) {
+      if (!data.object) {
         throw new Error("Empty response from review service");
       }
 
-      if (data.usage) {
+      if (data.usage && data.model) {
         recordCost({
-          model: "claude-sonnet-5",
-          inputTokens: data.usage.promptTokens ?? 0,
-          outputTokens: data.usage.completionTokens ?? 0,
+          model: data.model,
+          inputTokens: data.usage.inputTokens ?? 0,
+          outputTokens: data.usage.outputTokens ?? 0,
           module: "writing",
         });
       }
 
-      const parsedRound1 = parseRound1Response(data.content);
-      if (!parsedRound1) {
-        throw new Error("Could not parse the AI's review response");
-      }
-
-      setRound1Review(parsedRound1);
+      setRound1Review(data.object);
       setReviewRound(1);
       setPhase("review");
     } catch (err) {
@@ -405,6 +357,8 @@ const WritingEditorPage = () => {
         body: JSON.stringify({
           prompt,
           system: WRITING_REVIEW_ROUND2_SYSTEM + REVIEW_JSON_SCHEMA,
+          schema: toJsonSchema(writingReviewSchema),
+          maxOutputTokens: 8192,
         }),
       });
 
@@ -413,26 +367,24 @@ const WritingEditorPage = () => {
       }
 
       const data = (await res.json()) as {
-        content?: string;
-        usage?: { promptTokens: number; completionTokens: number };
+        object?: WritingReview;
+        usage?: { inputTokens: number; outputTokens: number };
+        model?: string;
       };
-      if (!data.content) {
+      if (!data.object) {
         throw new Error("Empty response from review service");
       }
 
-      if (data.usage) {
+      if (data.usage && data.model) {
         recordCost({
-          model: "claude-sonnet-5",
-          inputTokens: data.usage.promptTokens ?? 0,
-          outputTokens: data.usage.completionTokens ?? 0,
+          model: data.model,
+          inputTokens: data.usage.inputTokens ?? 0,
+          outputTokens: data.usage.outputTokens ?? 0,
           module: "writing",
         });
       }
 
-      const parsedReview = parseReviewResponse(data.content);
-      if (!parsedReview) {
-        throw new Error("Could not parse the AI's review response");
-      }
+      const parsedReview = data.object;
 
       const session: WritingSession = {
         id: sessionId,
