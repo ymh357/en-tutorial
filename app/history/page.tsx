@@ -133,7 +133,7 @@ const HistoryPage = () => {
         createdAt: new Date(c.createdAt),
         title: `Conversation: ${c.scenario}`,
         summary: c.review
-          ? `Fluency ${c.review.scores.fluency}/10 · ${Math.round(c.duration / 60)} min`
+          ? `Fluency ${c.review.scores.fluency}/100 · ${Math.round(c.duration / 60)} min`
           : `${Math.round(c.duration / 60)} min · not reviewed`,
         href: `/conversation/${c.id}/review`,
       });
@@ -157,7 +157,7 @@ const HistoryPage = () => {
         createdAt: new Date(w.createdAt),
         title: `Writing: ${w.taskType}`,
         summary: w.review
-          ? `Score ${w.review.score}/10 · ${w.wordCount} words`
+          ? `Score ${w.review.score}/100 · ${w.wordCount} words`
           : `${w.wordCount} words · not reviewed`,
         href: `/writing/${w.id}`,
       });
@@ -180,7 +180,7 @@ const HistoryPage = () => {
         module: "translation",
         createdAt: new Date(t.createdAt),
         title: `Translation: ${t.mode}`,
-        summary: `Score ${t.score}/10 · "${truncate(t.chinese, 40)}"`,
+        summary: `Score ${t.score}/100 · "${truncate(t.chinese, 40)}"`,
         href: null,
       });
     }
