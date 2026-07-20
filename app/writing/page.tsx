@@ -395,7 +395,7 @@ const WritingPage = () => {
                       </div>
                       {session.review && (
                         <Badge variant="secondary">
-                          Score: {session.review.score}
+                          Score: {session.review.score}/100
                         </Badge>
                       )}
                     </div>
