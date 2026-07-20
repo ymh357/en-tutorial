@@ -45,7 +45,7 @@
 
 **Files:** Create `lib/assessment-scoring.ts`; verify/extend `lib/frequency-list.ts` `CefrLevel`.
 
-- [ ] **Step 0:** 读 `lib/frequency-list.ts` 确认 `CefrLevel` 是否含 `"A1"`/`"C2"`；若无则扩展为 `"A1" | "A2" | "B1" | "B2" | "C1" | "C2"` 并确保 `getKnownWordsForLevel` 对 A1/C2 有合理返回（A1 最小已知集、C2 最大）。report 说明。
+- [ ] **Step 0（verify-only，评审 Minor 6）:** `lib/frequency-list.ts:3` `CefrLevel` **已是** `"A1"|"A2"|"B1"|"B2"|"C1"|"C2"`，且 `getKnownWordsForLevel` 已处理 A1（slice(0,1000)）与 C2（返回全部）。**仅确认，勿改**（勿动 `BAND_MAX_RANK` 等）。report 记确认结果。
 - [ ] **Step 1: 写模块。**
   ```ts
   // Pure, local, heuristic assessment scoring. NOT group-calibrated IRT (a
@@ -99,6 +99,7 @@
     subtests: SubtestScore[],
     passRatio = 2 / 3
   ): Location => {
+    if (subtests.length === 0) return { level: "B1", atCeiling: false, atFloor: true }; // defensive; schema .min(2) prevents in practice
     const ordered = [...subtests].sort(
       (a, b) => cefrIndex(a.level) - cefrIndex(b.level)
     );
@@ -149,6 +150,9 @@
     score = Math.max(0, Math.min(100, Math.round(score)));
     const lowConfidence =
       loc.atCeiling || loc.atFloor || Math.abs(subjectiveAvg - range.mid) > width;
+    // score===100 (only reachable when loc.level is C2, since the hard clamp
+    // caps a lower-located score at range.max+width < 100) matches no half-open
+    // range → `?? range` returns the located C2 range, keeping band consistent.
     const finalRange = CEFR_RANGES.find((r) => score >= r.min && score < r.max) ?? range;
     const cefr = finalRange.level;
     const sub = score >= finalRange.mid ? "Upper" : "Lower";
@@ -168,7 +172,7 @@
   ```ts
   export const assessmentGradedReadingSchema = z.object({
     subtests: z.array(z.object({
-      level: z.string(), // CEFR level label the subtest targets
+      level: z.enum(["A1", "A2", "B1", "B2", "C1", "C2"]), // requested target level (scoring pairs by app's requested order, not this echo)
       passage: z.string(),
       questions: z.array(z.object({
         question: z.string(),
@@ -188,10 +192,26 @@
 
 **Files:** Modify `app/assessment/page.tsx`
 
-- [ ] **Step 1: CEFR_BANDS 扩 A1-C2。** 用 `lib/assessment-scoring` 的 `CEFR_RANGES` 驱动，或就地把 `CEFR_BANDS`（:180-189）扩为 12 子档（A1 Lower/Upper … C2 Lower/Upper），阈值按 `CEFR_RANGES`（每级 ~16.67，子档半级）。**推荐**：删本地 CEFR_BANDS，改用 assessment-scoring 的 `computeFinalBand`/`CEFR_RANGES` 作为唯一档源；`levelBandForScore`/`cefrFromScore` 改为基于 `CEFR_RANGES` 的等价查询（供 history 展示旧 overallScore→band 仍一致）。保留这两个函数名（history 等消费）。
-- [ ] **Step 2: reading 分级生成。** `startReading` 改：`import { spreadLevels } from "@/lib/assessment-scoring"`；`const levels = spreadLevels(cefr)`（cefr 从 studyLevel 得，用 cefrIndex/ladder）；system prompt 要求为 `levels` 每级生成 1 段 ~150 词 passage + 恰好 3 MCQ，用 `assessmentGradedReadingSchema`（`schema: toJsonSchema(assessmentGradedReadingSchema)`），prompt 明确"make each level's passage and questions clearly harder than the previous"。state：`readingData` 改为 graded 结构（subtests[]）；`readingAnswers` 改为按 (subtestIndex, questionIndex) 键。
-- [ ] **Step 3: reading UI（3 passage / 9 题）。** reading phase 渲染 subtests（顺序或分段），每题 4 选项；答案记入 readingAnswers。`submitReading` 改：算每子测 correct → `SubtestScore[]` → `locateLevel(...)` → 存 `location`（新 state）；readingScore（存 AssessmentResult 的 0-100）取"定位档 subtest 的正确率%"或整体正确率%（择一，report 说明；建议整体 9 题正确率作 readingScore 展示值）。继续 `startCloze`。
-- [ ] **Step 4: cloze @located level。** `startCloze` 的 `cefrLevel` 改用 `location.level`（而非 studyLevel）；其余不变（8 blanks，`assessmentClozeGenSchema`）。`submitCloze` 不变（clozeScore = 0-100）。
+- [ ] **Step 1: 删死代码 band 设施（评审 Finding 1）。** `CEFR_BANDS`（:180-189）、`bandForScore`（:191-198）、`levelBandForScore`/`cefrFromScore`（:200-201）唯一使用点是 finishAssessment `:803`/`:814`——Step 5 会用 `computeFinalBand` 取代它们。history（`app/history/page.tsx:194`）渲染的是 **stored** `a.levelBand`/`a.overallScore` 字符串，**不调**这些函数。故 Step 5 替换后这四个成为未用 module-scope 声明 → `no-unused-vars` 破 eslint-0。**直接删除这四个**（`CEFR_BANDS`/`bandForScore`/`levelBandForScore`/`cefrFromScore`）。band/cefr 全部改由 `lib/assessment-scoring` 的 `computeFinalBand`（内部用 `CEFR_RANGES`，A1-C2）产出。删去 page.tsx 里对 `assessmentReadingGenSchema` 的 import（改用 graded schema；旧 schema 在 ai-schemas 仍是 export，不报未用）。
+- [ ] **Step 2: reading 分级生成。** `startReading`：`import { spreadLevels, cefrIndex, type Cefr } from "@/lib/assessment-scoring"`；`const cefr = (profile?.studyLevel || "B1") as Cefr;`（**评审 Minor 9：显式 cast**）`const levels = spreadLevels(cefr);`；system prompt 要求为 `levels` 每级各 1 段 ~150 词 passage + 恰好 3 MCQ、**明确"make each successive level's passage and questions clearly harder"**，用 `assessmentGradedReadingSchema`。**类型改动（评审 Minor 10，须一并改否则悬空）**：`interface ReadingData`/`ReadingQuestion`（:67-76）→ graded（`{ subtests: Array<{ level: string; passage: string; questions: ReadingQuestion[] }> }`）；`object?: ReadingData`（:531）；`readingData` state；`readingAnswers` 由 `Record<number,number>` → `Record<string, number>`（键 `"${subtestIdx}-${qIdx}"`）；`AssessmentProgress.readingData`（:205）同步。
+- [ ] **Step 3: reading UI + 定位（评审 Finding 2——按请求顺序配对，勿信 LLM 回显 level）。** reading phase 渲染各 subtest（passage + 3 题 4 选项），答案记入 `readingAnswers["subIdx-qIdx"]`。`submitReading` 改：**用 app 请求的 `levels` 按 index 配对，而非 `subtest.level`（LLM 字符串不可信）**：
+  ```ts
+  const subtests: SubtestScore[] = readingData.subtests
+    .slice(0, levels.length)
+    .map((st, si) => ({
+      level: levels[si], // canonical requested Cefr — NOT st.level
+      correct: st.questions.filter((q, qi) => readingAnswers[`${si}-${qi}`] === q.correctIndex).length,
+      total: st.questions.length,
+    }));
+  const location = locateLevel(subtests);
+  setLocation(location);
+  // 0-100 readingScore for AssessmentResult display = overall correct% over all offered questions
+  const totalQ = subtests.reduce((n, s) => n + s.total, 0);
+  const totalC = subtests.reduce((n, s) => n + s.correct, 0);
+  setReadingScore(totalQ === 0 ? 0 : Math.round((totalC / totalQ) * 100));
+  ```
+  （`levels` 须在 submit 时可得——存为 state 或由 `spreadLevels(cefr)` 重算，cefr 从 profile 得；report 说明。）继续 `startCloze`。
+- [ ] **Step 4: cloze @located level。** `startCloze` 的目标 level 改用 `location.level`（而非 studyLevel）；其余不变（8 blanks）。`submitCloze` 不变（clozeScore 0-100）。
 - [ ] **Step 5: finishAssessment 桥接。** 改：
   ```ts
   const subjectiveAvg = Math.round((writingScore + finalConversationScore) / 2); // both 0-100 (D1)
@@ -200,21 +220,24 @@
     date: formatDate(new Date()),
     readingScore, clozeScore, writingScore,
     conversationScore: finalConversationScore,
-    overallScore: final.overallScore, // consistent with final.band
+    overallScore: final.overallScore, // consistent with final.band by construction
     levelBand: final.band,
   };
   ```
-  `assessedLevel`/`pendingLevel` 用 `final.cefr`。存 `lowConfidence`？AssessmentResult 无该字段（无迁移）——D3a 把 lowConfidence 存入 `finalResult` 组件 state 供结果页（D3b）用；DB 不持久（可接受，spec M5 精神）。
-- [ ] **Step 6: state/progress。** 新增 `location` state + finalResult 加 lowConfidence（Omit 类型相应调整）。progress(localStorage) 保存/恢复相应带上 readingData(graded)/location（保持 localStorage，不迁 Dexie——spec M4）。
-- [ ] **Step 7:** `tsc --noEmit` + `eslint app/assessment/page.tsx` 清。**推理核对（report）**：定位破循环（题目在 studyLevel±1 生成、按表现定位，非锚定自身）；触边→lowConfidence；主观有界（不超 ±1 档）；overallScore↔levelBand 一致（history 不破）；readingScore/clozeScore 仍 0-100。Commit `refactor(assessment): graded-spread reading localization + cloze@located + bounded subjective composite + A1-C2 bands`.
+  `assessedLevel`/`pendingLevel` 用 `final.cefr`（替换旧 `cefrFromScore(composite)`）。`lowConfidence` 存入 `finalResult` 组件 state（供 D3b 结果页），DB 不持久（AssessmentResult 无该字段，无迁移；spec M5 精神）。`import { computeFinalBand, locateLevel, type SubtestScore, type Location } from "@/lib/assessment-scoring"`。
+- [ ] **Step 6: state/progress（评审 Finding 5——版本化 key 防旧格式崩溃）。** 新增 `location: Location | null` state；`finalResult` 类型加 `lowConfidence`。**`ASSESSMENT_PROGRESS_KEY` 改名（如 `"en-tutor-assessment-progress-v2"`）**——旧格式快照（单 passage readingData、无 location）在新 UI/`computeFinalBand(null)` 下会崩；改 key 使旧快照被忽略（等效丢弃，短命进度可接受）。progress save/restore 带上 graded readingData + location（留 localStorage，不迁 Dexie）。
+- [ ] **Step 7: roadmap B2 阈值重校（评审 Finding 4）。** `app/roadmap/page.tsx:44` `B2_ASSESSMENT_THRESHOLD = 65`（注释"mirrors B1→B2 breakpoint"）——旧梯 B2 起 65，新 `CEFR_RANGES` B2 起 **50**。改该字面量为 `50`（或从 `CEFR_RANGES.find(r=>r.level==="B2").min` 派生）并更新注释，否则真 B2 用户（overallScore ~50-58）失败该门。读 `:40-50`、`:297`（bestAssessmentScore）确认口径。
+- [ ] **Step 8:** `tsc --noEmit`（全库 0）+ `eslint app/assessment/page.tsx app/roadmap/page.tsx`（含全库 `--quiet` 0）。**推理核对（report）**：定位破循环（题目在 studyLevel±1 生成、按 app 请求 level 配对定位，不信 LLM 回显、不锚自身）；触边→lowConfidence；主观有界≤±1 sub-band；overallScore↔levelBand 由构造一致（history 旧行的 stored levelBand/overallScore 字符串照常渲染）；readingScore/clozeScore 仍 0-100；roadmap B2 门阈对齐新梯；无悬空旧 ReadingData/band-fn 引用（grep）。Commit `refactor(assessment): graded-spread localization + cloze@located + bounded subjective bridge + A1-C2 (roadmap B2 gate recalibrated)`.
 
 ---
 
-## Self-Review（已执行）
+## Self-Review（已按 plan-review 修订）
 
 - **覆盖**：spec §4 D3a 部分（破循环 reading 分级定位、cloze@located、主观有界调整不等权、CEFR A1-C2、低置信/触边、启发式如实标注）。结果页客观/主观 UI 分离 + 边界提示展示 + onboarding A1/C2 是 **D3b**，不在此（D3a 保证 lowConfidence/location 数据可喂入）。
-- **占位符**：纯算法模块给完整代码 + 手算样例；schema 给完整定义；页面接线按精确 file:line + 明确变换。reading UI（3 passage）因需依页面既有 UI 风格，给"渲染 subtests、按 (subtest,question) 记答案"的明确结构（实现者依既有单 passage UI 扩展）。
-- **类型一致**：`Cefr`/`CEFR_LADDER`/`CEFR_RANGES` 集中于 assessment-scoring；CefrLevel（frequency-list）Task 1 核实含 A1/C2；overallScore 反推经 CEFR_RANGES 与 levelBand 一致（history 的 levelBandForScore/cefrFromScore 改基于同源）。
-- **风险（如实标注，呼应 plan-review I7）**：AI 生成题目非标定，LLM 对"逐级更难"校准不稳 → 定位可能噪声；故 reading 定位 + cloze 确认双客观信号 + 触边 lowConfidence 提示重测；检测范围每次仅 ±1 档（spread 只跨 current±1），跨度大的用户需多次测评收敛——如实告知（D3b 展示）。主观单次 LLM 判断有界（≤±1 档），不能推翻客观定位。纯本地不做群体 IRT。
-- **兼容/无迁移**：AssessmentResult 形状不变（overallScore/levelBand 一致），history 兼容；无 v7（D3 无持久新字段，lowConfidence 仅 session state）。progress 留 localStorage。
+- **plan-review 修订**：Finding1 删死代码 band 函数（非保留）；Finding2 定位按 app 请求 `levels` 按 index 配对（+ schema level enum），不信 LLM 回显；Finding4 roadmap B2_ASSESSMENT_THRESHOLD 65→50 重校（Step 7）；Finding5 ASSESSMENT_PROGRESS_KEY 版本化防旧格式崩；Minor 6/7/9/10 已并入（frequency-list verify-only、locateLevel 空守卫、Cefr cast、类型改动枚举）。
+- **占位符**：纯算法模块完整代码 + 手算样例；schema 完整；页面接线精确 file:line + 明确变换 + submit 配对代码。reading UI 给"渲染 subtests、按 `subIdx-qIdx` 记答案"明确结构（依既有单 passage UI 扩展）。
+- **类型一致**：`Cefr`/`CEFR_LADDER`/`CEFR_RANGES` 集中于 assessment-scoring；CefrLevel 已含 A1/C2（verify）；overallScore 由 `computeFinalBand` 内部 `finalRange` 反推 → 与返回 band **构造性一致**（history 旧行渲染 stored 字符串，不受影响）。
+- **风险（如实标注，呼应 plan-review I7）**：AI 生成题目非标定，LLM 逐级难度校准不稳 → 定位可能噪声；故 reading 定位 + cloze 双客观信号 + 触边 lowConfidence 提示重测；检测每次仅 ±1 档（spread 跨 current±1），跨度大者需多次测评收敛（D3b 展示）。3 题/级纯猜 ≥2 对约 15.6%（4 选），粗但由 cloze 交叉 + lowConfidence 缓解。主观单次 LLM 有界 ≤±1 sub-band，不推翻客观定位。纯本地不做群体 IRT。
+- **overallScore 尺度断点（评审 Finding 3，如实记录，仿 D1 M3）**：新 overallScore（定位中点±有界偏移）与历史等权合成 overallScore 不同尺度；跨 D3a 的趋势 delta（`app/assessment/page.tsx:1230` scoreDelta vs priorResult、`app/roadmap/page.tsx:297` bestAssessmentScore max）不可直接比较——单用户可接受，首次 D3a 后一次 run 的 delta 可能出现假跳变，如实标注，不做历史回填。
+- **兼容/无迁移**：AssessmentResult 形状不变；无 v7（lowConfidence 仅 session state）。progress key 版本化（旧快照忽略）。
 - **验证**：tsc+eslint + 算法手算（spread/locate/桥接边界）；不起 dev server、不实跑 0g。D3b 后做 D 整体 broad review（覆盖 D1+D2+D3）。
