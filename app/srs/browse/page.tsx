@@ -35,6 +35,7 @@ const sourceLabels: Record<CardSource, string> = {
 const masteryLabels: Record<MasteryLevel, string> = {
   new: "New",
   learning: "Learning",
+  relearning: "Relearning",
   familiar: "Familiar",
   mastered: "Mastered",
 };
@@ -45,6 +46,7 @@ const masteryBadgeVariant: Record<
 > = {
   new: "outline",
   learning: "secondary",
+  relearning: "secondary",
   familiar: "secondary",
   mastered: "default",
 };
@@ -55,6 +57,7 @@ const filterTabs: Array<{ value: MasteryFilter; label: string }> = [
   { value: "all", label: "All" },
   { value: "new", label: "New" },
   { value: "learning", label: "Learning" },
+  { value: "relearning", label: "Relearning" },
   { value: "familiar", label: "Familiar" },
   { value: "mastered", label: "Mastered" },
 ];
@@ -299,6 +302,7 @@ const BrowsePage = () => {
     const counts: Record<MasteryLevel, number> = {
       new: 0,
       learning: 0,
+      relearning: 0,
       familiar: 0,
       mastered: 0,
     };
@@ -337,7 +341,7 @@ const BrowsePage = () => {
         <AddCardDialog />
       </div>
 
-      <div className="grid grid-cols-5 gap-2">
+      <div className="grid grid-cols-3 gap-2 sm:grid-cols-6">
         <Card size="sm">
           <CardContent className="space-y-0.5 text-center">
             <p className="text-xl font-bold">{totalCards}</p>
@@ -354,6 +358,12 @@ const BrowsePage = () => {
           <CardContent className="space-y-0.5 text-center">
             <p className="text-xl font-bold">{stats.learning}</p>
             <p className="text-xs text-muted-foreground">Learning</p>
+          </CardContent>
+        </Card>
+        <Card size="sm">
+          <CardContent className="space-y-0.5 text-center">
+            <p className="text-xl font-bold">{stats.relearning}</p>
+            <p className="text-xs text-muted-foreground">Relearning</p>
           </CardContent>
         </Card>
         <Card size="sm">
