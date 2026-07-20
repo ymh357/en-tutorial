@@ -398,7 +398,7 @@ const ReaderSessionPage = ({
 
       let definition = "";
       let collocations: string[] = [];
-      let wordFamily: string | null = null;
+      const wordFamily: string | null = null;
 
       if (res.ok) {
         const entries = (await res.json()) as Array<{
