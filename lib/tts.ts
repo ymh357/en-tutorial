@@ -30,6 +30,10 @@ const fetchTtsBlob = async (text: string, rate?: string): Promise<Blob | null> =
 // speakStream() so both settle identically on end / error / stopSpeaking().
 // Rejects only on genuine playback failure; a stopSpeaking()-triggered settle
 // resolves (the caller treats an interrupted chunk as "done, move on / stop").
+//
+// Sets module-level currentAudio/resolveCurrent, so streaming callers MUST
+// verify token ownership (token === playbackToken) immediately before each
+// call -- otherwise a stale loop could clobber a newer one's currentAudio.
 const playBlob = (blob: Blob): Promise<void> => {
   const url = URL.createObjectURL(blob);
   const audio = new Audio(url);
@@ -84,12 +88,19 @@ export const splitIntoSentences = (text: string): string[] => {
   const chunks: string[] = [];
   let start = 0;
   // Walk sentence-ending punctuation followed by whitespace; only cut when
-  // the token before the punctuation isn't a known abbreviation.
+  // the token before the punctuation is a real sentence end, not an
+  // abbreviation, an ellipsis, or a single-letter initial (e.g. "U.S.A.").
   const boundary = /([.!?])\s+/g;
   let match: RegExpExecArray | null;
   while ((match = boundary.exec(normalized)) !== null) {
     const candidate = normalized.slice(start, match.index + 1);
-    if (ABBREVIATIONS.test(candidate.slice(0, -1).trimEnd())) continue;
+    const beforePunct = candidate.slice(0, -1).trimEnd();
+    // Ellipsis: don't cut after "..." (or a run of dots) mid-thought.
+    if (match[1] === "." && beforePunct.endsWith(".")) continue;
+    // Single-letter initial before a dot ("U.", "A.") -- part of an
+    // initialism/name, not a sentence end.
+    if (match[1] === "." && /(?:^|[\s.])[A-Za-z]$/.test(beforePunct)) continue;
+    if (ABBREVIATIONS.test(beforePunct)) continue;
     chunks.push(candidate.trim());
     start = boundary.lastIndex;
   }
@@ -98,11 +109,18 @@ export const splitIntoSentences = (text: string): string[] => {
   return chunks;
 };
 
+// How many sentence audio requests may be in flight at once. Each /api/tts
+// call opens its own Edge-TTS upstream websocket, which throttles/refuses
+// bursts; firing a whole 8-12 sentence reply in parallel would get some
+// sentences refused. A small window keeps the next sentence(s) prefetched
+// during playback (so first-audio latency stays low) without the burst.
+const TTS_PREFETCH_WINDOW = 2;
+
 // Speaks text sentence-by-sentence to minimize first-audio latency: the first
-// sentence starts playing as soon as ITS audio arrives, while later sentences
-// are prefetched during playback. Resolves only after the whole passage has
-// played (or was stopped), preserving speak()'s "await until fully spoken"
-// contract that callers rely on before resuming the mic.
+// sentence starts playing as soon as ITS audio arrives, while a bounded window
+// of later sentences is prefetched during playback. Resolves only after the
+// whole passage has played (or was stopped), preserving speak()'s "await until
+// fully spoken" contract that callers rely on before resuming the mic.
 //
 // Interruption-safe: captures a playbackToken up front and re-checks it after
 // every await, so a stopSpeaking() (or a newer speak/speakStream) makes this
@@ -122,21 +140,35 @@ export const speakStream = async (text: string, rate?: string): Promise<void> =>
     return;
   }
 
-  // Prefetch pipeline: request sentence N+1 while sentence N plays. Each slot
-  // holds an in-flight (or resolved) blob promise. A rejected/empty fetch
-  // becomes null and that sentence is simply skipped (no audio), rather than
-  // aborting the whole passage.
-  const fetches: Array<Promise<Blob | null>> = sentences.map((s) =>
-    fetchTtsBlob(s, rate).catch(() => null)
-  );
+  // Bounded prefetch pipeline: at most TTS_PREFETCH_WINDOW fetches in flight.
+  // fetches[i] is lazily started so we never open more upstream sockets than
+  // the window allows. A rejected/empty fetch becomes null and is handled by
+  // per-sentence fallback below, not silently dropped.
+  const fetches: Array<Promise<Blob | null>> = [];
+  const ensureFetch = (i: number): void => {
+    if (i < sentences.length && !fetches[i]) {
+      fetches[i] = fetchTtsBlob(sentences[i], rate).catch(() => null);
+    }
+  };
+  // Prime the window.
+  for (let i = 0; i < TTS_PREFETCH_WINDOW; i++) ensureFetch(i);
 
   for (let i = 0; i < sentences.length; i++) {
     const blob = await fetches[i];
     // Ownership check after the await: a stop or newer request happened.
     if (token !== playbackToken) return;
-    if (!blob) continue; // this sentence failed to synthesize; skip it
+    // Kick off the next fetch now that a slot has freed up (sentence i is
+    // about to play), keeping the window full ahead of the playhead.
+    ensureFetch(i + TTS_PREFETCH_WINDOW);
     try {
-      await playBlob(blob);
+      if (blob) {
+        await playBlob(blob);
+      } else {
+        // This sentence's neural audio failed -- fall back to the browser
+        // voice for THIS chunk rather than dropping it, so the reply stays
+        // audibly complete (the guarantee speak() gave before streaming).
+        await fallbackSpeak(sentences[i], rate);
+      }
     } catch {
       // Playback failure on one sentence shouldn't kill the rest.
     }
