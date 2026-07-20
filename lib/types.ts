@@ -169,7 +169,7 @@ export interface TranslationExercise {
   chinese: string; // original Chinese text
   userTranslation: string; // what the user wrote
   referenceTranslation: string; // AI's reference
-  score: number; // 1-10
+  score: number; // 0-100 (normalized from the AI's 1-10 via lib/rubric normalizeTo100)
   feedback: string; // AI's evaluation summary
   createdAt: Date;
 }
