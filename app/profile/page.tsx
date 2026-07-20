@@ -135,12 +135,12 @@ const ScoreTrendChart = ({ points }: { points: ScorePoint[] }) => {
     if (points.length === 1) return width / 2;
     return 20 + (i / (points.length - 1)) * (width - 40);
   };
-  const yFor = (score: number) => chartBottom - (score / 10) * chartHeight;
+  const yFor = (score: number) => chartBottom - (score / 100) * chartHeight;
 
   return (
     <svg viewBox={`0 0 ${width} ${height}`} className="h-52 w-full min-w-[240px]">
       {/* gridlines */}
-      {[0, 2.5, 5, 7.5, 10].map((tick) => (
+      {[0, 25, 50, 75, 100].map((tick) => (
         <line
           key={tick}
           x1={20}
@@ -372,10 +372,10 @@ const ProfilePage = () => {
     if (masteredCount > 300) {
       statements.push("You can understand most news articles.");
     }
-    if (totalConversationsCompleted > 20 && avgConversationScore >= 6) {
+    if (totalConversationsCompleted > 20 && avgConversationScore >= 60) {
       statements.push("You can hold conversations on familiar topics.");
     }
-    if (reviewedWritingSessions.length > 10 && avgWritingScore >= 6) {
+    if (reviewedWritingSessions.length > 10 && avgWritingScore >= 60) {
       statements.push("You can write clear emails and short essays.");
     }
     return statements;
