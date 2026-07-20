@@ -201,6 +201,18 @@ const pickMimeType = (): string | undefined => {
   return PREFERRED_MIME_TYPES.find((type) => MediaRecorder.isTypeSupported(type));
 };
 
+// Mic constraints shared by recording and barge-in detection. echoCancellation
+// is the load-bearing one for barge-in: with it on, Chrome's software AEC uses
+// the default output device as its reference and cancels the TTS playback from
+// the mic input, so the volume detector below reacts to the USER's voice, not
+// the assistant's own audio leaking back in. noiseSuppression/autoGainControl
+// further steady the signal. (Desktop Chrome; the app doesn't target mobile.)
+const MIC_CONSTRAINTS: MediaTrackConstraints = {
+  echoCancellation: true,
+  noiseSuppression: true,
+  autoGainControl: true,
+};
+
 export const startRecording = async (): Promise<RecordingSession> => {
   if (!hasMediaRecorder()) {
     throw new Error("Recording is not supported in this browser");
@@ -208,7 +220,7 @@ export const startRecording = async (): Promise<RecordingSession> => {
 
   let stream: MediaStream;
   try {
-    stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    stream = await navigator.mediaDevices.getUserMedia({ audio: MIC_CONSTRAINTS });
   } catch (error) {
     const name = error instanceof Error ? error.name : undefined;
     if (name === "NotAllowedError" || name === "PermissionDeniedError") {
@@ -305,4 +317,114 @@ export const startRecording = async (): Promise<RecordingSession> => {
     stopTracks();
     throw error;
   }
+};
+
+// Handle for an in-progress barge-in listen. cancel() tears down the mic
+// stream + audio graph without firing the onset callback.
+export interface SpeechOnsetListener {
+  cancel: () => void;
+}
+
+const getAudioContextCtor = (): (new () => AudioContext) | undefined => {
+  if (typeof window === "undefined") return undefined;
+  const w = window as unknown as {
+    AudioContext?: new () => AudioContext;
+    webkitAudioContext?: new () => AudioContext;
+  };
+  return w.AudioContext ?? w.webkitAudioContext;
+};
+
+export const isSpeechOnsetSupported = (): boolean =>
+  Boolean(getAudioContextCtor()) &&
+  typeof navigator !== "undefined" &&
+  Boolean(navigator.mediaDevices?.getUserMedia);
+
+// Barge-in detector. Opens its OWN short-lived AEC-enabled mic stream and
+// watches input loudness; when the user speaks over the assistant, it fires
+// onOnset ONCE and tears itself down. The caller then stops TTS and opens the
+// real recording session.
+//
+// Why a separate stream rather than reading the recorder's: recording is off
+// during playback by design, and this detector must live exactly for the
+// playback window. It closes the instant it fires (or is cancelled), so the
+// brief overlap with the subsequent startRecording() stream is bounded.
+//
+// Robustness choices:
+// - RMS over the time-domain buffer, not a single sample, to gauge loudness.
+// - Require ONSET_FRAMES consecutive above-threshold frames (~150ms) so a
+//   click, a lip smack, or residual echo transient can't trigger a false
+//   barge-in; sustained speech clears it easily.
+// - echoCancellation removes most of the assistant's own playback from the
+//   input, so the threshold reacts to the user, not the TTS.
+const ONSET_RMS_THRESHOLD = 0.045; // empirical: speech clears it, AEC residual doesn't
+const ONSET_FRAMES = 5; // consecutive above-threshold polls (~150ms at 30ms cadence)
+const ONSET_POLL_MS = 30;
+
+// Starts listening for the user speaking. Resolves to a listener handle once
+// the mic is live (so the caller can cancel it), or null if barge-in is
+// unsupported or the mic can't be opened (in which case playback just proceeds
+// without barge-in rather than failing).
+export const listenForSpeechOnset = async (
+  onOnset: () => void
+): Promise<SpeechOnsetListener | null> => {
+  const Ctor = getAudioContextCtor();
+  if (!Ctor || typeof navigator === "undefined" || !navigator.mediaDevices?.getUserMedia) {
+    return null;
+  }
+
+  let stream: MediaStream;
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({ audio: MIC_CONSTRAINTS });
+  } catch {
+    // Mic unavailable for detection: skip barge-in, don't break playback.
+    return null;
+  }
+
+  let torn = false;
+  let audioCtx: AudioContext | null = null;
+  let timer: ReturnType<typeof setInterval> | null = null;
+
+  const teardown = (): void => {
+    if (torn) return;
+    torn = true;
+    if (timer !== null) clearInterval(timer);
+    timer = null;
+    stream.getTracks().forEach((t) => t.stop());
+    // close() returns a promise; ignore it -- nothing awaits teardown.
+    void audioCtx?.close();
+    audioCtx = null;
+  };
+
+  try {
+    audioCtx = new Ctor();
+    const source = audioCtx.createMediaStreamSource(stream);
+    const analyser = audioCtx.createAnalyser();
+    analyser.fftSize = 512;
+    source.connect(analyser);
+    const buf = new Float32Array(analyser.fftSize);
+
+    let hot = 0;
+    timer = setInterval(() => {
+      if (torn || !audioCtx) return;
+      analyser.getFloatTimeDomainData(buf);
+      let sumSq = 0;
+      for (let i = 0; i < buf.length; i++) sumSq += buf[i] * buf[i];
+      const rms = Math.sqrt(sumSq / buf.length);
+      if (rms >= ONSET_RMS_THRESHOLD) {
+        hot++;
+        if (hot >= ONSET_FRAMES) {
+          teardown();
+          onOnset();
+        }
+      } else {
+        hot = 0; // reset: onset must be SUSTAINED, not a single spike
+      }
+    }, ONSET_POLL_MS);
+  } catch {
+    // AudioContext graph failed to build: abandon barge-in cleanly.
+    teardown();
+    return null;
+  }
+
+  return { cancel: teardown };
 };

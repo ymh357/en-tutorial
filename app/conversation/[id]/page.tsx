@@ -16,7 +16,13 @@ import { getScenarioById } from "@/lib/scenarios";
 import type { Conversation, ConversationMessage, ScenarioType } from "@/lib/types";
 import type { ChatMessageMetadata } from "@/app/api/chat/route";
 import { speakStream, stopSpeaking } from "@/lib/tts";
-import { startRecording, isRecordingSupported, type RecordingSession } from "@/lib/speech";
+import {
+  startRecording,
+  isRecordingSupported,
+  listenForSpeechOnset,
+  type RecordingSession,
+  type SpeechOnsetListener,
+} from "@/lib/speech";
 
 const MIN_EXCHANGES_TO_END = 3;
 
@@ -149,6 +155,11 @@ const ConversationPage = () => {
   const voiceModeRef = useRef(false);
   const isSpeakingRef = useRef(false);
   const [isSpeaking, setIsSpeaking] = useState(false);
+  // Barge-in (talk over the assistant): the onset listener active during TTS
+  // playback. On onset it stops TTS; the awaited speakStream then resolves and
+  // the normal post-playback path opens the mic. Held in a ref so voice-mode
+  // exit / unmount can release its mic stream.
+  const onsetListenerRef = useRef<SpeechOnsetListener | null>(null);
   // Voice mode is a hands-free, spoken experience: the chat transcript is
   // hidden by default so the user just listens and talks. This toggles it
   // back on for when they want to read along. Not persisted -- each entry
@@ -293,18 +304,36 @@ const ConversationPage = () => {
     if (voiceModeRef.current) void startMicSession();
   };
 
-  // Speaks the given text via TTS, then resumes listening for the user's
-  // next utterance once playback finishes. The mic is guaranteed to be off
-  // for the entire duration of playback, so TTS audio can never be picked
-  // up as false user input.
+  // Speaks the given text via TTS, then resumes listening for the user's next
+  // utterance. During playback a barge-in listener runs: if the user starts
+  // talking over the assistant, it stops the speech and jumps straight to
+  // recording. The recording mic (opened only after speech stops) can never
+  // capture the TTS; the barge-in listener tolerates the overlap because it
+  // runs with echo cancellation, which removes the assistant's own audio.
   const speakAndResumeListening = async (text: string): Promise<void> => {
     isSpeakingRef.current = true;
     setIsSpeaking(true);
+
+    // Start listening for the user talking over the assistant. On onset, stop
+    // TTS -- stopSpeaking() flips the playback token so the awaited
+    // speakStream() below resolves promptly. Guarded by voiceModeRef so a late
+    // onset after the user left voice mode is ignored.
+    onsetListenerRef.current = await listenForSpeechOnset(() => {
+      if (!voiceModeRef.current) return;
+      stopSpeaking();
+    });
+
     // Sentence-streamed so the first sentence starts playing as soon as its
-    // audio is ready instead of after the whole reply synthesizes. Still
-    // resolves only once the entire passage has played, preserving the
-    // "mic stays off until playback truly ends" guarantee below.
+    // audio is ready instead of after the whole reply synthesizes. Resolves
+    // once the passage has played OR when a barge-in stopped it early.
     await speakStream(text);
+
+    // Playback done (naturally or via barge-in): tear the listener down. It
+    // already self-teardowns when it fires, so this only matters for the
+    // no-barge-in path; cancel() is idempotent.
+    onsetListenerRef.current?.cancel();
+    onsetListenerRef.current = null;
+
     isSpeakingRef.current = false;
     setIsSpeaking(false);
     if (voiceModeRef.current) {
@@ -322,6 +351,8 @@ const ConversationPage = () => {
       setVoiceError(null);
       setLastApproximate(false); // leaving voice mode: don't let a stale banner follow the user out (M-a)
       stopSpeaking();
+      onsetListenerRef.current?.cancel(); // release the barge-in mic if TTS was playing
+      onsetListenerRef.current = null;
       isSpeakingRef.current = false;
       setIsSpeaking(false);
     } else {
@@ -451,6 +482,8 @@ const ConversationPage = () => {
     return () => {
       mountedRef.current = false;
       sessionRef.current?.cancel();
+      onsetListenerRef.current?.cancel(); // release the barge-in mic on unmount
+      onsetListenerRef.current = null;
       stopSpeaking();
     };
   }, []);
