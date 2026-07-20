@@ -19,6 +19,7 @@ import { db } from "@/lib/db";
 import { dbHelpers } from "@/lib/db-helpers";
 import { recordCost } from "@/lib/cost-tracker";
 import { conversationReviewSchema, toJsonSchema } from "@/lib/ai-schemas";
+import { normalizeTo100 } from "@/lib/rubric";
 import type { Card as SrsCard, ConversationReview } from "@/lib/types";
 
 const SCORE_LABELS: Array<{ key: keyof ConversationReview["scores"]; label: string }> = [
@@ -154,7 +155,19 @@ const ReviewPage = () => {
         });
       }
 
-      await db.conversations.update(conversationId, { review: data.object });
+      // AI grades on a 1-10 scale; normalize to 0-100 before storing so both
+      // the persisted record and the in-session render (via useLiveQuery,
+      // which reflects this write) agree with the rest of the app's scale.
+      const normalizedReview: ConversationReview = {
+        ...data.object,
+        scores: {
+          fluency: normalizeTo100(data.object.scores.fluency),
+          accuracy: normalizeTo100(data.object.scores.accuracy),
+          vocabulary: normalizeTo100(data.object.scores.vocabulary),
+          complexity: normalizeTo100(data.object.scores.complexity),
+        },
+      };
+      await db.conversations.update(conversationId, { review: normalizedReview });
     } catch (err) {
       setGenerationError(
         err instanceof Error ? err.message : "Failed to generate review"
@@ -300,7 +313,7 @@ const ReviewPage = () => {
               {SCORE_LABELS.map(({ key, label }) => (
                 <div key={key} className="flex flex-col items-center gap-1">
                   <div className="text-2xl font-bold">{review.scores[key]}</div>
-                  <div className="text-xs text-muted-foreground">{label}/10</div>
+                  <div className="text-xs text-muted-foreground">{label}/100</div>
                 </div>
               ))}
             </CardContent>
