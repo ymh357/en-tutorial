@@ -65,17 +65,37 @@ const parseUtteranceRate = (rate?: string): number => {
 
 // Resolves only when the fallback utterance finishes (or errors), so a caller
 // awaiting speak() never resumes the mic while this audio is still playing.
+// A length-scaled timeout is a mandatory safety net: Chromium has documented
+// bugs where speechSynthesis.cancel() or longer utterances fail to fire
+// onend/onerror, which would otherwise leave this promise — and the caller's
+// mic — hung forever. The timeout is generous enough that genuine playback
+// almost always ends (onend) first; it only fires when the browser goes silent.
 const fallbackSpeak = (text: string, rate?: string): Promise<void> => {
   if (typeof window === "undefined" || !window.speechSynthesis) {
     return Promise.resolve();
   }
   window.speechSynthesis.cancel();
   return new Promise<void>((resolve) => {
-    const utterance = new SpeechSynthesisUtterance(text);
-    utterance.lang = "en-US";
-    utterance.rate = parseUtteranceRate(rate);
-    utterance.onend = () => resolve();
-    utterance.onerror = () => resolve();
-    window.speechSynthesis.speak(utterance);
+    let settled = false;
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve();
+    };
+    const timer = setTimeout(finish, Math.min(60000, 5000 + text.length * 120));
+    try {
+      const utterance = new SpeechSynthesisUtterance(text);
+      utterance.lang = "en-US";
+      utterance.rate = parseUtteranceRate(rate);
+      utterance.onend = finish;
+      utterance.onerror = finish;
+      window.speechSynthesis.speak(utterance);
+    } catch {
+      // Synchronous throw (malformed utterance): settle rather than reject, so
+      // the !res.ok call site does not fall through to speak()'s outer catch
+      // and invoke fallbackSpeak a second time.
+      finish();
+    }
   });
 };
