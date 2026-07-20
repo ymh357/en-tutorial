@@ -60,13 +60,15 @@ export const POST = async (req: Request): Promise<Response> => {
     );
   }
 
-  // DeepSeek V4 runs a reasoning pass by default. For mechanical extraction /
-  // scoring / rewriting tasks that pass disableThinking, turn it off via the
-  // 0g router's enable_thinking flag: it cuts the bulk of the latency (a small
-  // structured request drops from ~4.5s to ~2s in testing) with no quality
-  // loss on those tasks. Left ON for creative generation (e.g. article
-  // writing), where the reasoning pass helps. The providerOptions key must
-  // match createOpenAICompatible({ name: "0g" }) in lib/ai.ts.
+  // DeepSeek V4 runs a reasoning pass by default. Callers that pass
+  // disableThinking turn it off via the 0g router's enable_thinking flag: it
+  // cuts the bulk of the latency (a small structured request drops from ~4.5s
+  // to ~2s in testing). For pure scoring/extraction that's a free win. It is
+  // ALSO applied to the writing-round2 and translate reviews, which produce a
+  // polishedVersion rewrite -- a deliberate speed-over-rewrite-quality
+  // tradeoff, chosen knowingly, not a lossless one. Left ON for open-ended
+  // creative generation (e.g. article writing), where reasoning helps most.
+  // The providerOptions key must match createOpenAICompatible({ name: "0g" }).
   const providerOptions = disableThinking
     ? { "0g": { enable_thinking: false } }
     : undefined;

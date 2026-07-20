@@ -698,6 +698,7 @@ Return ONLY valid JSON (no markdown fences, no explanation) in this exact format
           prompt,
           system,
           schema: toJsonSchema(assessmentWritingScoreSchema),
+          disableThinking: true, // pure scoring — no reasoning pass needed
         }),
       });
       if (!res.ok) {
@@ -792,6 +793,7 @@ Return ONLY valid JSON (no markdown fences, no explanation) in this exact format
           prompt,
           system,
           schema: toJsonSchema(assessmentConversationScoreSchema),
+          disableThinking: true, // pure scoring — no reasoning pass needed
         }),
       });
       if (!res.ok) {

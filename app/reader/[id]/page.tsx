@@ -255,6 +255,7 @@ const ReaderSessionPage = ({
         body: JSON.stringify({
           prompt,
           schema: toJsonSchema(readerComprehensionEvalSchema),
+          disableThinking: true, // grading student answers — no reasoning pass needed
         }),
       });
 

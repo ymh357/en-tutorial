@@ -1114,6 +1114,7 @@ const PredictionTab = ({ cefrLevel }: { cefrLevel: string }) => {
           prompt,
           system,
           schema: toJsonSchema(listeningPredictionEvalSchema),
+          disableThinking: true, // scoring a prediction — no reasoning pass needed
         }),
       });
       if (!res.ok) {
