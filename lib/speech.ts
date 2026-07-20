@@ -334,11 +334,6 @@ const getAudioContextCtor = (): (new () => AudioContext) | undefined => {
   return w.AudioContext ?? w.webkitAudioContext;
 };
 
-export const isSpeechOnsetSupported = (): boolean =>
-  Boolean(getAudioContextCtor()) &&
-  typeof navigator !== "undefined" &&
-  Boolean(navigator.mediaDevices?.getUserMedia);
-
 // Barge-in detector. Opens its OWN short-lived AEC-enabled mic stream and
 // watches input loudness; when the user speaks over the assistant, it fires
 // onOnset ONCE and tears itself down. The caller then stops TTS and opens the
@@ -356,7 +351,11 @@ export const isSpeechOnsetSupported = (): boolean =>
 //   barge-in; sustained speech clears it easily.
 // - echoCancellation removes most of the assistant's own playback from the
 //   input, so the threshold reacts to the user, not the TTS.
-const ONSET_RMS_THRESHOLD = 0.045; // empirical: speech clears it, AEC residual doesn't
+// These are empirical for desktop Chrome with AEC on. If false triggers show
+// up in testing (e.g. AEC residual on external speakers), raise the threshold
+// or the frame count first -- both trade a touch of interrupt latency for
+// fewer false barge-ins.
+const ONSET_RMS_THRESHOLD = 0.045; // speech clears it, AEC residual doesn't
 const ONSET_FRAMES = 5; // consecutive above-threshold polls (~150ms at 30ms cadence)
 const ONSET_POLL_MS = 30;
 
@@ -397,6 +396,16 @@ export const listenForSpeechOnset = async (
 
   try {
     audioCtx = new Ctor();
+    // speakAndResumeListening is invoked from a setTimeout(0) (the voice
+    // auto-play effect), i.e. outside a user-gesture stack, so Chrome's
+    // autoplay policy can create the context suspended -- in which state the
+    // analyser reads silence and the detector would never fire. Resume it.
+    if (audioCtx.state === "suspended") {
+      await audioCtx.resume();
+    }
+    // cancel() may have run during the resume() await; bail before wiring up.
+    if (torn) return null;
+
     const source = audioCtx.createMediaStreamSource(stream);
     const analyser = audioCtx.createAnalyser();
     analyser.fftSize = 512;

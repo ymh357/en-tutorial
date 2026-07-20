@@ -310,6 +310,13 @@ const ConversationPage = () => {
   // recording. The recording mic (opened only after speech stops) can never
   // capture the TTS; the barge-in listener tolerates the overlap because it
   // runs with echo cancellation, which removes the assistant's own audio.
+  //
+  // Note: on barge-in the first ~150ms+ that triggered the onset isn't
+  // captured -- the detector stream is discarded and a fresh recording stream
+  // opens after stopSpeaking(). The user's opening word(s) over the assistant
+  // may be clipped; acceptable for now (capturing them needs a persistent
+  // stream). Self-interrupt from imperfect AEC is bounded: a false barge-in
+  // records silence, which the empty-transcript path retries once then waits.
   const speakAndResumeListening = async (text: string): Promise<void> => {
     isSpeakingRef.current = true;
     setIsSpeaking(true);
@@ -318,10 +325,21 @@ const ConversationPage = () => {
     // TTS -- stopSpeaking() flips the playback token so the awaited
     // speakStream() below resolves promptly. Guarded by voiceModeRef so a late
     // onset after the user left voice mode is ignored.
-    onsetListenerRef.current = await listenForSpeechOnset(() => {
+    const listener = await listenForSpeechOnset(() => {
       if (!voiceModeRef.current) return;
       stopSpeaking();
     });
+    // The getUserMedia await above takes time; the user may have left voice
+    // mode or the page may have unmounted meanwhile, in which case the exit
+    // handlers already ran and found onsetListenerRef null. Drop this
+    // just-opened listener now rather than leaking its mic/AudioContext.
+    if (!voiceModeRef.current || !mountedRef.current) {
+      listener?.cancel();
+      isSpeakingRef.current = false;
+      setIsSpeaking(false);
+      return;
+    }
+    onsetListenerRef.current = listener;
 
     // Sentence-streamed so the first sentence starts playing as soon as its
     // audio is ready instead of after the whole reply synthesizes. Resolves
