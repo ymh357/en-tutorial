@@ -16,45 +16,9 @@ import { getScenarioById } from "@/lib/scenarios";
 import type { Conversation, ConversationMessage, ScenarioType } from "@/lib/types";
 import type { ChatMessageMetadata } from "@/app/api/chat/route";
 import { speak, stopSpeaking } from "@/lib/tts";
+import { startRecording, isRecordingSupported, type RecordingSession } from "@/lib/speech";
 
 const MIN_EXCHANGES_TO_END = 3;
-
-interface SpeechRecognitionAlternative {
-  transcript: string;
-  confidence: number;
-}
-interface SpeechRecognitionResult {
-  readonly length: number;
-  readonly isFinal: boolean;
-  [index: number]: SpeechRecognitionAlternative;
-}
-interface SpeechRecognitionResultList {
-  readonly length: number;
-  [index: number]: SpeechRecognitionResult;
-}
-interface SpeechRecognitionEvent {
-  results: SpeechRecognitionResultList;
-}
-interface SpeechRecognitionInstance extends EventTarget {
-  lang: string;
-  interimResults: boolean;
-  continuous: boolean;
-  start: () => void;
-  stop: () => void;
-  abort: () => void;
-  onresult: ((event: SpeechRecognitionEvent) => void) | null;
-  onerror: ((event: { error: string }) => void) | null;
-  onend: (() => void) | null;
-}
-
-const getSpeechRecognition = (): (new () => SpeechRecognitionInstance) | undefined => {
-  if (typeof window === "undefined") return undefined;
-  const w = window as unknown as {
-    SpeechRecognition?: new () => SpeechRecognitionInstance;
-    webkitSpeechRecognition?: new () => SpeechRecognitionInstance;
-  };
-  return w.SpeechRecognition ?? w.webkitSpeechRecognition;
-};
 
 const getMessageText = (parts: Array<{ type: string; text?: string }>): string =>
   parts
@@ -177,9 +141,7 @@ const ConversationPage = () => {
   });
 
   const [input, setInput] = useState("");
-  const [isRecording, setIsRecording] = useState(false);
   const [isEnding, setIsEnding] = useState(false);
-  const recognitionRef = useRef<SpeechRecognitionInstance | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const [startTime] = useState<number>(() => Date.now());
   const previousStatusRef = useRef(status);
@@ -187,10 +149,15 @@ const ConversationPage = () => {
   const voiceModeRef = useRef(false);
   const isSpeakingRef = useRef(false);
   const [isSpeaking, setIsSpeaking] = useState(false);
-  const [liveTranscript, setLiveTranscript] = useState("");
+
+  type MicStatus = "idle" | "recording" | "transcribing";
+  const [micStatus, setMicStatus] = useState<MicStatus>("idle");
+  const sessionRef = useRef<RecordingSession | null>(null);
+  const [voiceError, setVoiceError] = useState<string | null>(null);
+  const [lastApproximate, setLastApproximate] = useState(false); // last transcript came from the SpeechRecognition fallback
 
   const isStreaming = status === "streaming" || status === "submitted";
-  const voiceSupported = typeof window !== "undefined" && !!getSpeechRecognition();
+  const voiceSupported = typeof window !== "undefined" && isRecordingSupported();
 
   // The hidden greeting trigger sent to make the AI speak first in voice
   // mode; it's a real message for the API but shouldn't count as a user
@@ -203,95 +170,80 @@ const ConversationPage = () => {
   ).length;
   const canEnd = exchangeCount >= MIN_EXCHANGES_TO_END && !isStreaming;
 
-  // Starts browser SpeechRecognition in continuous + interimResults mode so
-  // the live transcript updates in real time. Recording and TTS playback
-  // never overlap: this is only ever called while the mic is idle and no
-  // audio is playing, so there is no feedback loop into the mic. No
-  // auto-send and no silence detection — the user decides when to send.
-  const startVoiceRecording = (isRestart = false) => {
-    const Ctor = getSpeechRecognition();
-    if (!Ctor) return;
-
-    const recognition = new Ctor();
-    recognition.lang = "en-US";
-    recognition.continuous = true;
-    recognition.interimResults = true;
-
-    let accumulated = "";
-
-    recognition.onresult = (event) => {
-      let final = "";
-      let interim = "";
-      for (let i = 0; i < event.results.length; i++) {
-        if (event.results[i].isFinal) {
-          final += event.results[i][0].transcript;
-        } else {
-          interim += event.results[i][0].transcript;
-        }
-      }
-      accumulated = final;
-      setLiveTranscript((accumulated + " " + interim).trim());
-    };
-
-    recognition.onerror = () => {
-      if (voiceModeRef.current && !isSpeakingRef.current) {
-        setTimeout(() => {
-          if (voiceModeRef.current && !isSpeakingRef.current) {
-            startVoiceRecording(true);
-          } else {
-            setIsRecording(false);
-          }
-        }, 500);
-      } else {
-        setIsRecording(false);
-      }
-    };
-
-    recognition.onend = () => {
-      // Browser periodically resets continuous recognition. If voice mode
-      // is still on, restart silently — no UI flicker, keep transcript.
-      if (voiceModeRef.current && !isSpeakingRef.current) {
-        startVoiceRecording(true);
-      } else {
-        setIsRecording(false);
-      }
-    };
-
-    recognitionRef.current = recognition;
-    setIsRecording(true);
-    if (!isRestart) setLiveTranscript("");
-    recognition.start();
+  // Starts a fresh MediaRecorder session (whisper-primary, per lib/speech.ts).
+  // getUserMedia denial / unsupported throws a clear error and does NOT retry
+  // (kills the old not-allowed retry loop); surface it and drop out of voice mode.
+  const startMicSession = async (): Promise<void> => {
+    // Never open the mic while TTS is still playing (echo-loop guard).
+    if (isSpeakingRef.current) return;
+    // Do NOT clear voiceError here: stopAndSend sets a "try again" / "please
+    // repeat" prompt immediately before calling startMicSession, and both run
+    // in the same render frame — clearing here would coalesce that message to
+    // null (React batching) and it would never show. Errors are cleared only
+    // at intentional fresh-start points (toggleVoiceMode ON, faithful send).
+    try {
+      const session = await startRecording();
+      sessionRef.current = session;
+      setMicStatus("recording");
+    } catch {
+      sessionRef.current = null;
+      setMicStatus("idle");
+      setVoiceError(
+        "Microphone unavailable (permission denied or unsupported). Voice mode off."
+      );
+      voiceModeRef.current = false;
+      setVoiceMode(false);
+    }
   };
 
-  const handleVoiceSend = () => {
-    const text = liveTranscript.trim();
-    if (!text || isStreaming) return;
-    // Stop recognition before sending.
-    recognitionRef.current?.stop();
-    sendMessage({ text });
-    setLiveTranscript("");
-    // Recording will auto-resume after AI replies via speakAndResumeListening.
+  // Stop recording → faithful transcript → auto-send. On transcribe failure,
+  // surface a repeat prompt and return to idle (user can record again).
+  const stopAndSend = async (): Promise<void> => {
+    const session = sessionRef.current;
+    if (!session || micStatus !== "recording" || isStreaming) return;
+    sessionRef.current = null;
+    setMicStatus("transcribing");
+    try {
+      const { text, approximate } = await session.stop();
+      setLastApproximate(approximate);
+      const trimmed = text.trim();
+      if (trimmed) {
+        setVoiceError(null); // genuine send clears any stale "try again" prompt
+        sendMessage({ text: trimmed });
+        // AI reply auto-plays via the voice-autoplay effect, which then
+        // resumes recording through speakAndResumeListening → startMicSession.
+      } else {
+        setVoiceError("Didn't catch that — try again.");
+        await startMicSession();
+      }
+    } catch {
+      setVoiceError("Couldn't reach transcription — please repeat that.");
+      await startMicSession();
+    } finally {
+      setMicStatus((s) => (s === "transcribing" ? "idle" : s));
+    }
   };
 
-  const handleVoiceClear = () => {
-    // Clear current transcript, keep recording.
-    setLiveTranscript("");
-    recognitionRef.current?.stop();
-    // Will auto-restart via onend.
+  // Discard current recording and immediately start a fresh one (stay in voice mode).
+  const cancelMic = (): void => {
+    sessionRef.current?.cancel();
+    sessionRef.current = null;
+    setMicStatus("idle");
+    void startMicSession();
   };
 
   // Speaks the given text via TTS, then resumes listening for the user's
   // next utterance once playback finishes. The mic is guaranteed to be off
   // for the entire duration of playback, so TTS audio can never be picked
   // up as false user input.
-  const speakAndResumeListening = async (text: string) => {
+  const speakAndResumeListening = async (text: string): Promise<void> => {
     isSpeakingRef.current = true;
     setIsSpeaking(true);
-    await speak(text);
+    await speak(text); // C1: resolves only after audio truly ends (awaitable fallback)
     isSpeakingRef.current = false;
     setIsSpeaking(false);
     if (voiceModeRef.current) {
-      startVoiceRecording();
+      await startMicSession();
     }
   };
 
@@ -299,22 +251,30 @@ const ConversationPage = () => {
     if (voiceMode) {
       voiceModeRef.current = false;
       setVoiceMode(false);
-      recognitionRef.current?.stop();
-      setIsRecording(false);
-      setLiveTranscript("");
+      sessionRef.current?.cancel();
+      sessionRef.current = null;
+      setMicStatus("idle");
+      setVoiceError(null);
       stopSpeaking();
       isSpeakingRef.current = false;
       setIsSpeaking(false);
     } else {
       voiceModeRef.current = true;
       setVoiceMode(true);
+      // Clear any leftover text-mode recording session before entering voice
+      // mode — otherwise a mid-recording text→voice switch would overwrite
+      // sessionRef without cancelling it, leaking a live mic (bug I1).
+      sessionRef.current?.cancel();
+      sessionRef.current = null;
+      setMicStatus("idle");
+      setVoiceError(null);
       if (messages.length === 0) {
         // Let the AI open the conversation instead of prompting the user to
         // speak first. The greeting reply is spoken via the auto-play effect,
         // which resumes listening once TTS finishes.
         sendMessage({ text: "[Start the conversation]" });
       } else {
-        startVoiceRecording();
+        void startMicSession();
       }
     }
   };
@@ -412,7 +372,7 @@ const ConversationPage = () => {
   // Stop any active recording/TTS if the page unmounts while voice mode is on.
   useEffect(() => {
     return () => {
-      recognitionRef.current?.stop();
+      sessionRef.current?.cancel();
       stopSpeaking();
     };
   }, []);
@@ -435,49 +395,17 @@ const ConversationPage = () => {
     void speak(text);
   };
 
-  // Text-mode mic button: click to start SpeechRecognition and show the live
-  // transcript in the input field; click again to stop and keep the text.
-  const handleToggleVoiceInput = () => {
-    if (isRecording) {
-      recognitionRef.current?.stop();
-      return;
-    }
-
-    const Ctor = getSpeechRecognition();
-    if (!Ctor) return;
-
-    const recognition = new Ctor();
-    recognition.lang = "en-US";
-    recognition.continuous = true;
-    recognition.interimResults = true;
-
-    let accumulated = "";
-
-    recognition.onresult = (event) => {
-      let final = "";
-      let interim = "";
-      for (let i = 0; i < event.results.length; i++) {
-        if (event.results[i].isFinal) {
-          final += event.results[i][0].transcript;
-        } else {
-          interim += event.results[i][0].transcript;
-        }
-      }
-      accumulated = final;
-      setInput((accumulated + " " + interim).trim());
-    };
-
-    recognition.onerror = () => {
-      setIsRecording(false);
-    };
-
-    recognition.onend = () => {
-      setIsRecording(false);
-    };
-
-    recognitionRef.current = recognition;
-    setIsRecording(true);
-    recognition.start();
+  // TASK 2 HANDOFF BRIDGE (temporary): this used to drive the local
+  // SpeechRecognition instance via recognitionRef/isRecording, both removed
+  // in this refactor (voice mode now goes through the whisper-based
+  // startMicSession/stopAndSend/cancelMic session helpers instead). Task 2
+  // is responsible for migrating the text-mode mic onto those same helpers
+  // and restoring real function here. Until then this is an intentional
+  // no-op — the mic button below is rendered `disabled` so it is
+  // unreachable from the UI, keeping the file compiling without a dangling
+  // reference to the removed SpeechRecognition state.
+  const handleToggleVoiceInput = (): void => {
+    // no-op — see comment above.
   };
 
   const handleEndAndReview = async () => {
@@ -495,9 +423,9 @@ const ConversationPage = () => {
     if (voiceModeRef.current) {
       voiceModeRef.current = false;
       setVoiceMode(false);
-      recognitionRef.current?.stop();
-      setIsRecording(false);
-      setLiveTranscript("");
+      sessionRef.current?.cancel();
+      sessionRef.current = null;
+      setMicStatus("idle");
       stopSpeaking();
       isSpeakingRef.current = false;
     }
@@ -643,13 +571,25 @@ const ConversationPage = () => {
           </Button>
         )}
 
+        {/* Shared across voice and text mode: startMicSession's permission/
+            unsupported error drops back to text mode, and the text-mode mic
+            (Task 2) surfaces its own errors here too, so this must render
+            outside the ternary below to stay visible in both branches. A
+            faithful send clears both via stopAndSend. */}
+        {voiceError && <p className="text-xs text-red-500">{voiceError}</p>}
+        {lastApproximate && (
+          <p className="text-xs text-amber-600">
+            Approximate transcription (couldn&apos;t reach the service).
+          </p>
+        )}
+
         {voiceMode ? (
           <div className="space-y-3">
             {/* Status indicator */}
             <div className="flex items-center gap-3 rounded-lg border bg-muted/20 px-4 py-3">
               <div
                 className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-full ${
-                  isRecording
+                  micStatus === "recording"
                     ? "animate-pulse bg-red-500 text-white"
                     : isSpeaking
                       ? "bg-green-500 text-white"
@@ -660,13 +600,15 @@ const ConversationPage = () => {
               </div>
               <div className="min-w-0 flex-1">
                 <p className="text-sm font-medium">
-                  {isStreaming
-                    ? "AI is thinking..."
-                    : isSpeaking
-                      ? "AI is speaking..."
-                      : isRecording
-                        ? "Listening..."
-                        : "Ready"}
+                  {micStatus === "recording"
+                    ? "Listening… tap Stop when done"
+                    : micStatus === "transcribing"
+                      ? "Transcribing…"
+                      : isStreaming
+                        ? "AI is thinking…"
+                        : isSpeaking
+                          ? "AI is speaking…"
+                          : "Ready"}
                 </p>
                 <p className="text-xs text-muted-foreground">
                   {isSpeaking && "Recording auto-resumes after this"}
@@ -674,57 +616,52 @@ const ConversationPage = () => {
               </div>
             </div>
 
-            {/* Live transcript preview */}
-            {isRecording && (
-              <div className="space-y-2 rounded-lg border bg-muted/20 px-4 py-3">
-                <p className="text-xs font-medium text-muted-foreground">Live:</p>
-                <p className="min-h-[1.25rem] text-sm">
-                  {liveTranscript
-                    ? `"${liveTranscript}"`
-                    : <span className="text-muted-foreground">Start speaking...</span>}
-                </p>
-                <div className="flex flex-col gap-2 sm:flex-row">
-                  <Button
-                    type="button"
-                    className="w-full min-h-[44px]"
-                    onClick={handleVoiceSend}
-                    disabled={isStreaming || !liveTranscript.trim()}
-                  >
-                    <Send className="h-4 w-4" />
-                    Send
-                  </Button>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    className="w-full min-h-[44px]"
-                    onClick={handleVoiceClear}
-                    disabled={!liveTranscript.trim()}
-                  >
-                    Clear
-                  </Button>
-                </div>
+            {/* Recording controls */}
+            {micStatus === "recording" && (
+              <div className="flex flex-col gap-2 sm:flex-row">
+                <Button
+                  type="button"
+                  className="w-full min-h-[44px]"
+                  onClick={() => void stopAndSend()}
+                  disabled={micStatus !== "recording" || isStreaming}
+                >
+                  <Send className="h-4 w-4" />
+                  Stop & Send
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="w-full min-h-[44px]"
+                  onClick={cancelMic}
+                  disabled={micStatus !== "recording"}
+                >
+                  Cancel
+                </Button>
               </div>
+            )}
+            {micStatus === "transcribing" && (
+              <Button type="button" className="w-full min-h-[44px]" disabled>
+                Transcribing…
+              </Button>
             )}
           </div>
         ) : (
           <div className="flex gap-2">
             {voiceSupported && (
+              // TASK 2 HANDOFF: disabled until the text-mode mic is migrated
+              // onto the whisper session helpers (see handleToggleVoiceInput).
               <div className="flex flex-col items-center gap-1">
                 <Button
                   type="button"
-                  variant={isRecording ? "default" : "outline"}
+                  variant="outline"
                   size="icon"
-                  className={`min-h-[44px] min-w-[44px] ${isRecording ? "animate-pulse bg-red-500 text-white hover:bg-red-500" : ""}`}
+                  className="min-h-[44px] min-w-[44px]"
                   onClick={handleToggleVoiceInput}
-                  aria-label={isRecording ? "Stop recording" : "Voice input"}
+                  disabled
+                  aria-label="Voice input"
                 >
                   <Mic className="h-4 w-4" />
                 </Button>
-                {isRecording && (
-                  <span className="whitespace-nowrap text-[10px] text-muted-foreground">
-                    Recording...
-                  </span>
-                )}
               </div>
             )}
             <Textarea
