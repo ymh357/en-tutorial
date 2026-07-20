@@ -15,7 +15,7 @@ const TASK_PROMPTS: Record<PoolTaskType, { system: string; prompt: string }> = {
   },
   "listening-comprehension": {
     system: "You are an English teacher. Return ONLY valid JSON.",
-    prompt: `Generate a 100-150 word English passage at ${DEFAULT_LEVEL} level with 3 multiple-choice comprehension questions. Return JSON: { "passage": "...", "questions": [{ "question": "...", "options": ["A","B","C","D"], "correctIndex": 0 }] }`,
+    prompt: `Generate a 100-150 word English passage at ${DEFAULT_LEVEL} level with 3 multiple-choice comprehension questions. Return JSON: { "passage": "...", "topic": "brief topic description", "questions": [{ "question": "...", "options": ["A","B","C","D"], "correctIndex": 0 }] }`,
   },
   "listening-prediction": {
     system: "You are an English teacher. Return ONLY valid JSON.",

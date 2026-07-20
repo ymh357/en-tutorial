@@ -17,6 +17,17 @@ const CREATIVE_TASK_TYPES = new Set<PoolTaskType>([
 ]);
 const CREATIVE_TEMPERATURE = 0.7;
 
+// reading-article generates a full 300-500 word article via
+// readerArticleGenSchema — the same schema and word-count target that
+// app/reader/page.tsx sends with maxOutputTokens: 8192, because the schema
+// path's default 4096 (see app/api/review/route.ts) truncates the article.
+// Overflow makes generateObject throw, which the catch below silently
+// swallows, so without this override the daily pool would quietly miss
+// reading-article content. Other types keep the route's default.
+const MAX_OUTPUT_TOKENS: Partial<Record<PoolTaskType, number>> = {
+  "reading-article": 8192,
+};
+
 const TASK_TYPES: PoolTaskType[] = [
   "listening-dictation",
   "listening-comprehension",
@@ -39,7 +50,7 @@ const buildPrompt = (
     },
     "listening-comprehension": {
       system: "You are an English teacher. Return ONLY valid JSON.",
-      prompt: `Generate a 100-150 word English passage at ${level} level with 3 multiple-choice comprehension questions. Return JSON: { "passage": "...", "questions": [{ "question": "...", "options": ["A","B","C","D"], "correctIndex": 0 }] }`,
+      prompt: `Generate a 100-150 word English passage at ${level} level with 3 multiple-choice comprehension questions. Return JSON: { "passage": "...", "topic": "brief topic description", "questions": [{ "question": "...", "options": ["A","B","C","D"], "correctIndex": 0 }] }`,
     },
     "listening-prediction": {
       system: "You are an English teacher. Return ONLY valid JSON.",
@@ -89,6 +100,9 @@ export const generatePoolTasks = async (
           schema: toJsonSchema(poolTaskSchemas[type]),
           ...(CREATIVE_TASK_TYPES.has(type)
             ? { temperature: CREATIVE_TEMPERATURE }
+            : {}),
+          ...(MAX_OUTPUT_TOKENS[type]
+            ? { maxOutputTokens: MAX_OUTPUT_TOKENS[type] }
             : {}),
         }),
       });
