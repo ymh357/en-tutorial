@@ -2,6 +2,20 @@ import { db } from "./db";
 import type { PoolTaskType } from "./types";
 import { assignTasks } from "./task-pool";
 import { today } from "./date";
+import { poolTaskSchemas, toJsonSchema } from "./ai-schemas";
+import { recordCost } from "./cost-tracker";
+
+// Creative/open-ended generators need variety across runs — the schema
+// path's default temperature (0, see app/api/review/route.ts) favors exact
+// compliance over diversity, which is right for data-extraction-shaped tasks
+// but would make every generated writing prompt/article/scenario near-
+// identical if left at 0.
+const CREATIVE_TASK_TYPES = new Set<PoolTaskType>([
+  "writing-prompt",
+  "reading-article",
+  "translation-situational",
+]);
+const CREATIVE_TEMPERATURE = 0.7;
 
 const TASK_TYPES: PoolTaskType[] = [
   "listening-dictation",
@@ -69,22 +83,38 @@ export const generatePoolTasks = async (
       const res = await fetch("/api/review", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ prompt, system }),
+        body: JSON.stringify({
+          prompt,
+          system,
+          schema: toJsonSchema(poolTaskSchemas[type]),
+          ...(CREATIVE_TASK_TYPES.has(type)
+            ? { temperature: CREATIVE_TEMPERATURE }
+            : {}),
+        }),
       });
       if (!res.ok) continue;
-      const data = await res.json();
-      if (!data.content) continue;
 
-      let text = data.content.trim();
-      const fence = text.match(/```(?:json)?\s*([\s\S]*?)```/);
-      if (fence) text = fence[1].trim();
+      const data = (await res.json()) as {
+        object?: Record<string, unknown>;
+        usage?: { inputTokens: number; outputTokens: number };
+        model?: string;
+      };
+      if (!data.object) continue;
 
-      const content = JSON.parse(text) as Record<string, unknown>;
+      if (data.usage && data.model) {
+        recordCost({
+          model: data.model,
+          inputTokens: data.usage.inputTokens ?? 0,
+          outputTokens: data.usage.outputTokens ?? 0,
+          module: "pool",
+        });
+      }
+
       await db.poolTasks.add({
         id: crypto.randomUUID(),
         type,
         difficulty: level,
-        content,
+        content: data.object,
         assignedDate: todayStr,
         completed: false,
         createdAt: new Date(),
