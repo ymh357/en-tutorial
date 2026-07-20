@@ -37,6 +37,7 @@ import type {
   Card as SrsCard,
   TranslationExercise as TranslationExerciseRecord,
 } from "@/lib/types";
+import { normalizeTo100, scoreLabel } from "@/lib/rubric";
 
 type ExerciseMode = "sentence" | "paragraph" | "situational";
 
@@ -95,13 +96,6 @@ const ANNOTATION_LABEL: Record<TranslationAnnotationType, string> = {
   error: "Error",
   awkward: "Awkward",
   good: "Good",
-};
-
-const scoreLabel = (score: number): string => {
-  if (score >= 9) return "Excellent";
-  if (score >= 7) return "Good";
-  if (score >= 5) return "Fair";
-  return "Needs Work";
 };
 
 // Local shape guard for pool-task content (already an object read from
@@ -436,7 +430,7 @@ const TranslatePage = () => {
       const parsed = data.object;
       setEvaluation(parsed);
       setSessionCount((c) => c + 1);
-      setScoreSum((s) => s + parsed.score);
+      setScoreSum((s) => s + normalizeTo100(parsed.score));
 
       await dbHelpers.incrementTodayStat("translationCount");
       await dbHelpers.updateStreak();
@@ -447,7 +441,7 @@ const TranslatePage = () => {
         chinese: exercise.chinese,
         userTranslation,
         referenceTranslation: exercise.referenceTranslation,
-        score: parsed.score,
+        score: normalizeTo100(parsed.score),
         feedback: parsed.keyDifferences.join(" "),
         createdAt: new Date(),
       };
@@ -543,7 +537,7 @@ const TranslatePage = () => {
           Translate Chinese into English and get detailed AI feedback.
           {averageScore && (
             <span className="ml-1">
-              Session average: {averageScore}/10 ({sessionCount} completed)
+              Session average: {averageScore}/100 ({sessionCount} completed)
             </span>
           )}
         </p>
@@ -716,9 +710,9 @@ const TranslatePage = () => {
           {/* Score */}
           <Card>
             <CardContent className="flex flex-col items-center gap-1 py-6">
-              <div className="text-4xl font-bold">{evaluation.score}</div>
+              <div className="text-4xl font-bold">{normalizeTo100(evaluation.score)}</div>
               <div className="text-sm text-muted-foreground">
-                {scoreLabel(evaluation.score)} · out of 10
+                {scoreLabel(normalizeTo100(evaluation.score))} · out of 100
               </div>
             </CardContent>
           </Card>
