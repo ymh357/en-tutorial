@@ -116,22 +116,36 @@ const recognizeOnce = (): Promise<string> => {
   });
 };
 
+// A stalled network request would otherwise wedge stop() (and the page's
+// "transcribing" state) forever with no way to reach the fallback path below.
+const STT_TIMEOUT_MS = 40000;
+
 // Uploads a recorded audio blob to /api/stt. Falls back to recognizeOnce()
-// on any failure of the whisper path.
+// on any failure of the whisper path, including a client-side timeout.
 const transcribe = async (blob: Blob): Promise<TranscribeResult> => {
   let whisperError: unknown;
   try {
     const formData = new FormData();
     formData.append("audio", blob, "recording");
 
-    const res = await fetch("/api/stt", { method: "POST", body: formData });
-    const data = (await res.json()) as { text?: string; error?: string };
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), STT_TIMEOUT_MS);
+    try {
+      const res = await fetch("/api/stt", {
+        method: "POST",
+        body: formData,
+        signal: controller.signal,
+      });
+      const data = (await res.json()) as { text?: string; error?: string };
 
-    if (!res.ok || data.error) {
-      throw new Error(data.error ?? `STT request failed: ${res.status}`);
+      if (!res.ok || data.error) {
+        throw new Error(data.error ?? `STT request failed: ${res.status}`);
+      }
+
+      return { text: data.text ?? "", approximate: false };
+    } finally {
+      clearTimeout(timer);
     }
-
-    return { text: data.text ?? "", approximate: false };
   } catch (error) {
     whisperError = error;
   }

@@ -153,6 +153,14 @@ const ConversationPage = () => {
   type MicStatus = "idle" | "recording" | "transcribing";
   const [micStatus, setMicStatus] = useState<MicStatus>("idle");
   const sessionRef = useRef<RecordingSession | null>(null);
+  // True once the component has unmounted; guards setState calls that would
+  // otherwise land after an `await` resolves post-unmount.
+  const mountedRef = useRef(true);
+  // Synchronous re-entry guard: mirrors the ShadowingTab pattern in
+  // app/listening/page.tsx -- startMicSession's state only flips AFTER
+  // startRecording() resolves, so a second call during that async window
+  // would otherwise spawn a second MediaRecorder session.
+  const startingRef = useRef(false);
   const [voiceError, setVoiceError] = useState<string | null>(null);
   const [lastApproximate, setLastApproximate] = useState(false); // last transcript came from the SpeechRecognition fallback
 
@@ -174,8 +182,11 @@ const ConversationPage = () => {
   // getUserMedia denial / unsupported throws a clear error and does NOT retry
   // (kills the old not-allowed retry loop); surface it and drop out of voice mode.
   const startMicSession = async (): Promise<void> => {
-    // Never open the mic while TTS is still playing (echo-loop guard).
-    if (isSpeakingRef.current) return;
+    // Never open the mic while TTS is still playing (echo-loop guard), and
+    // block concurrent starts (a second call during the startRecording()
+    // await below would otherwise spawn a second MediaRecorder session).
+    if (startingRef.current || isSpeakingRef.current) return;
+    startingRef.current = true;
     // Do NOT clear voiceError here: stopAndSend sets a "try again" / "please
     // repeat" prompt immediately before calling startMicSession, and both run
     // in the same render frame — clearing here would coalesce that message to
@@ -183,16 +194,26 @@ const ConversationPage = () => {
     // at intentional fresh-start points (toggleVoiceMode ON, faithful send).
     try {
       const session = await startRecording();
+      // Re-check after the async gap: discard if we unmounted, TTS started
+      // (read-aloud tapped during the await), or voice mode was turned off.
+      if (!mountedRef.current || isSpeakingRef.current || !voiceModeRef.current) {
+        session.cancel();
+        return;
+      }
       sessionRef.current = session;
       setMicStatus("recording");
     } catch {
       sessionRef.current = null;
-      setMicStatus("idle");
-      setVoiceError(
-        "Microphone unavailable (permission denied or unsupported). Voice mode off."
-      );
-      voiceModeRef.current = false;
-      setVoiceMode(false);
+      if (mountedRef.current) {
+        setMicStatus("idle");
+        setVoiceError(
+          "Microphone unavailable (permission denied or unsupported). Voice mode off."
+        );
+        voiceModeRef.current = false;
+        setVoiceMode(false);
+      }
+    } finally {
+      startingRef.current = false;
     }
   };
 
@@ -374,6 +395,7 @@ const ConversationPage = () => {
   // Stop any active recording/TTS if the page unmounts while voice mode is on.
   useEffect(() => {
     return () => {
+      mountedRef.current = false;
       sessionRef.current?.cancel();
       stopSpeaking();
     };
@@ -448,6 +470,12 @@ const ConversationPage = () => {
     setVoiceError(null);
     try {
       const session = await startRecording();
+      // Discard if the component unmounted during the await (text mode has
+      // no voice-mode/speaking state to re-check, unlike startMicSession).
+      if (!mountedRef.current) {
+        session.cancel();
+        return;
+      }
       sessionRef.current = session;
       setMicStatus("recording");
     } catch {

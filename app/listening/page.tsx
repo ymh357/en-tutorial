@@ -744,6 +744,9 @@ const ShadowingTab = ({ cefrLevel }: { cefrLevel: string }) => {
   // would otherwise spawn a second MediaRecorder and orphan the first
   // (unstoppable live mic). This ref blocks that window.
   const startingRef = useRef(false);
+  // True once ShadowingTab has unmounted; guards setState calls that would
+  // otherwise land after startRecording()'s await resolves post-unmount.
+  const mountedRef = useRef(true);
   const [approximate, setApproximate] = useState(false); // last attempt used the SpeechRecognition fallback (auto-corrected → unreliable for a repeat check)
   const [transcript, setTranscript] = useState<string | null>(null);
   const [result, setResult] = useState<DiffResult | null>(null);
@@ -763,6 +766,7 @@ const ShadowingTab = ({ cefrLevel }: { cefrLevel: string }) => {
   // way to stop them.
   useEffect(() => {
     return () => {
+      mountedRef.current = false;
       sessionRef.current?.cancel();
       sessionRef.current = null;
     };
@@ -810,12 +814,20 @@ const ShadowingTab = ({ cefrLevel }: { cefrLevel: string }) => {
     setApproximate(false);
     try {
       const session = await startRecording();
+      // Discard if the tab was switched away from / the page was left
+      // during the await (see the unmount-cleanup effect above).
+      if (!mountedRef.current) {
+        session.cancel();
+        return;
+      }
       sessionRef.current = session;
       setRecStatus("recording");
     } catch {
       sessionRef.current = null;
-      setRecStatus("idle");
-      setError("Microphone unavailable (permission denied or unsupported).");
+      if (mountedRef.current) {
+        setRecStatus("idle");
+        setError("Microphone unavailable (permission denied or unsupported).");
+      }
     } finally {
       startingRef.current = false;
     }

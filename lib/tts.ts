@@ -2,12 +2,17 @@
 // falling back to browser speechSynthesis if the request fails.
 
 let currentAudio: HTMLAudioElement | null = null;
+// Resolver for the in-flight primary-audio playback promise below. pause()
+// fires neither onended nor onerror, so stopSpeaking() calls this directly
+// to settle any speak() call currently awaiting playback -- otherwise the
+// awaiter (and its caller's mic-resume logic) would hang forever.
+let resolveCurrent: (() => void) | null = null;
 
 export const speak = async (text: string, rate?: string): Promise<void> => {
-  if (currentAudio) {
-    currentAudio.pause();
-    currentAudio = null;
-  }
+  // A fresh speak() interrupts any prior one; reuse stopSpeaking() (rather
+  // than duplicating the pause + resolveCurrent settle logic here) so the
+  // interrupted call settles exactly the same way an explicit stop would.
+  stopSpeaking();
 
   try {
     const res = await fetch("/api/tts", {
@@ -27,14 +32,17 @@ export const speak = async (text: string, rate?: string): Promise<void> => {
     currentAudio = audio;
 
     await new Promise<void>((resolve, reject) => {
-      audio.onended = () => {
+      resolveCurrent = () => {
         URL.revokeObjectURL(url);
         currentAudio = null;
+        resolveCurrent = null;
         resolve();
       };
+      audio.onended = () => resolveCurrent?.();
       audio.onerror = () => {
         URL.revokeObjectURL(url);
         currentAudio = null;
+        resolveCurrent = null;
         reject(new Error("Audio playback failed"));
       };
       audio.play().catch(reject);
@@ -49,8 +57,10 @@ export const stopSpeaking = (): void => {
     currentAudio.pause();
     currentAudio = null;
   }
+  resolveCurrent?.(); // settle any pending speak() so awaiters don't hang
+  resolveCurrent = null;
   if (typeof window !== "undefined" && window.speechSynthesis) {
-    window.speechSynthesis.cancel();
+    window.speechSynthesis.cancel(); // fallback path settles via utterance onend (C1)
   }
 };
 
