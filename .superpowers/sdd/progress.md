@@ -380,3 +380,15 @@ D1 execution:
 D1: COMPLETE. Code commits a4c8c8a..ad0df31 (Phase1 rubric+word-align; Phase2 db v5 migration+db-helpers+types comment; Phase3 5 writer pages; Phase4 4 reader pages) + plan 2775034/567fae6. Scoring unified 0-100 end-to-end (opus Phase-4 review confirmed chain consistency). diffWords→NW alignWords (no cascade). getListeningAggregate objective-only avgAccuracy. 
 DECISION: D's broad whole-branch review DEFERRED to after D3 (cover D1+D2+D3 together), same as C. Per-phase opus reviews already gated the substantive phases (2/3/4).
 Next: D2 (SRS correctness, v6).
+
+### D2 · SRS correctness (v6)
+Plan: docs/superpowers/plans/2026-07-20-D2-srs-correctness.md (9f4fe8f, revised e244783). base = e244783.
+opus plan-review → NEEDS REVISION (algorithm/loop-bound/migration verified CORRECT, but coverage gaps): C1 Card.lapses required breaks 6 creation sites → made lapses OPTIONAL; C2 relearning breaks 4 more Record<MasteryLevel> (page.tsx VOCAB_LABELS/COLORS, browse :42/:299) → added app/page.tsx task + browse specifics; C3 newCardsIntroduced double-counts new card taking learning step → gate wasNew&&seen===0; M1 relearning invisible in dashboard/browse buckets → show it. All in e244783.
+Executed as ONE atomic compile-unit (MasteryLevel widening breaks tsc until all exhaustive points covered): 9 commits 121d8a2..c85351c, repo-wide tsc 0 + eslint . --quiet 0.
+opus task-review: SPEC ✅. Hand-traces (lapse graduation, bounded re-queue, migration, exhaustiveness, new-card count) all PASS. Found 1 Critical the plan+plan-review both MISSED + 2 Important:
+- C1 (Critical): new card's first Again incremented lapses (no repetitions>0 guard) → tagged "relearning" → relearning bucket polluted with never-learned cards (guts defect #3). Common path (new-card first-answer-wrong).
+- I1 (Important): dashboard due-count (unbudgeted getDueCards) vs session queue (budgeted getSessionQueue) mismatch → ghost "Review N" task leading to empty session.
+- I2 (Important, NOT a regression): reader vocab coverage excludes relearning (pre-D2 lapsed cards were "new", also excluded); one-line fix.
+- M1/M2 (Minor): handleRate no re-entry guard; settings limit not clamped.
+Fix wave: commit b619761 (one commit). C1 `lapses += 1` moved inside `if (repetitions>0)`; I1 dashboard uses useSessionQueue(dailyNewLimit); I2 reader learning set +relearning; M1 ratingInFlightRef guard; M2 clamp [0,100]. tsc 0 + eslint . --quiet 0. NOTE: useDueCards now unused (dashboard switched to useSessionQueue) — left as legit general-purpose hook, not lint error. Fix re-review of b619761 in flight.
+D2 COMPLETE pending fix re-review. Next: D3a (assessment algorithm, v7).
