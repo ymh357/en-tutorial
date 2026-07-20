@@ -81,6 +81,7 @@ export const dbHelpers = {
       listeningCount: 0,
       translationCount: 0,
       timeSpent: 0,
+      newCardsIntroduced: 0,
     };
     return empty;
   },
@@ -102,6 +103,7 @@ export const dbHelpers = {
         listeningCount: 0,
         translationCount: 0,
         timeSpent: 0,
+        newCardsIntroduced: 0,
         ...updates,
       });
     }
@@ -129,6 +131,7 @@ export const dbHelpers = {
           listeningCount: 0,
           translationCount: 0,
           timeSpent: 0,
+          newCardsIntroduced: 0,
           [field]: amount,
         });
       }
@@ -146,7 +149,13 @@ export const dbHelpers = {
   },
 
   async getVocabCounts(): Promise<Record<MasteryLevel, number>> {
-    const levels: MasteryLevel[] = ["new", "learning", "familiar", "mastered"];
+    const levels: MasteryLevel[] = [
+      "new",
+      "learning",
+      "relearning",
+      "familiar",
+      "mastered",
+    ];
     const results = await Promise.all(
       levels.map((level) =>
         db.cards.where("masteryLevel").equals(level).count()
@@ -155,9 +164,43 @@ export const dbHelpers = {
     return {
       new: results[0],
       learning: results[1],
-      familiar: results[2],
-      mastered: results[3],
+      relearning: results[2],
+      familiar: results[3],
+      mastered: results[4],
     };
+  },
+
+  async getDueReviews(limit = 50): Promise<Card[]> {
+    const now = new Date();
+    return db.cards
+      .where("nextReview")
+      .belowOrEqual(now)
+      .and((c) => c.masteryLevel !== "new")
+      .limit(limit)
+      .toArray();
+  },
+
+  async getNewCards(limit: number): Promise<Card[]> {
+    if (limit <= 0) return [];
+    const now = new Date();
+    return db.cards
+      .where("nextReview")
+      .belowOrEqual(now)
+      .and((c) => c.masteryLevel === "new")
+      .limit(limit)
+      .toArray();
+  },
+
+  // Reviews first, then new cards capped by the remaining daily new-card budget.
+  async getSessionQueue(dailyNewLimit: number): Promise<Card[]> {
+    const reviews = await this.getDueReviews(50);
+    const stats = await this.getTodayStats();
+    const remainingNew = Math.max(
+      0,
+      dailyNewLimit - (stats.newCardsIntroduced ?? 0)
+    );
+    const newCards = await this.getNewCards(remainingNew);
+    return [...reviews, ...newCards];
   },
 
   async isWordKnown(lemma: string): Promise<boolean> {
