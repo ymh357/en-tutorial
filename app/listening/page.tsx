@@ -10,6 +10,7 @@ import {
   Play,
   RotateCcw,
   Sparkles,
+  Square,
   Turtle,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -32,6 +33,11 @@ import { dbHelpers } from "@/lib/db-helpers";
 import { recordCost } from "@/lib/cost-tracker";
 import { completeTask } from "@/lib/task-pool";
 import { speak } from "@/lib/tts";
+import {
+  startRecording,
+  isRecordingSupported,
+  type RecordingSession,
+} from "@/lib/speech";
 import {
   listeningComprehensionSchema,
   listeningPredictionSchema,
@@ -58,48 +64,6 @@ const saveListeningExercise = async (
 };
 
 // --- Shared helpers ---
-
-interface SpeechRecognitionResultLike {
-  results: { [index: number]: { [index: number]: { transcript: string } } };
-}
-
-interface SpeechRecognitionErrorLike {
-  error: string;
-}
-
-interface SpeechRecognitionLike {
-  lang: string;
-  interimResults: boolean;
-  onresult: ((event: SpeechRecognitionResultLike) => void) | null;
-  onerror: ((event: SpeechRecognitionErrorLike) => void) | null;
-  start: () => void;
-}
-
-type SpeechRecognitionConstructor = new () => SpeechRecognitionLike;
-
-const getSpeechRecognitionConstructor = (): SpeechRecognitionConstructor | null => {
-  const w = window as unknown as {
-    SpeechRecognition?: SpeechRecognitionConstructor;
-    webkitSpeechRecognition?: SpeechRecognitionConstructor;
-  };
-  return w.SpeechRecognition ?? w.webkitSpeechRecognition ?? null;
-};
-
-const startListening = (): Promise<string> => {
-  return new Promise((resolve, reject) => {
-    const SpeechRecognition = getSpeechRecognitionConstructor();
-    if (!SpeechRecognition) {
-      reject(new Error("Speech recognition is not supported in this browser."));
-      return;
-    }
-    const recognition = new SpeechRecognition();
-    recognition.lang = "en-US";
-    recognition.interimResults = false;
-    recognition.onresult = (event) => resolve(event.results[0][0].transcript);
-    recognition.onerror = (event) => reject(new Error(event.error));
-    recognition.start();
-  });
-};
 
 const stripFences = (raw: string): string => {
   let text = raw.trim();
@@ -766,12 +730,16 @@ const parseShadowingSentences = (raw: string): string[] | null => {
   }
 };
 
+type RecStatus = "idle" | "recording" | "transcribing";
+
 const ShadowingTab = ({ cefrLevel }: { cefrLevel: string }) => {
   const [sentences, setSentences] = useState<string[]>([]);
   const [index, setIndex] = useState(0);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [isRecording, setIsRecording] = useState(false);
+  const [recStatus, setRecStatus] = useState<RecStatus>("idle");
+  const sessionRef = useRef<RecordingSession | null>(null);
+  const [approximate, setApproximate] = useState(false); // last attempt used the SpeechRecognition fallback (auto-corrected → unreliable for a repeat check)
   const [transcript, setTranscript] = useState<string | null>(null);
   const [result, setResult] = useState<DiffResult | null>(null);
   const [speechSupported, setSpeechSupported] = useState(true);
@@ -780,7 +748,19 @@ const ShadowingTab = ({ cefrLevel }: { cefrLevel: string }) => {
   useEffect(() => {
     if (hasCheckedSupport.current) return;
     hasCheckedSupport.current = true;
-    setSpeechSupported(Boolean(getSpeechRecognitionConstructor()));
+    setSpeechSupported(isRecordingSupported());
+  }, []);
+
+  // Release the microphone if the tab is switched away from (or the page is
+  // left) mid-recording -- ShadowingTab renders inside a Base UI Tabs.Panel,
+  // which unmounts hidden panels by default, so an in-flight session would
+  // otherwise leave getUserMedia's stream + MediaRecorder running with no
+  // way to stop them.
+  useEffect(() => {
+    return () => {
+      sessionRef.current?.cancel();
+      sessionRef.current = null;
+    };
   }, []);
 
   const generateSentences = async (): Promise<void> => {
@@ -790,6 +770,7 @@ const ShadowingTab = ({ cefrLevel }: { cefrLevel: string }) => {
     setIndex(0);
     setTranscript(null);
     setResult(null);
+    setApproximate(false);
     try {
       const system =
         "You are an English pronunciation coach. Return ONLY a valid JSON array of strings (no markdown fences, no explanation).";
@@ -815,36 +796,58 @@ const ShadowingTab = ({ cefrLevel }: { cefrLevel: string }) => {
 
   const currentSentence = sentences[index] ?? "";
 
-  const record = async (): Promise<void> => {
+  const startAttempt = async (): Promise<void> => {
     setError(null);
-    setIsRecording(true);
     setTranscript(null);
     setResult(null);
+    setApproximate(false);
     try {
-      const text = await startListening();
-      setTranscript(text);
-      const shadowResult = diffWords(currentSentence, text);
+      const session = await startRecording();
+      sessionRef.current = session;
+      setRecStatus("recording");
+    } catch {
+      sessionRef.current = null;
+      setRecStatus("idle");
+      setError("Microphone unavailable (permission denied or unsupported).");
+    }
+  };
+
+  // Stop recording → faithful whisper transcript → word-match feedback.
+  const stopAttempt = async (): Promise<void> => {
+    const session = sessionRef.current;
+    if (!session || recStatus !== "recording") return;
+    sessionRef.current = null;
+    setRecStatus("transcribing");
+    try {
+      const { text, approximate: approx } = await session.stop();
+      const said = text.trim();
+      if (!said) {
+        setError("Didn't catch that — try recording again.");
+        return;
+      }
+      setTranscript(said);
+      setApproximate(approx);
+      const shadowResult = diffWords(currentSentence, said);
       setResult(shadowResult);
       await dbHelpers.updateStreak();
       await dbHelpers.incrementTodayStat("listeningCount");
       await saveListeningExercise(
         "shadowing",
         currentSentence,
-        text,
+        said,
         shadowResult.accuracy
       );
-    } catch (err) {
-      setError(
-        err instanceof Error ? err.message : "Could not capture your recording"
-      );
+    } catch {
+      setError("Couldn't reach transcription — please try again.");
     } finally {
-      setIsRecording(false);
+      setRecStatus((s) => (s === "transcribing" ? "idle" : s));
     }
   };
 
   const nextSentence = async (): Promise<void> => {
     setTranscript(null);
     setResult(null);
+    setApproximate(false);
     if (index + 1 < sentences.length) {
       setIndex(index + 1);
     } else {
@@ -863,8 +866,8 @@ const ShadowingTab = ({ cefrLevel }: { cefrLevel: string }) => {
       {!speechSupported && (
         <Alert variant="destructive">
           <AlertDescription>
-            Speech recognition is not supported in this browser. Try Chrome on
-            desktop or Android for the recording feature.
+            Recording is not supported in this browser. Try a recent Chrome,
+            Safari, or Firefox.
           </AlertDescription>
         </Alert>
       )}
@@ -917,15 +920,22 @@ const ShadowingTab = ({ cefrLevel }: { cefrLevel: string }) => {
 
               <Button
                 size="lg"
-                variant={isRecording ? "destructive" : "default"}
+                variant={recStatus === "recording" ? "destructive" : "default"}
                 className="w-full min-h-[44px]"
-                onClick={() => void record()}
-                disabled={!speechSupported || isRecording}
+                onClick={() =>
+                  recStatus === "recording" ? void stopAttempt() : void startAttempt()
+                }
+                disabled={!speechSupported || recStatus === "transcribing"}
               >
-                {isRecording ? (
+                {recStatus === "recording" ? (
+                  <>
+                    <Square className="h-4 w-4" />
+                    Stop &amp; Check
+                  </>
+                ) : recStatus === "transcribing" ? (
                   <>
                     <Loader2 className="h-4 w-4 animate-spin" />
-                    Listening...
+                    Transcribing...
                   </>
                 ) : (
                   <>
@@ -945,7 +955,7 @@ const ShadowingTab = ({ cefrLevel }: { cefrLevel: string }) => {
             <CardTitle className="text-sm font-medium flex items-center justify-between">
               Result
               <Badge variant={result.accuracy >= 80 ? "default" : "secondary"}>
-                {result.accuracy}% accuracy
+                {result.accuracy}% word match
               </Badge>
             </CardTitle>
           </CardHeader>
@@ -973,6 +983,15 @@ const ShadowingTab = ({ cefrLevel }: { cefrLevel: string }) => {
             <p className="text-xs text-muted-foreground">
               You said: &ldquo;{transcript}&rdquo;
             </p>
+            <p className="text-xs text-muted-foreground">
+              Word match against the target — not a pronunciation score.
+            </p>
+            {approximate && (
+              <p className="text-xs text-muted-foreground">
+                Approximate transcription (service unavailable) — this used an
+                auto-corrected fallback, so the word match may read higher than reality.
+              </p>
+            )}
           </CardContent>
         </Card>
       )}
@@ -988,7 +1007,7 @@ const ShadowingTab = ({ cefrLevel }: { cefrLevel: string }) => {
           variant="outline"
           className="w-full min-h-[44px]"
           onClick={() => void nextSentence()}
-          disabled={isLoading}
+          disabled={isLoading || recStatus !== "idle"}
         >
           {isLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : "Next Sentence"}
         </Button>
