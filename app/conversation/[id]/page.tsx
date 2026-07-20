@@ -149,6 +149,11 @@ const ConversationPage = () => {
   const voiceModeRef = useRef(false);
   const isSpeakingRef = useRef(false);
   const [isSpeaking, setIsSpeaking] = useState(false);
+  // Voice mode is a hands-free, spoken experience: the chat transcript is
+  // hidden by default so the user just listens and talks. This toggles it
+  // back on for when they want to read along. Not persisted -- each entry
+  // into voice mode starts hidden again (reset in toggleVoiceMode).
+  const [showTranscript, setShowTranscript] = useState(false);
 
   type MicStatus = "idle" | "recording" | "transcribing";
   const [micStatus, setMicStatus] = useState<MicStatus>("idle");
@@ -330,6 +335,7 @@ const ConversationPage = () => {
       setMicStatus("idle");
       setVoiceError(null);
       setLastApproximate(false); // fresh entry into voice mode: don't carry over a text-mode banner (M-a)
+      setShowTranscript(false); // fresh entry starts hands-free: transcript hidden until asked for
       transcribeRetriesRef.current = 0; // fresh entry earns a fresh retry budget
       if (messages.length === 0) {
         // Let the AI open the conversation instead of prompting the user to
@@ -640,7 +646,11 @@ const ConversationPage = () => {
         <p className="text-sm text-muted-foreground">{description}</p>
       </div>
 
-      {/* Message area */}
+      {/* Message area (transcript). Hidden in voice mode unless the user asks
+          to read along -- voice mode is a hands-free, listen-and-speak
+          experience whose live state is shown by the status indicator below.
+          Always visible in text mode. */}
+      {(!voiceMode || showTranscript) && (
       <div className="min-h-0 flex-1 space-y-4 overflow-y-auto rounded-lg border bg-muted/20 p-4 pb-32 md:pb-4">
         {messages.length === 0 && (
           <p className="text-center text-sm text-muted-foreground">
@@ -679,7 +689,9 @@ const ConversationPage = () => {
             </div>
           );
         })}
-        {isStreaming && (
+        {/* Text mode only: in voice mode the status indicator below already
+            says "AI is thinking…", so this bubble would be redundant. */}
+        {isStreaming && !voiceMode && (
           <div className="flex justify-start">
             <div className="rounded-lg bg-card px-3 py-2 text-sm text-muted-foreground ring-1 ring-foreground/10">
               Thinking...
@@ -693,6 +705,12 @@ const ConversationPage = () => {
         )}
         <div ref={bottomRef} />
       </div>
+      )}
+
+      {/* Immersive voice view (transcript hidden): nothing has flex-1 above,
+          so this spacer fills the gap and lets the controls settle at the
+          bottom instead of bunching under the header. */}
+      {voiceMode && !showTranscript && <div className="min-h-0 flex-1" />}
 
       {/* Input area */}
       <div className="fixed bottom-0 left-0 right-0 z-10 shrink-0 space-y-2 border-t bg-background p-4 md:static md:z-auto md:border-t-0 md:bg-transparent md:p-0 md:pt-4">
@@ -800,6 +818,18 @@ const ConversationPage = () => {
                 Record
               </Button>
             )}
+
+            {/* Read-along toggle: voice mode hides the transcript by default;
+                this reveals/hides it without leaving hands-free mode. */}
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="w-full text-muted-foreground"
+              onClick={() => setShowTranscript((v) => !v)}
+            >
+              {showTranscript ? "Hide transcript" : "Show transcript"}
+            </Button>
           </div>
         ) : (
           <div className="flex gap-2">
