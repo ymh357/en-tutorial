@@ -38,10 +38,11 @@ const NEXT_CEFR_LEVEL: Record<string, string> = {
   C2: "C2",
 };
 
-// Mirrors the B1 -> B2 breakpoint used by the assessment's own coarse
-// cefrFromScore ladder (app/assessment/page.tsx) — kept as a literal here
-// since roadmap only needs the single B1->B2 gate, not the full ladder.
-const B2_ASSESSMENT_THRESHOLD = 65;
+// Mirrors the B2 range floor from lib/assessment-scoring.ts CEFR_RANGES
+// (app/assessment/page.tsx's finishAssessment uses computeFinalBand, which
+// is built on that ladder) — kept as a literal here since roadmap only
+// needs the single B1->B2 gate, not the full ladder.
+const B2_ASSESSMENT_THRESHOLD = 50;
 
 // Stable fallback reference so useMemo deps don't churn on every render
 // while the live query is still resolving.

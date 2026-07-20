@@ -47,7 +47,7 @@ import { recordCost } from "@/lib/cost-tracker";
 import { formatDate, parseDate } from "@/lib/date";
 import { getKnownWordsForLevel, type CefrLevel } from "@/lib/frequency-list";
 import {
-  assessmentReadingGenSchema,
+  assessmentGradedReadingSchema,
   assessmentClozeGenSchema,
   assessmentWritingScoreSchema,
   assessmentConversationScoreSchema,
@@ -55,6 +55,14 @@ import {
 } from "@/lib/ai-schemas";
 import { normalizeTo100 } from "@/lib/rubric";
 import type { AssessmentResult } from "@/lib/types";
+import {
+  spreadLevels,
+  locateLevel,
+  computeFinalBand,
+  type Cefr,
+  type SubtestScore,
+  type Location,
+} from "@/lib/assessment-scoring";
 
 type Phase =
   | "intro"
@@ -70,9 +78,18 @@ interface ReadingQuestion {
   correctIndex: number;
 }
 
-interface ReadingData {
+// Graded-spread shape: one subtest per requested CEFR level (see
+// spreadLevels), each with its own passage + 3 questions. `level` here is
+// the LLM's echoed label — display-only; scoring pairs subtests to the
+// app's requested levels by index (see submitReading), never by this field.
+interface ReadingSubtest {
+  level: string;
   passage: string;
   questions: ReadingQuestion[];
+}
+
+interface ReadingData {
+  subtests: ReadingSubtest[];
 }
 
 interface ClozeBlank {
@@ -95,7 +112,10 @@ interface ConversationTurn {
 // this module path; the canonical definition now lives in lib/types.ts.
 export type { AssessmentResult };
 
-const ASSESSMENT_PROGRESS_KEY = "en-tutor-assessment-progress";
+// v2: graded-spread readingData shape + location field (D3a). Renamed so a
+// stale pre-D3a snapshot (single-passage readingData, no location) is never
+// loaded into the new UI/computeFinalBand, which would crash on it.
+const ASSESSMENT_PROGRESS_KEY = "en-tutor-assessment-progress-v2";
 
 const WRITING_PROMPTS = [
   "Describe a memorable trip you have taken and explain what made it special.",
@@ -173,38 +193,12 @@ const scoreClozeBlank = (userAnswer: string, blank: ClozeBlank): boolean => {
   return candidates.includes(normalizedUser);
 };
 
-// Single source of truth for score -> level mapping. Each entry's fine
-// `band` is the display label (levelBandForScore); its coarse `cefr` is
-// the level used to drive study-difficulty suggestions (cefrFromScore).
-// Ascending by minScore; a score matches the last entry it meets or beats.
-const CEFR_BANDS: { minScore: number; band: string; cefr: string }[] = [
-  { minScore: 0, band: "A2 (Lower)", cefr: "A2" },
-  { minScore: 30, band: "A2 (Upper)", cefr: "A2" },
-  { minScore: 45, band: "B1 (Lower)", cefr: "B1" },
-  { minScore: 55, band: "B1 (Upper)", cefr: "B1" },
-  { minScore: 65, band: "B2 (Lower)", cefr: "B2" },
-  { minScore: 75, band: "B2 (Upper)", cefr: "B2" },
-  { minScore: 85, band: "C1 (Lower)", cefr: "C1" },
-  { minScore: 95, band: "C1 (Upper)", cefr: "C1" },
-];
-
-const bandForScore = (score: number): (typeof CEFR_BANDS)[number] => {
-  let match = CEFR_BANDS[0];
-  for (const entry of CEFR_BANDS) {
-    if (score >= entry.minScore) match = entry;
-    else break;
-  }
-  return match;
-};
-
-const levelBandForScore = (score: number): string => bandForScore(score).band;
-const cefrFromScore = (score: number): string => bandForScore(score).cefr;
-
 interface AssessmentProgress {
   phase: Phase;
   readingData: ReadingData | null;
-  readingAnswers: Record<number, number>;
+  readingAnswers: Record<string, number>;
   readingScore: number;
+  location: Location | null;
   clozeData: ClozeData | null;
   clozeAnswers: Record<number, string>;
   clozeScore: number;
@@ -372,7 +366,10 @@ const initialAssessmentProgress = (): AssessmentProgress | null => {
 
 const AssessmentPage = () => {
   const profile = useProfile();
-  const cefrLevel = profile?.studyLevel || "B1";
+  // Explicit cast: studyLevel is a free-form string in LearningProfile, but
+  // the spread-probe (spreadLevels/locateLevel) operates on the closed Cefr
+  // ladder. Defaults to B1 if unset/unrecognized.
+  const cefr = (profile?.studyLevel || "B1") as Cefr;
 
   const [restoredProgress] = useState<AssessmentProgress | null>(
     initialAssessmentProgress
@@ -386,11 +383,16 @@ const AssessmentPage = () => {
   const [readingData, setReadingData] = useState<ReadingData | null>(
     () => restoredProgress?.readingData ?? null
   );
-  const [readingAnswers, setReadingAnswers] = useState<Record<number, number>>(
+  const [readingAnswers, setReadingAnswers] = useState<Record<string, number>>(
     () => restoredProgress?.readingAnswers ?? {}
   );
   const [readingScore, setReadingScore] = useState<number>(
     () => restoredProgress?.readingScore ?? 0
+  );
+  // Located CEFR level from the graded reading spread-probe (submitReading).
+  // Drives cloze's target level and feeds computeFinalBand in finishAssessment.
+  const [location, setLocation] = useState<Location | null>(
+    () => restoredProgress?.location ?? null
   );
 
   // Cloze section state
@@ -440,10 +442,12 @@ const AssessmentPage = () => {
   );
 
   const previousAssessments = useLiveQuery(() => dbHelpers.getAssessments(), []) ?? [];
-  const [finalResult, setFinalResult] = useState<Omit<
-    AssessmentResult,
-    "id"
-  > | null>(null);
+  // lowConfidence is session-only (not part of the persisted AssessmentResult
+  // shape — see computeFinalBand/finishAssessment); D3b will surface it in
+  // the results UI.
+  const [finalResult, setFinalResult] = useState<
+    (Omit<AssessmentResult, "id"> & { lowConfidence: boolean }) | null
+  >(null);
   const [pendingLevel, setPendingLevel] = useState<string | null>(null);
 
   // dbHelpers.getAssessments() sorts newest-first, so the most recent prior
@@ -470,6 +474,7 @@ const AssessmentPage = () => {
       readingData,
       readingAnswers,
       readingScore,
+      location,
       clozeData,
       clozeAnswers,
       clozeScore,
@@ -487,6 +492,7 @@ const AssessmentPage = () => {
     readingData,
     readingAnswers,
     readingScore,
+    location,
     clozeData,
     clozeAnswers,
     clozeScore,
@@ -500,28 +506,31 @@ const AssessmentPage = () => {
     conversationFeedback,
   ]);
 
-  // --- Section 1: Reading ---
+  // --- Section 1: Reading (graded spread-probe) ---
+  // Generates one subtest per level in the current±1 spread (not just
+  // studyLevel) so submitReading can locate where the student's performance
+  // actually drops, instead of assuming they're at studyLevel.
   const startReading = async (): Promise<void> => {
     setIsLoading(true);
     setError(null);
     try {
-      const system = `You are an English assessment designer. Generate a reading passage (~200 words) at CEFR level ${cefrLevel}, followed by exactly 5 multiple-choice comprehension questions, each with 4 options and one correct answer.
+      const levels = spreadLevels(cefr);
+      const system = `You are an English assessment designer. Generate ${levels.length} independent reading subtests, one for each of these CEFR levels, in this exact order: ${levels.join(", ")}. Each subtest has a ~150-word passage and exactly 3 multiple-choice comprehension questions, each with 4 options and one correct answer. Make each successive level's passage and questions clearly harder than the one before it — increase vocabulary difficulty, sentence complexity, and inference demands from ${levels[0]} up to ${levels[levels.length - 1]}.
 
 Return ONLY valid JSON (no markdown fences, no explanation) in this exact format:
 {
-  "passage": "...",
-  "questions": [
-    { "question": "...", "options": ["...", "...", "...", "..."], "correctIndex": 0 }
+  "subtests": [
+    { "level": "${levels[0]}", "passage": "...", "questions": [ { "question": "...", "options": ["...", "...", "...", "..."], "correctIndex": 0 } ] }
   ]
 }`;
-      const prompt = `Generate a reading comprehension test at ${cefrLevel} level.`;
+      const prompt = `Generate a graded reading comprehension test spanning levels ${levels.join(", ")}.`;
       const res = await fetch("/api/review", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           prompt,
           system,
-          schema: toJsonSchema(assessmentReadingGenSchema),
+          schema: toJsonSchema(assessmentGradedReadingSchema),
         }),
       });
       if (!res.ok) {
@@ -556,20 +565,41 @@ Return ONLY valid JSON (no markdown fences, no explanation) in this exact format
 
   const submitReading = (): void => {
     if (!readingData) return;
-    const correct = readingData.questions.filter(
-      (q, idx) => readingAnswers[idx] === q.correctIndex
-    ).length;
-    const score = Math.round((correct / readingData.questions.length) * 100);
-    setReadingScore(score);
-    void startCloze();
+    // Pair subtests to the levels THIS app requested, by index — never trust
+    // the LLM's echoed `st.level` string, which could be wrong/garbage and
+    // would silently collapse locateLevel to a single (likely B1) level,
+    // re-introducing the self-reference bug this rewrite exists to fix.
+    const levels = spreadLevels(cefr);
+    const subtests: SubtestScore[] = readingData.subtests
+      .slice(0, levels.length)
+      .map((st, si) => ({
+        level: levels[si],
+        correct: st.questions.filter(
+          (q, qi) => readingAnswers[`${si}-${qi}`] === q.correctIndex
+        ).length,
+        total: st.questions.length,
+      }));
+    const loc = locateLevel(subtests);
+    setLocation(loc);
+    // Overall readingScore for AssessmentResult/display = correct% across
+    // all offered questions (independent of which level each one was at).
+    const totalQuestions = subtests.reduce((n, s) => n + s.total, 0);
+    const totalCorrect = subtests.reduce((n, s) => n + s.correct, 0);
+    setReadingScore(
+      totalQuestions === 0 ? 0 : Math.round((totalCorrect / totalQuestions) * 100)
+    );
+    // Pass `loc` directly rather than reading the `location` state — the
+    // setLocation above hasn't flushed yet, so the state var would still be
+    // stale (null on the very first run) at this point in the same tick.
+    void startCloze(loc);
   };
 
-  // --- Section 2: Cloze ---
-  const startCloze = async (): Promise<void> => {
+  // --- Section 2: Cloze (targets the located level, not studyLevel) ---
+  const startCloze = async (loc: Location): Promise<void> => {
     setIsLoading(true);
     setError(null);
     try {
-      const system = `You are an English assessment designer. Generate a cloze (fill-in-the-blank) passage at CEFR level ${cefrLevel}, roughly 120-180 words, with exactly 8 blanks marked as ___(1)___, ___(2)___, etc. For each blank, provide the expected answer and a list of acceptable synonyms/variations.
+      const system = `You are an English assessment designer. Generate a cloze (fill-in-the-blank) passage at CEFR level ${loc.level}, roughly 120-180 words, with exactly 8 blanks marked as ___(1)___, ___(2)___, etc. For each blank, provide the expected answer and a list of acceptable synonyms/variations.
 
 Return ONLY valid JSON (no markdown fences, no explanation) in this exact format:
 {
@@ -578,7 +608,7 @@ Return ONLY valid JSON (no markdown fences, no explanation) in this exact format
     { "index": 1, "answer": "concept", "acceptAlso": ["idea", "notion"] }
   ]
 }`;
-      const prompt = `Generate a cloze test at ${cefrLevel} level with exactly 8 blanks.`;
+      const prompt = `Generate a cloze test at ${loc.level} level with exactly 8 blanks.`;
       const res = await fetch("/api/review", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -790,28 +820,37 @@ Return ONLY valid JSON (no markdown fences, no explanation) in this exact format
   };
 
   const finishAssessment = async (finalConversationScore: number): Promise<void> => {
-    const composite = Math.round(
-      (readingScore + clozeScore + writingScore + finalConversationScore) / 4
-    );
+    // location is set by submitReading before cloze/writing/conversation can
+    // be reached, so it should never be null here in the normal flow; this
+    // fallback only guards against an unreachable-in-practice edge case
+    // (defensive, since computeFinalBand requires a non-null Location).
+    const loc = location ?? { level: "B1" as Cefr, atCeiling: false, atFloor: false };
+    // Subjective sections (writing + conversation, both already 0-100 per
+    // D1's normalizeTo100) are averaged unweighted, then bridged into a
+    // bounded nudge on top of the objective reading/cloze location —
+    // see computeFinalBand for why this can't override the location by more
+    // than one sub-band.
+    const subjectiveAvg = Math.round((writingScore + finalConversationScore) / 2);
+    const final = computeFinalBand(loc, clozeScore, subjectiveAvg);
     const result = {
       date: formatDate(new Date()),
       readingScore,
       clozeScore,
       writingScore,
       conversationScore: finalConversationScore,
-      overallScore: composite,
-      levelBand: levelBandForScore(composite),
+      overallScore: final.overallScore,
+      levelBand: final.band,
     };
     // Capture the prior assessment BEFORE saving — previousAssessments is a
     // live query and would otherwise reflect the row we're about to insert.
     setPriorResult(previousAssessments[0] ?? null);
     await dbHelpers.saveAssessment(result);
-    setFinalResult(result);
+    setFinalResult({ ...result, lowConfidence: final.lowConfidence });
 
     // assessedLevel is display-only and always kept current. studyLevel
     // drives content generation, so only change it with the user's
     // confirmation when it would actually differ from today's setting.
-    const newLevel = cefrFromScore(composite);
+    const newLevel = final.cefr;
     const currentProfile = await dbHelpers.getProfile();
     await db.learningProfile.update("singleton", { assessedLevel: newLevel });
     if (newLevel !== currentProfile.studyLevel) {
@@ -870,7 +909,8 @@ Return ONLY valid JSON (no markdown fences, no explanation) in this exact format
               <div>
                 <p className="text-sm font-medium">Reading Comprehension</p>
                 <p className="text-xs text-muted-foreground">
-                  Read a short passage and answer 5 multiple-choice questions.
+                  Read a few short passages of increasing difficulty and answer
+                  3 multiple-choice questions on each.
                 </p>
               </div>
             </div>
@@ -941,7 +981,8 @@ Return ONLY valid JSON (no markdown fences, no explanation) in this exact format
         <div>
           <h1 className="text-xl font-bold mb-1">Reading Comprehension</h1>
           <p className="text-sm text-muted-foreground">
-            Read the passage, then answer the questions below.
+            Read each passage below, then answer its questions. The passages
+            get progressively harder — that&apos;s expected.
           </p>
         </div>
 
@@ -953,49 +994,63 @@ Return ONLY valid JSON (no markdown fences, no explanation) in this exact format
 
         {readingData && (
           <>
-            <Card>
-              <CardContent className="pt-6">
-                <p className="text-sm leading-relaxed whitespace-pre-wrap">
-                  {readingData.passage}
-                </p>
-              </CardContent>
-            </Card>
-
-            <div className="space-y-4">
-              {readingData.questions.map((q, qIdx) => (
-                <Card key={qIdx}>
-                  <CardHeader className="pb-2">
-                    <CardTitle className="text-sm font-medium">
-                      {qIdx + 1}. {q.question}
-                    </CardTitle>
-                  </CardHeader>
-                  <CardContent className="space-y-2">
-                    {q.options.map((option, optIdx) => (
-                      <button
-                        key={optIdx}
-                        type="button"
-                        onClick={() =>
-                          setReadingAnswers((prev) => ({ ...prev, [qIdx]: optIdx }))
-                        }
-                        className={`w-full min-h-[44px] text-left text-sm rounded-md border px-3 py-2 transition-colors ${
-                          readingAnswers[qIdx] === optIdx
-                            ? "border-primary bg-primary/10"
-                            : "border-border hover:border-primary/50"
-                        }`}
-                      >
-                        {option}
-                      </button>
-                    ))}
+            {readingData.subtests.map((subtest, si) => (
+              <div key={si} className="space-y-4">
+                <Badge variant="outline" className="text-xs">
+                  Passage {si + 1} of {readingData.subtests.length}
+                </Badge>
+                <Card>
+                  <CardContent className="pt-6">
+                    <p className="text-sm leading-relaxed whitespace-pre-wrap">
+                      {subtest.passage}
+                    </p>
                   </CardContent>
                 </Card>
-              ))}
-            </div>
+
+                <div className="space-y-4">
+                  {subtest.questions.map((q, qIdx) => {
+                    const answerKey = `${si}-${qIdx}`;
+                    return (
+                      <Card key={answerKey}>
+                        <CardHeader className="pb-2">
+                          <CardTitle className="text-sm font-medium">
+                            {qIdx + 1}. {q.question}
+                          </CardTitle>
+                        </CardHeader>
+                        <CardContent className="space-y-2">
+                          {q.options.map((option, optIdx) => (
+                            <button
+                              key={optIdx}
+                              type="button"
+                              onClick={() =>
+                                setReadingAnswers((prev) => ({
+                                  ...prev,
+                                  [answerKey]: optIdx,
+                                }))
+                              }
+                              className={`w-full min-h-[44px] text-left text-sm rounded-md border px-3 py-2 transition-colors ${
+                                readingAnswers[answerKey] === optIdx
+                                  ? "border-primary bg-primary/10"
+                                  : "border-border hover:border-primary/50"
+                              }`}
+                            >
+                              {option}
+                            </button>
+                          ))}
+                        </CardContent>
+                      </Card>
+                    );
+                  })}
+                </div>
+              </div>
+            ))}
 
             <Button
               size="lg"
               className="w-full"
               disabled={
-                Object.keys(readingAnswers).length < readingData.questions.length ||
+                Object.keys(readingAnswers).length <
+                  readingData.subtests.reduce((n, st) => n + st.questions.length, 0) ||
                 isLoading
               }
               onClick={submitReading}
