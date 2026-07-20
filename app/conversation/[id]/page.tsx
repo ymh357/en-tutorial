@@ -352,6 +352,14 @@ const ConversationPage = () => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
+  // Revealing the transcript in voice mode mounts a fresh scroll container at
+  // scrollTop 0 (the effect above won't fire -- messages didn't change), so
+  // jump it to the latest message the user just heard. "auto" (not "smooth")
+  // so it lands at the bottom immediately rather than animating up from the top.
+  useEffect(() => {
+    if (showTranscript) bottomRef.current?.scrollIntoView({ behavior: "auto" });
+  }, [showTranscript]);
+
   // On mount, restore any in-progress (unreviewed) conversation from IndexedDB
   // so a refresh doesn't lose the exchange so far.
   useEffect(() => {
@@ -689,9 +697,11 @@ const ConversationPage = () => {
             </div>
           );
         })}
-        {/* Text mode only: in voice mode the status indicator below already
-            says "AI is thinking…", so this bubble would be redundant. */}
-        {isStreaming && !voiceMode && (
+        {/* Shown whenever the transcript is visible (text mode, or voice mode
+            with "Show transcript" on). Suppressed only in the immersive voice
+            view, where the status indicator below already says "AI is
+            thinking…" and this bubble would be redundant. */}
+        {isStreaming && (!voiceMode || showTranscript) && (
           <div className="flex justify-start">
             <div className="rounded-lg bg-card px-3 py-2 text-sm text-muted-foreground ring-1 ring-foreground/10">
               Thinking...
@@ -826,6 +836,7 @@ const ConversationPage = () => {
               variant="ghost"
               size="sm"
               className="w-full text-muted-foreground"
+              aria-expanded={showTranscript}
               onClick={() => setShowTranscript((v) => !v)}
             >
               {showTranscript ? "Hide transcript" : "Show transcript"}
