@@ -119,6 +119,7 @@ const recognizeOnce = (): Promise<string> => {
 // Uploads a recorded audio blob to /api/stt. Falls back to recognizeOnce()
 // on any failure of the whisper path.
 const transcribe = async (blob: Blob): Promise<TranscribeResult> => {
+  let whisperError: unknown;
   try {
     const formData = new FormData();
     formData.append("audio", blob, "recording");
@@ -131,9 +132,24 @@ const transcribe = async (blob: Blob): Promise<TranscribeResult> => {
     }
 
     return { text: data.text ?? "", approximate: false };
-  } catch {
+  } catch (error) {
+    whisperError = error;
+  }
+
+  try {
     const text = await recognizeOnce();
     return { text, approximate: true };
+  } catch (fallbackError) {
+    // Both paths failed: don't let the fallback's error hide the whisper
+    // upload's root cause (network error, non-2xx, misconfiguration).
+    const whisperMessage =
+      whisperError instanceof Error ? whisperError.message : String(whisperError);
+    const fallbackMessage =
+      fallbackError instanceof Error ? fallbackError.message : String(fallbackError);
+    throw new Error(
+      `Transcription failed: ${fallbackMessage} (whisper upload also failed: ${whisperMessage})`,
+      { cause: whisperError }
+    );
   }
 };
 
@@ -165,49 +181,92 @@ export const startRecording = async (): Promise<RecordingSession> => {
     throw error instanceof Error ? error : new Error("Failed to access microphone");
   }
 
-  const mimeType = pickMimeType();
-  const recorder = mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream);
-
-  const chunks: Blob[] = [];
-  recorder.ondataavailable = (event) => {
-    if (event.data.size > 0) chunks.push(event.data);
-  };
-
   const stopTracks = (): void => {
     stream.getTracks().forEach((track) => track.stop());
   };
 
-  let settled = false;
+  // Everything below acquires no new external resources, but MediaRecorder
+  // construction/start() can still throw in some browsers (e.g. Safari's
+  // audio-only MediaRecorder quirks pass the isTypeSupported check yet
+  // reject on construction or start). If that happens after the mic stream
+  // is already live, stop its tracks before rethrowing so the mic isn't
+  // left on with no caller able to reach RecordingSession.cancel().
+  try {
+    const mimeType = pickMimeType();
+    const recorder = mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream);
 
-  const stop = (): Promise<TranscribeResult> => {
-    if (settled) {
-      return Promise.reject(new Error("Recording session already stopped"));
-    }
-    settled = true;
+    const chunks: Blob[] = [];
+    recorder.ondataavailable = (event) => {
+      if (event.data.size > 0) chunks.push(event.data);
+    };
 
-    return new Promise<TranscribeResult>((resolve, reject) => {
-      recorder.onstop = () => {
+    let settled = false;
+    // Set only while a stop() promise is awaiting recorder.onstop, so
+    // onerror can reject it directly instead of leaving it hanging.
+    let pendingReject: ((reason: unknown) => void) | null = null;
+    // Set once a device error fires, so any stop() call (in flight or
+    // later) rejects with the real cause instead of the generic
+    // "already stopped" message.
+    let recordingError: Error | null = null;
+
+    recorder.onerror = (event) => {
+      const detail =
+        event.error && typeof event.error.message === "string"
+          ? event.error.message
+          : "unknown recording error";
+      const error = new Error(`Recording device error: ${detail}`);
+      recordingError = error;
+      if (pendingReject) {
+        pendingReject(error);
+        pendingReject = null;
+      }
+      if (!settled) {
+        // onstop is not guaranteed to fire after an error in every browser,
+        // so release the mic here rather than depending on it.
+        settled = true;
+        recorder.onstop = null;
         stopTracks();
-        // Strip codec parameters (e.g. ";codecs=opus") so the assembled
-        // Blob's type matches the server's extension map exactly rather
-        // than falling through to its generic default.
-        const bareMimeType = (recorder.mimeType || "audio/webm").split(";")[0];
-        const blob = new Blob(chunks, { type: bareMimeType });
-        transcribe(blob).then(resolve, reject);
-      };
-      recorder.stop();
-    });
-  };
+      }
+    };
 
-  const cancel = (): void => {
-    if (settled) return;
-    settled = true;
-    recorder.onstop = null;
-    if (recorder.state !== "inactive") recorder.stop();
+    const stop = (): Promise<TranscribeResult> => {
+      if (recordingError) {
+        return Promise.reject(recordingError);
+      }
+      if (settled) {
+        return Promise.reject(new Error("Recording session already stopped"));
+      }
+      settled = true;
+
+      return new Promise<TranscribeResult>((resolve, reject) => {
+        pendingReject = reject;
+        recorder.onstop = () => {
+          pendingReject = null;
+          stopTracks();
+          // Strip codec parameters (e.g. ";codecs=opus") so the assembled
+          // Blob's type matches the server's extension map exactly rather
+          // than falling through to its generic default.
+          const bareMimeType = (recorder.mimeType || "audio/webm").split(";")[0];
+          const blob = new Blob(chunks, { type: bareMimeType });
+          transcribe(blob).then(resolve, reject);
+        };
+        recorder.stop();
+      });
+    };
+
+    const cancel = (): void => {
+      if (settled) return;
+      settled = true;
+      recorder.onstop = null;
+      if (recorder.state !== "inactive") recorder.stop();
+      stopTracks();
+    };
+
+    recorder.start();
+
+    return { stop, cancel };
+  } catch (error) {
     stopTracks();
-  };
-
-  recorder.start();
-
-  return { stop, cancel };
+    throw error;
+  }
 };
