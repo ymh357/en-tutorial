@@ -53,6 +53,7 @@ import {
   assessmentConversationScoreSchema,
   toJsonSchema,
 } from "@/lib/ai-schemas";
+import { normalizeTo100 } from "@/lib/rubric";
 import type { AssessmentResult } from "@/lib/types";
 
 type Phase =
@@ -681,7 +682,7 @@ Return ONLY valid JSON (no markdown fences, no explanation) in this exact format
           module: "assessment",
         });
       }
-      setWritingScore(Math.round(data.object.score * 10));
+      setWritingScore(normalizeTo100(data.object.score));
       setWritingFeedback(data.object.feedback);
       setPhase("conversation");
     } catch (err) {
@@ -777,7 +778,7 @@ Return ONLY valid JSON (no markdown fences, no explanation) in this exact format
       }
       const avg =
         (data.object.fluency + data.object.accuracy + data.object.vocabulary) / 3;
-      const score = Math.round(avg * 10);
+      const score = normalizeTo100(avg);
       setConversationScore(score);
       setConversationFeedback(data.object.feedback);
       await finishAssessment(score);
