@@ -229,6 +229,21 @@ export const assessmentReadingGenSchema = z.object({
   ),
 });
 
+// Graded-spread reading: 2-3 subtests generated at current-1/current/current+1
+// CEFR levels (see lib/assessment-scoring.ts spreadLevels), used to locate the
+// user's level rather than assuming it from studyLevel.
+export const assessmentGradedReadingSchema = z.object({
+  subtests: z.array(z.object({
+    level: z.enum(["A1", "A2", "B1", "B2", "C1", "C2"]), // requested target level (scoring pairs by app's requested order, not this echo)
+    passage: z.string(),
+    questions: z.array(z.object({
+      question: z.string(),
+      options: z.array(z.string()).length(4),
+      correctIndex: z.number().int().min(0).max(3),
+    })).length(3),
+  })).min(2).max(3), // 3 normally; 2 at a ladder end
+});
+
 export const assessmentClozeGenSchema = z.object({
   passage: z.string(),
   blanks: z.array(
