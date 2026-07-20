@@ -32,6 +32,12 @@ import { dbHelpers } from "@/lib/db-helpers";
 import { recordCost } from "@/lib/cost-tracker";
 import { completeTask } from "@/lib/task-pool";
 import { speak } from "@/lib/tts";
+import {
+  listeningComprehensionSchema,
+  listeningPredictionSchema,
+  listeningPredictionEvalSchema,
+  toJsonSchema,
+} from "@/lib/ai-schemas";
 import type { PoolTaskType } from "@/lib/types";
 
 // Persist a completed listening exercise to the local DB for the history page.
@@ -104,6 +110,12 @@ const stripFences = (raw: string): string => {
   return text;
 };
 
+// Free-text path — used only by dictation sentence generation and shadowing
+// sentence generation, both of which return non-JSON-object shapes that
+// don't fit the structured-output route (a single plain sentence, and a
+// top-level JSON array respectively — see listeningShadowingSchema in
+// lib/ai-schemas.ts). Everything else in this file uses the structured
+// object path inlined per call site below.
 const callReview = async (prompt: string, system: string): Promise<string> => {
   const res = await fetch("/api/review", {
     method: "POST",
@@ -117,13 +129,14 @@ const callReview = async (prompt: string, system: string): Promise<string> => {
     content?: string;
     error?: string;
     usage?: { promptTokens: number; completionTokens: number };
+    model?: string;
   };
   if (data.error || !data.content) {
     throw new Error(data.error || "No content returned");
   }
-  if (data.usage) {
+  if (data.usage && data.model) {
     recordCost({
-      model: "claude-sonnet-5",
+      model: data.model,
       inputTokens: data.usage.promptTokens ?? 0,
       outputTokens: data.usage.completionTokens ?? 0,
       module: "listening",
@@ -440,28 +453,28 @@ interface ComprehensionData {
   questions: ComprehensionQuestion[];
 }
 
-const parseComprehensionData = (raw: string): ComprehensionData | null => {
-  try {
-    const parsed = JSON.parse(stripFences(raw)) as ComprehensionData;
-    if (
-      !parsed ||
-      typeof parsed.passage !== "string" ||
-      typeof parsed.topic !== "string" ||
-      !Array.isArray(parsed.questions) ||
-      parsed.questions.length === 0 ||
-      parsed.questions.some(
-        (q) =>
-          typeof q.question !== "string" ||
-          !Array.isArray(q.options) ||
-          typeof q.correctIndex !== "number"
-      )
-    ) {
-      return null;
-    }
-    return parsed;
-  } catch {
-    return null;
-  }
+// Local shape guard for pool-task content (already an object read from
+// IndexedDB, not raw AI response text — no fence-strip/JSON.parse needed).
+// `topic` is required here to guard against stale pool content generated
+// before the cron/pool generator was migrated to listeningComprehensionSchema
+// (Phase 3) — see the schema-drift note in lib/ai-schemas.ts.
+const isComprehensionData = (value: unknown): value is ComprehensionData => {
+  if (!value || typeof value !== "object") return false;
+  const v = value as { passage?: unknown; topic?: unknown; questions?: unknown };
+  return (
+    typeof v.passage === "string" &&
+    typeof v.topic === "string" &&
+    Array.isArray(v.questions) &&
+    v.questions.length > 0 &&
+    v.questions.every(
+      (q): q is ComprehensionQuestion =>
+        typeof q === "object" &&
+        q !== null &&
+        typeof (q as ComprehensionQuestion).question === "string" &&
+        Array.isArray((q as ComprehensionQuestion).options) &&
+        typeof (q as ComprehensionQuestion).correctIndex === "number"
+    )
+  );
 };
 
 const ComprehensionTab = ({ cefrLevel }: { cefrLevel: string }) => {
@@ -490,15 +503,12 @@ const ComprehensionTab = ({ cefrLevel }: { cefrLevel: string }) => {
         .first();
 
       if (poolTask) {
-        const content = poolTask.content as { passage: string; questions: ComprehensionQuestion[]; topic?: string };
-        if (content.passage && Array.isArray(content.questions)) {
-          const parsed = parseComprehensionData(JSON.stringify(content));
-          if (parsed) {
-            setData(parsed);
-            await completeTask(poolTask.id);
-            setIsLoading(false);
-            return;
-          }
+        const content = poolTask.content;
+        if (isComprehensionData(content)) {
+          setData(content);
+          await completeTask(poolTask.id);
+          setIsLoading(false);
+          return;
         }
       }
     } catch {
@@ -509,12 +519,36 @@ const ComprehensionTab = ({ cefrLevel }: { cefrLevel: string }) => {
       const system =
         "You are an English listening test designer. Return ONLY valid JSON (no markdown fences, no explanation).";
       const prompt = `Generate a 100-150 word English passage at ${cefrLevel} level, followed by 3 multiple-choice comprehension questions. Return as JSON: { "passage": string, "topic": "brief topic description", "questions": [{ "question": string, "options": string[], "correctIndex": number }] }`;
-      const content = await callReview(prompt, system);
-      const parsed = parseComprehensionData(content);
-      if (!parsed) {
-        throw new Error("Could not parse the passage. Please try again.");
+      const res = await fetch("/api/review", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          prompt,
+          system,
+          schema: toJsonSchema(listeningComprehensionSchema),
+        }),
+      });
+      if (!res.ok) {
+        throw new Error(`Request failed: ${res.status}`);
       }
-      setData(parsed);
+      const data = (await res.json()) as {
+        object?: ComprehensionData;
+        error?: string;
+        usage?: { inputTokens: number; outputTokens: number };
+        model?: string;
+      };
+      if (data.error || !data.object) {
+        throw new Error(data.error || "Could not parse the passage. Please try again.");
+      }
+      if (data.usage && data.model) {
+        recordCost({
+          model: data.model,
+          inputTokens: data.usage.inputTokens ?? 0,
+          outputTokens: data.usage.outputTokens ?? 0,
+          module: "listening",
+        });
+      }
+      setData(data.object);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to generate passage");
     } finally {
@@ -971,43 +1005,10 @@ interface PredictionPassage {
   topic: string;
 }
 
-const parsePredictionPassage = (raw: string): PredictionPassage | null => {
-  try {
-    const parsed = JSON.parse(stripFences(raw)) as PredictionPassage;
-    if (
-      !parsed ||
-      typeof parsed.firstHalf !== "string" ||
-      typeof parsed.secondHalf !== "string" ||
-      typeof parsed.topic !== "string"
-    ) {
-      return null;
-    }
-    return parsed;
-  } catch {
-    return null;
-  }
-};
-
 interface PredictionEvaluation {
   score: number;
   feedback: string;
 }
-
-const parsePredictionEvaluation = (raw: string): PredictionEvaluation | null => {
-  try {
-    const parsed = JSON.parse(stripFences(raw)) as PredictionEvaluation;
-    if (
-      !parsed ||
-      typeof parsed.score !== "number" ||
-      typeof parsed.feedback !== "string"
-    ) {
-      return null;
-    }
-    return parsed;
-  } catch {
-    return null;
-  }
-};
 
 const PredictionTab = ({ cefrLevel }: { cefrLevel: string }) => {
   const [passage, setPassage] = useState<PredictionPassage | null>(null);
@@ -1048,12 +1049,36 @@ const PredictionTab = ({ cefrLevel }: { cefrLevel: string }) => {
       const system =
         "You are an English listening exercise designer. Return ONLY valid JSON (no markdown fences, no explanation).";
       const prompt = `Generate a short English passage (3-4 sentences) at ${cefrLevel} level that has a clear logical progression where the second half naturally follows from the first half. Return JSON:\n{\n  "firstHalf": "first 1-2 sentences",\n  "secondHalf": "remaining sentences",\n  "topic": "brief topic description"\n}`;
-      const content = await callReview(prompt, system);
-      const parsed = parsePredictionPassage(content);
-      if (!parsed) {
-        throw new Error("Could not parse the passage. Please try again.");
+      const res = await fetch("/api/review", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          prompt,
+          system,
+          schema: toJsonSchema(listeningPredictionSchema),
+        }),
+      });
+      if (!res.ok) {
+        throw new Error(`Request failed: ${res.status}`);
       }
-      setPassage(parsed);
+      const data = (await res.json()) as {
+        object?: PredictionPassage;
+        error?: string;
+        usage?: { inputTokens: number; outputTokens: number };
+        model?: string;
+      };
+      if (data.error || !data.object) {
+        throw new Error(data.error || "Could not parse the passage. Please try again.");
+      }
+      if (data.usage && data.model) {
+        recordCost({
+          model: data.model,
+          inputTokens: data.usage.inputTokens ?? 0,
+          outputTokens: data.usage.outputTokens ?? 0,
+          module: "listening",
+        });
+      }
+      setPassage(data.object);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to generate passage");
     } finally {
@@ -1075,11 +1100,36 @@ const PredictionTab = ({ cefrLevel }: { cefrLevel: string }) => {
       const system =
         "You are an English listening comprehension evaluator. Return ONLY valid JSON (no markdown fences, no explanation).";
       const prompt = `The original continuation was: "${passage.secondHalf}"\nThe student predicted: "${userInput}"\nEvaluate how well the prediction matches in terms of logical coherence and contextual understanding (not exact wording). Score 1-10. Return JSON:\n{ "score": number, "feedback": "brief feedback on the prediction quality" }`;
-      const content = await callReview(prompt, system);
-      const parsed = parsePredictionEvaluation(content);
-      if (!parsed) {
-        throw new Error("Could not parse the evaluation. Please try again.");
+      const res = await fetch("/api/review", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          prompt,
+          system,
+          schema: toJsonSchema(listeningPredictionEvalSchema),
+        }),
+      });
+      if (!res.ok) {
+        throw new Error(`Request failed: ${res.status}`);
       }
+      const data = (await res.json()) as {
+        object?: PredictionEvaluation;
+        error?: string;
+        usage?: { inputTokens: number; outputTokens: number };
+        model?: string;
+      };
+      if (data.error || !data.object) {
+        throw new Error(data.error || "Could not parse the evaluation. Please try again.");
+      }
+      if (data.usage && data.model) {
+        recordCost({
+          model: data.model,
+          inputTokens: data.usage.inputTokens ?? 0,
+          outputTokens: data.usage.outputTokens ?? 0,
+          module: "listening",
+        });
+      }
+      const parsed = data.object;
       setEvaluation(parsed);
       await dbHelpers.updateStreak();
       await dbHelpers.incrementTodayStat("listeningCount");
