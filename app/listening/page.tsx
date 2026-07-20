@@ -739,6 +739,11 @@ const ShadowingTab = ({ cefrLevel }: { cefrLevel: string }) => {
   const [error, setError] = useState<string | null>(null);
   const [recStatus, setRecStatus] = useState<RecStatus>("idle");
   const sessionRef = useRef<RecordingSession | null>(null);
+  // Synchronous re-entry guard: recStatus/sessionRef only flip AFTER
+  // startRecording() resolves, so a second click during that async window
+  // would otherwise spawn a second MediaRecorder and orphan the first
+  // (unstoppable live mic). This ref blocks that window.
+  const startingRef = useRef(false);
   const [approximate, setApproximate] = useState(false); // last attempt used the SpeechRecognition fallback (auto-corrected → unreliable for a repeat check)
   const [transcript, setTranscript] = useState<string | null>(null);
   const [result, setResult] = useState<DiffResult | null>(null);
@@ -797,6 +802,8 @@ const ShadowingTab = ({ cefrLevel }: { cefrLevel: string }) => {
   const currentSentence = sentences[index] ?? "";
 
   const startAttempt = async (): Promise<void> => {
+    if (startingRef.current || recStatus !== "idle") return;
+    startingRef.current = true;
     setError(null);
     setTranscript(null);
     setResult(null);
@@ -809,6 +816,8 @@ const ShadowingTab = ({ cefrLevel }: { cefrLevel: string }) => {
       sessionRef.current = null;
       setRecStatus("idle");
       setError("Microphone unavailable (permission denied or unsupported).");
+    } finally {
+      startingRef.current = false;
     }
   };
 
@@ -829,14 +838,20 @@ const ShadowingTab = ({ cefrLevel }: { cefrLevel: string }) => {
       setApproximate(approx);
       const shadowResult = diffWords(currentSentence, said);
       setResult(shadowResult);
-      await dbHelpers.updateStreak();
-      await dbHelpers.incrementTodayStat("listeningCount");
-      await saveListeningExercise(
-        "shadowing",
-        currentSentence,
-        said,
-        shadowResult.accuracy
-      );
+      // Persistence is best-effort: a DB write failure must not masquerade as
+      // a transcription error (the result above already stands).
+      try {
+        await dbHelpers.updateStreak();
+        await dbHelpers.incrementTodayStat("listeningCount");
+        await saveListeningExercise(
+          "shadowing",
+          currentSentence,
+          said,
+          shadowResult.accuracy
+        );
+      } catch {
+        // Stats are non-critical; keep the result visible.
+      }
     } catch {
       setError("Couldn't reach transcription — please try again.");
     } finally {
