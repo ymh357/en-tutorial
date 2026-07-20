@@ -65,16 +65,21 @@ const parseUtteranceRate = (rate?: string): number => {
 
 // Resolves only when the fallback utterance finishes (or errors), so a caller
 // awaiting speak() never resumes the mic while this audio is still playing.
-// A length-scaled timeout is a mandatory safety net: Chromium has documented
-// bugs where speechSynthesis.cancel() or longer utterances fail to fire
-// onend/onerror, which would otherwise leave this promise — and the caller's
-// mic — hung forever. The timeout is generous enough that genuine playback
-// almost always ends (onend) first; it only fires when the browser goes silent.
+// A timeout is a mandatory safety net: Chromium has documented bugs where
+// speechSynthesis.cancel() or longer utterances fail to fire onend/onerror,
+// which would otherwise leave this promise — and the caller's mic — hung
+// forever. It must outlast genuine playback or it would fire mid-speech and
+// reopen the mic (the echo loop this fix closes). Duration scales with both
+// length AND rate: a slower rate lengthens playback proportionally (listening
+// speaks a 100-150 word passage at -30%), so the estimate is divided by the
+// applied rate; the 180s ceiling covers the longest fallback-spoken text at
+// the slowest configured rate.
 const fallbackSpeak = (text: string, rate?: string): Promise<void> => {
   if (typeof window === "undefined" || !window.speechSynthesis) {
     return Promise.resolve();
   }
   window.speechSynthesis.cancel();
+  const utteranceRate = parseUtteranceRate(rate);
   return new Promise<void>((resolve) => {
     let settled = false;
     const finish = () => {
@@ -83,11 +88,12 @@ const fallbackSpeak = (text: string, rate?: string): Promise<void> => {
       clearTimeout(timer);
       resolve();
     };
-    const timer = setTimeout(finish, Math.min(60000, 5000 + text.length * 120));
+    const timeoutMs = Math.min(180000, (5000 + text.length * 120) / utteranceRate);
+    const timer = setTimeout(finish, timeoutMs);
     try {
       const utterance = new SpeechSynthesisUtterance(text);
       utterance.lang = "en-US";
-      utterance.rate = parseUtteranceRate(rate);
+      utterance.rate = utteranceRate;
       utterance.onend = finish;
       utterance.onerror = finish;
       window.speechSynthesis.speak(utterance);
