@@ -394,6 +394,12 @@ export const startBargeInListen = async (
   let timer: ReturnType<typeof setInterval> | null = null;
   let recorder: MediaRecorder | null = null;
   const chunks: Blob[] = [];
+  // Set if the recorder errors mid-window (device unplugged, OS revoke). Like
+  // startRecording's guard: onstop isn't guaranteed to fire after an error, so
+  // a later stopAndTranscribe must reject on this rather than await an onstop
+  // that never comes. The recorder can also reach "inactive" on its own this
+  // way, which stopAndTranscribe must handle without hanging.
+  let recordingError: Error | null = null;
 
   const stopTracks = (): void => stream.getTracks().forEach((t) => t.stop());
 
@@ -432,19 +438,36 @@ export const startBargeInListen = async (
     void audioCtx?.close();
     audioCtx = null;
 
+    // The recorder already errored mid-window: reject now rather than await an
+    // onstop that may never fire.
+    if (recordingError) {
+      stopTracks();
+      return Promise.reject(recordingError);
+    }
+
+    // Assemble + transcribe the captured audio. Shared by the natural onstop
+    // and the "already inactive" path so neither leaves the promise unsettled.
+    const finish = (resolve: (r: TranscribeResult) => void, reject: (e: unknown) => void): void => {
+      stopTracks();
+      const bareMimeType = (rec.mimeType || "audio/webm").split(";")[0];
+      const blob = new Blob(chunks, { type: bareMimeType });
+      transcribe(blob).then(resolve, reject);
+    };
+
     return new Promise<TranscribeResult>((resolve, reject) => {
-      rec.onstop = () => {
-        stopTracks();
-        const bareMimeType = (rec.mimeType || "audio/webm").split(";")[0];
-        const blob = new Blob(chunks, { type: bareMimeType });
-        transcribe(blob).then(resolve, reject);
-      };
+      // Recorder ended on its own (e.g. track stopped) before we called stop:
+      // its dataavailable has already fired, so transcribe what we have rather
+      // than waiting for an onstop that won't come.
+      if (rec.state === "inactive") {
+        finish(resolve, reject);
+        return;
+      }
+      rec.onstop = () => finish(resolve, reject);
       rec.onerror = () => {
         stopTracks();
-        void audioCtx?.close();
         reject(new Error("Barge-in recording device error"));
       };
-      if (rec.state !== "inactive") rec.stop();
+      rec.stop();
     });
   };
 
@@ -454,6 +477,17 @@ export const startBargeInListen = async (
     recorder = mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream);
     recorder.ondataavailable = (event) => {
       if (event.data.size > 0) chunks.push(event.data);
+    };
+    // Wire onerror at construction: a device error during the (now long)
+    // recording window would otherwise be swallowed, leaving the recorder
+    // inactive and a later stopAndTranscribe with no event to settle on.
+    // Record the cause so stopAndTranscribe rejects with it promptly.
+    recorder.onerror = (event) => {
+      const detail =
+        event.error && typeof event.error.message === "string"
+          ? event.error.message
+          : "unknown recording error";
+      recordingError = new Error(`Barge-in recording device error: ${detail}`);
     };
     recorder.start();
 
