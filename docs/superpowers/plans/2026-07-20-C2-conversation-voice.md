@@ -89,7 +89,11 @@ export const isRecordingSupported: () => boolean;              // MediaRecorder/
     const startMicSession = async (): Promise<void> => {
       // Never open the mic while TTS is still playing (echo-loop guard).
       if (isSpeakingRef.current) return;
-      setVoiceError(null);
+      // Do NOT clear voiceError here: stopAndSend sets a "try again" / "please
+      // repeat" prompt immediately before calling startMicSession, and both run
+      // in the same render frame — clearing here would coalesce that message to
+      // null (React batching) and it would never show. Errors are cleared only
+      // at intentional fresh-start points (toggleVoiceMode ON, faithful send).
       try {
         const session = await startRecording();
         sessionRef.current = session;
@@ -119,6 +123,7 @@ export const isRecordingSupported: () => boolean;              // MediaRecorder/
         setLastApproximate(approximate);
         const trimmed = text.trim();
         if (trimmed) {
+          setVoiceError(null); // genuine send clears any stale "try again" prompt
           sendMessage({ text: trimmed });
           // AI reply auto-plays via the voice-autoplay effect, which then
           // resumes recording through speakAndResumeListening → startMicSession.
@@ -156,7 +161,9 @@ export const isRecordingSupported: () => boolean;              // MediaRecorder/
       }
     };
     ```
-- [ ] **Step 6: 改 `toggleVoiceMode`（约 298-320 行）。** 打开分支的 `startVoiceRecording()` → `void startMicSession();`；关闭分支把 `recognitionRef.current?.stop(); setIsRecording(false); setLiveTranscript("");` 换成 `sessionRef.current?.cancel(); sessionRef.current = null; setMicStatus("idle"); setVoiceError(null);`（其余 `stopSpeaking()`/`isSpeakingRef`/`voiceModeRef` 保留）。
+- [ ] **Step 6: 改 `toggleVoiceMode`（约 298-320 行）。**
+  - **打开分支**（`else` 里）：进入前先清掉任何遗留的文本模式录音会话并清 error（否则 text→voice 中途切换会覆盖 `sessionRef` 而不 cancel，泄漏 live mic —— I1）：在设置 `voiceModeRef.current = true; setVoiceMode(true);` 之后、`messages.length === 0` 判断之前插入 `sessionRef.current?.cancel(); sessionRef.current = null; setMicStatus("idle"); setVoiceError(null);`；随后 `messages.length === 0` → `sendMessage({ text: "[Start the conversation]" })`（不变），`else` → `void startMicSession();`（替换旧 `startVoiceRecording()`）。
+  - **关闭分支**：把 `recognitionRef.current?.stop(); setIsRecording(false); setLiveTranscript("");` 换成 `sessionRef.current?.cancel(); sessionRef.current = null; setMicStatus("idle"); setVoiceError(null);`（其余 `stopSpeaking()`/`isSpeakingRef`/`voiceModeRef` 保留）。
 - [ ] **Step 7: 改 `handleVoiceSend`/`handleVoiceClear`（约 266-281 行）。** 删除这两个基于 `liveTranscript` 的旧函数——它们的职责由 `stopAndSend`/`cancelMic` 取代。
 - [ ] **Step 8: 卸载/结束清理。**
   - 卸载 effect（约 412-418 行）：`recognitionRef.current?.stop();` → `sessionRef.current?.cancel();`（`stopSpeaking()` 保留）。
@@ -167,8 +174,17 @@ export const isRecordingSupported: () => boolean;              // MediaRecorder/
   - **删除**实时 interim 预览块（`{isRecording && (<div>…Live:…</div>)}`，含 `liveTranscript` 显示）。
   - 录音中显示两个按钮：`Stop & Send`（`onClick={() => void stopAndSend()}`，`disabled={micStatus !== "recording" || isStreaming}`）与 `Cancel`（`onClick={cancelMic}`，`disabled={micStatus !== "recording"}`）。
   - `micStatus === "transcribing"` 时显示禁用的 "Transcribing…" 提示（可复用一个 disabled 按钮或文案行）。
-  - `voiceError` 非空时在该区域显示一行 `text-xs text-red-500` 提示。
-  - `lastApproximate` 为真时显示一行 `text-xs text-amber-600`："Approximate transcription (couldn't reach the service)."（发送后仍可见到下次录音清除；在 `stopAndSend` 成功忠实路径把 `setLastApproximate(false)`）。
+  - （`voiceError` / `lastApproximate` 的显示**不放在此语音块内** —— 见 Step 9b，移到 ternary 外，使权限拒绝/文本模式错误也能显示。）
+- [ ] **Step 9b: 全局错误/近似提示（ternary 外，两模式共用；修 C1+M2）。** 在 Voice Mode 切换按钮块（约 634-644 行 `{voiceSupported && (<Button…Voice Mode…/>)}`）之后、`{voiceMode ? (...) : (...)}` ternary 之前，插入（输入区渲染即挂载，语音/文本/退出语音后都可见）：
+    ```tsx
+    {voiceError && <p className="text-xs text-red-500">{voiceError}</p>}
+    {lastApproximate && (
+      <p className="text-xs text-amber-600">
+        Approximate transcription (couldn&apos;t reach the service).
+      </p>
+    )}
+    ```
+    为何在此：`startMicSession` catch 会关掉 voiceMode（回到文本分支），且文本模式 mic 的错误也在文本分支——放 ternary 外才都可见。忠实发送时 `stopAndSend` 已 `setVoiceError(null)` + `setLastApproximate(false)` 清除。
 - [ ] **Step 10:** `tsc --noEmit` + `eslint app/conversation/[id]/page.tsx` 清（保持分支 0 error；若有 pre-existing 无关告警如实记录）。**推理核对（写进 report）**：
   - bug1 回声回路：`speakAndResumeListening` 在 `await speak()`（C1 awaitable）后才 `startMicSession`；`startMicSession` 首行 `if (isSpeakingRef.current) return` 双保险。
   - bug3 权限死循环：`startRecording()` 拒绝 → catch → 提示 + 关 voiceMode，**无 setTimeout 重试**。
@@ -187,6 +203,10 @@ export const isRecordingSupported: () => boolean;              // MediaRecorder/
     ```ts
     const handleSpeak = async (text: string): Promise<void> => {
       if (voiceModeRef.current) {
+        // Ignore read-aloud taps while TTS is already playing or a transcript
+        // is in flight: replaying would churn sessionRef and overlap speak()
+        // (M1). The user can re-tap once we return to Recording/Ready.
+        if (isSpeakingRef.current || micStatus === "transcribing") return;
         // Voice mode: stop any live recording first so TTS is not captured,
         // then play through the speaking mutex and resume recording after.
         sessionRef.current?.cancel();
