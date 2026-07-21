@@ -19,6 +19,7 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { EmptyState } from "@/components/states/empty-state";
 import { db } from "@/lib/db";
 import { dbHelpers } from "@/lib/db-helpers";
 import {
@@ -393,14 +394,11 @@ const ProfilePage = () => {
       </div>
 
       {!hasData && (
-        <Card>
-          <CardContent className="py-6">
-            <p className="text-sm text-muted-foreground">
-              No activity yet. Start a conversation, read an article, or write
-              something to begin building your learning profile.
-            </p>
-          </CardContent>
-        </Card>
+        <EmptyState
+          icon={<Sparkles />}
+          title="No activity yet"
+          description="Start a conversation, read an article, or write something to begin building your learning profile."
+        />
       )}
 
       {/* 1. Overview */}

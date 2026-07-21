@@ -26,6 +26,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Alert, AlertDescription } from "@/components/ui/alert";
+import { ErrorState } from "@/components/states/error-state";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useProfile } from "@/hooks/use-db";
 import { db } from "@/lib/db";
@@ -219,9 +220,7 @@ const DictationTab = ({ cefrLevel }: { cefrLevel: string }) => {
   return (
     <div className="space-y-4">
       {error && (
-        <Alert variant="destructive">
-          <AlertDescription>{error}</AlertDescription>
-        </Alert>
+        <ErrorState title="Something went wrong" description={error} />
       )}
 
       <Card>
@@ -513,9 +512,7 @@ const ComprehensionTab = ({ cefrLevel }: { cefrLevel: string }) => {
   return (
     <div className="space-y-4">
       {error && (
-        <Alert variant="destructive">
-          <AlertDescription>{error}</AlertDescription>
-        </Alert>
+        <ErrorState title="Something went wrong" description={error} />
       )}
 
       {isLoading && !data ? (
@@ -846,9 +843,7 @@ const ShadowingTab = ({ cefrLevel }: { cefrLevel: string }) => {
   return (
     <div className="space-y-4">
       {error && (
-        <Alert variant="destructive">
-          <AlertDescription>{error}</AlertDescription>
-        </Alert>
+        <ErrorState title="Something went wrong" description={error} />
       )}
 
       {!speechSupported && (
@@ -1157,9 +1152,7 @@ const PredictionTab = ({ cefrLevel }: { cefrLevel: string }) => {
   return (
     <div className="space-y-4">
       {error && (
-        <Alert variant="destructive">
-          <AlertDescription>{error}</AlertDescription>
-        </Alert>
+        <ErrorState title="Something went wrong" description={error} />
       )}
 
       {isLoading && !passage ? (

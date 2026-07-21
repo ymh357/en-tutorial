@@ -2,12 +2,13 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useLiveQuery } from "dexie-react-hooks";
-import { Plus, Search, Trash2 } from "lucide-react";
+import { Layers, Plus, Search, Trash2 } from "lucide-react";
 import { db } from "@/lib/db";
 import { dbHelpers } from "@/lib/db-helpers";
 import { ensureLemmatizer, lemmatize } from "@/lib/lemma";
 import type { Card as CardType, CardSource, MasteryLevel } from "@/lib/types";
 import { Card, CardContent } from "@/components/ui/card";
+import { EmptyState } from "@/components/states/empty-state";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
@@ -413,23 +414,17 @@ const BrowsePage = () => {
           Loading cards...
         </p>
       ) : totalCards === 0 ? (
-        <Card>
-          <CardContent className="flex flex-col items-center gap-2 py-12 text-center">
-            <p className="text-lg font-medium">No cards yet.</p>
-            <p className="text-sm text-muted-foreground">
-              Cards will appear here as you learn through conversations,
-              reading, and writing.
-            </p>
-          </CardContent>
-        </Card>
+        <EmptyState
+          icon={<Layers />}
+          title="No cards yet."
+          description="Cards will appear here as you learn through conversations, reading, and writing."
+        />
       ) : filteredCards.length === 0 ? (
-        <Card>
-          <CardContent className="flex flex-col items-center gap-2 py-12 text-center">
-            <p className="text-sm text-muted-foreground">
-              No cards match your search or filter.
-            </p>
-          </CardContent>
-        </Card>
+        <EmptyState
+          icon={<Search />}
+          title="No matches"
+          description="No cards match your search or filter."
+        />
       ) : (
         <div className="max-h-[60vh] space-y-2 overflow-y-auto pr-1">
           {filteredCards.map((card) => (

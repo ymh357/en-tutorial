@@ -2,7 +2,7 @@
 
 import { useMemo, useRef, useState } from "react";
 import Link from "next/link";
-import { Flame, Library, Volume2 } from "lucide-react";
+import { Library, PartyPopper, Volume2 } from "lucide-react";
 import { db } from "@/lib/db";
 import { dbHelpers } from "@/lib/db-helpers";
 import { useProfile, useSessionQueue } from "@/hooks/use-db";
@@ -23,6 +23,8 @@ import {
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Progress, ProgressTrack, ProgressIndicator } from "@/components/ui/progress";
+import { StreakCard } from "@/components/achievement/streak-card";
+import { EmptyState } from "@/components/states/empty-state";
 import { speak } from "@/lib/tts";
 
 const sourceLabels: Record<CardSource, string> = {
@@ -178,17 +180,16 @@ const SrsPage = () => {
             Browse & Manage
           </Button>
         </div>
-        <Card>
-          <CardContent className="flex flex-col items-center gap-3 py-12 text-center">
-            <p className="text-lg font-medium">All caught up!</p>
-            <p className="text-sm text-muted-foreground">
-              No cards to review right now.
-            </p>
+        <EmptyState
+          icon={<PartyPopper />}
+          title="All caught up!"
+          description="No cards to review right now."
+          action={
             <Button variant="outline" render={<Link href="/srs/browse" />}>
               Browse all cards
             </Button>
-          </CardContent>
-        </Card>
+          }
+        />
       </div>
     );
   }
@@ -217,16 +218,11 @@ const SrsPage = () => {
             </div>
 
             {streak && (
-              <div className="flex items-center gap-2 rounded-lg bg-muted/50 p-4">
-                <Flame className="size-5 shrink-0 text-orange-500" />
-                <div>
-                  <p className="text-sm font-medium">
-                    {streak.current} day{streak.current === 1 ? "" : "s"} streak
-                  </p>
-                  <p className="text-xs text-muted-foreground">
-                    Best: {streak.longest} days
-                  </p>
-                </div>
+              <div className="space-y-1">
+                <StreakCard days={streak.current} />
+                <p className="text-center text-xs text-muted-foreground">
+                  Best: {streak.longest} days
+                </p>
               </div>
             )}
 

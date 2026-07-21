@@ -639,7 +639,7 @@ const DashboardPage = () => {
               </div>
             </div>
             <div className="flex items-center gap-2 pt-1 border-t">
-              <Flame className="size-3.5 text-orange-500 shrink-0" />
+              <Flame className="size-3.5 text-accent shrink-0" />
               <p className="text-xs text-muted-foreground">
                 {profile?.streakCurrent ?? 0} day
                 {(profile?.streakCurrent ?? 0) === 1 ? "" : "s"} streak · Best:{" "}

@@ -13,6 +13,7 @@ import {
   ClipboardCheck,
 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
+import { EmptyState } from "@/components/states/empty-state";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { db } from "@/lib/db";
@@ -271,15 +272,11 @@ const HistoryPage = () => {
           </CardContent>
         </Card>
       ) : filteredEntries.length === 0 ? (
-        <Card>
-          <CardContent className="flex flex-col items-center gap-2 py-12 text-center">
-            <p className="text-lg font-medium">No history yet.</p>
-            <p className="text-sm text-muted-foreground">
-              Complete a conversation, reading, writing, listening, or
-              translation exercise to see it here.
-            </p>
-          </CardContent>
-        </Card>
+        <EmptyState
+          icon={<HistoryIcon />}
+          title="No history yet."
+          description="Complete a conversation, reading, writing, listening, or translation exercise to see it here."
+        />
       ) : (
         <div className="space-y-6">
           {groups.map(([groupLabel, groupEntries]) => (
