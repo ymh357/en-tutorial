@@ -15,6 +15,11 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { ScoreCard } from "@/components/feedback/score-card";
+import { CorrectionEntry } from "@/components/feedback/correction-entry";
+import { HighlightPraise } from "@/components/feedback/highlight-praise";
+import { WordCard } from "@/components/feedback/word-card";
+import { ErrorState } from "@/components/states/error-state";
 import { db } from "@/lib/db";
 import { dbHelpers } from "@/lib/db-helpers";
 import { recordCost } from "@/lib/cost-tracker";
@@ -280,45 +285,41 @@ const ReviewPage = () => {
         </p>
       </div>
 
-      {review === null && (
-        <Card>
-          <CardContent className="flex flex-col items-center gap-3 py-10">
-            {generationError ? (
-              <>
-                <AlertTriangle className="h-6 w-6 text-destructive" />
-                <p className="text-center text-sm text-muted-foreground">
-                  {generationError}
-                </p>
-                <Button onClick={handleRetry}>Retry</Button>
-              </>
-            ) : (
-              <>
-                <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
-                <p className="text-sm text-muted-foreground">
-                  Generating Review...
-                </p>
-              </>
-            )}
-          </CardContent>
-        </Card>
-      )}
+      {review === null &&
+        (generationError ? (
+          <ErrorState
+            title="Couldn't generate review"
+            description={generationError}
+            onRetry={handleRetry}
+          />
+        ) : (
+          <Card>
+            <CardContent className="flex flex-col items-center gap-3 py-10">
+              <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+              <p className="text-sm text-muted-foreground">
+                Generating Review...
+              </p>
+            </CardContent>
+          </Card>
+        ))}
 
       {review !== null && (
         <>
           {/* Score Card */}
-          <Card>
-            <CardHeader>
-              <CardTitle>Scores</CardTitle>
-            </CardHeader>
-            <CardContent className="grid grid-cols-2 gap-4 sm:grid-cols-4">
-              {SCORE_LABELS.map(({ key, label }) => (
-                <div key={key} className="flex flex-col items-center gap-1">
-                  <div className="text-2xl font-bold">{review.scores[key]}</div>
-                  <div className="text-xs text-muted-foreground">{label}/100</div>
-                </div>
-              ))}
-            </CardContent>
-          </Card>
+          <ScoreCard
+            overallScore={Math.round(
+              SCORE_LABELS.reduce((sum, { key }) => sum + review.scores[key], 0) /
+                SCORE_LABELS.length
+            )}
+            overallLabel="SCORE"
+            title="Your scores"
+            subtitle="Averaged across four dimensions"
+            dimensions={SCORE_LABELS.map(({ key, label }) => ({
+              label,
+              score: review.scores[key],
+              max: 100,
+            }))}
+          />
 
           {/* Errors */}
           {review.errors.length > 0 && (
@@ -334,26 +335,16 @@ const ReviewPage = () => {
                   const key = `error-${i}`;
                   const isAdded = addedKeys.has(key);
                   return (
-                    <div
-                      key={key}
-                      className="rounded-lg border bg-card p-3 text-sm"
-                    >
-                      <p>
-                        <span className="text-destructive line-through">
-                          {error.original}
-                        </span>
-                        {" -> "}
-                        <span className="font-medium text-foreground">
-                          {error.corrected}
-                        </span>
-                      </p>
-                      <p className="mt-1 text-xs text-muted-foreground">
-                        {error.explanation}
-                      </p>
+                    <div key={key} className="space-y-2">
+                      <CorrectionEntry
+                        kind="correction"
+                        original={error.original}
+                        corrected={error.corrected}
+                        explanation={error.explanation}
+                      />
                       <Button
                         size="sm"
                         variant={isAdded ? "secondary" : "outline"}
-                        className="mt-2"
                         disabled={isAdded || addingKey === key}
                         onClick={() =>
                           handleAddToSrs("error", key, {
@@ -398,26 +389,16 @@ const ReviewPage = () => {
                   const key = `improvement-${i}`;
                   const isAdded = addedKeys.has(key);
                   return (
-                    <div
-                      key={key}
-                      className="rounded-lg border bg-card p-3 text-sm"
-                    >
-                      <p>
-                        <span className="text-muted-foreground">
-                          {improvement.original}
-                        </span>
-                        {" -> "}
-                        <span className="font-medium text-foreground">
-                          {improvement.improved}
-                        </span>
-                      </p>
-                      <p className="mt-1 text-xs text-muted-foreground">
-                        {improvement.context}
-                      </p>
+                    <div key={key} className="space-y-2">
+                      <CorrectionEntry
+                        kind="word-choice"
+                        original={improvement.original}
+                        corrected={improvement.improved}
+                        explanation={improvement.context}
+                      />
                       <Button
                         size="sm"
                         variant={isAdded ? "secondary" : "outline"}
-                        className="mt-2"
                         disabled={isAdded || addingKey === key}
                         onClick={() =>
                           handleAddToSrs("improvement", key, {
@@ -450,27 +431,16 @@ const ReviewPage = () => {
 
           {/* Highlights */}
           {review.highlights.length > 0 && (
-            <Card className="border-green-500/30 bg-green-500/5">
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2 text-green-600 dark:text-green-500">
-                  <Sparkles className="h-4 w-4" />
-                  Positive Highlights
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-3">
-                {review.highlights.map((highlight, i) => (
-                  <div
-                    key={`highlight-${i}`}
-                    className="rounded-lg border bg-card p-3 text-sm"
-                  >
-                    <p className="font-medium">&ldquo;{highlight.text}&rdquo;</p>
-                    <p className="mt-1 text-xs text-muted-foreground">
-                      {highlight.reason}
-                    </p>
-                  </div>
-                ))}
-              </CardContent>
-            </Card>
+            <div className="space-y-3">
+              {review.highlights.map((highlight, i) => (
+                <HighlightPraise key={`highlight-${i}`} title="Positive highlight">
+                  &ldquo;{highlight.text}&rdquo;
+                  <span className="mt-1 block text-sm text-muted-foreground">
+                    {highlight.reason}
+                  </span>
+                </HighlightPraise>
+              ))}
+            </div>
           )}
 
           {/* New Vocabulary */}
@@ -487,58 +457,44 @@ const ReviewPage = () => {
                   const key = `vocab-${i}`;
                   const isAdded = addedKeys.has(key);
                   return (
-                    <div
-                      key={key}
-                      className="rounded-lg border bg-card p-3 text-sm"
-                    >
-                      <p className="font-medium">{vocab.word}</p>
-                      <p className="mt-1 text-xs text-muted-foreground">
-                        {vocab.definition}
-                      </p>
-                      <p className="mt-1 text-xs italic text-muted-foreground">
-                        {vocab.example}
-                      </p>
-                      {vocab.collocations && vocab.collocations.length > 0 && (
-                        <p className="mt-1 text-xs text-muted-foreground">
-                          <span className="font-medium">Collocations: </span>
-                          {vocab.collocations.join("; ")}
-                        </p>
-                      )}
-                      {vocab.wordFamily && (
-                        <p className="mt-1 text-xs text-muted-foreground">
-                          <span className="font-medium">Word family: </span>
-                          {vocab.wordFamily}
-                        </p>
-                      )}
-                      <Button
-                        size="sm"
-                        variant={isAdded ? "secondary" : "outline"}
-                        className="mt-2"
-                        disabled={isAdded || addingKey === key}
-                        onClick={() =>
-                          handleAddToSrs("vocabulary", key, {
-                            type: "vocabulary",
-                            lemma: vocab.lemma,
-                            front: vocab.word,
-                            back: vocab.definition,
-                            context: vocab.example,
-                            collocations: vocab.collocations,
-                            wordFamily: vocab.wordFamily,
-                          })
+                    <div key={key} className="space-y-1">
+                      <WordCard
+                        word={vocab.word}
+                        definition={vocab.definition}
+                        example={vocab.example}
+                        added={isAdded}
+                        onAdd={
+                          addingKey === key
+                            ? undefined
+                            : () =>
+                                handleAddToSrs("vocabulary", key, {
+                                  type: "vocabulary",
+                                  lemma: vocab.lemma,
+                                  front: vocab.word,
+                                  back: vocab.definition,
+                                  context: vocab.example,
+                                  collocations: vocab.collocations,
+                                  wordFamily: vocab.wordFamily,
+                                })
                         }
-                      >
-                        {isAdded ? (
-                          <>
-                            <Check className="h-3.5 w-3.5" />
-                            Added!
-                          </>
-                        ) : (
-                          <>
-                            <Plus className="h-3.5 w-3.5" />
-                            Add to SRS
-                          </>
-                        )}
-                      </Button>
+                      />
+                      {((vocab.collocations && vocab.collocations.length > 0) ||
+                        vocab.wordFamily) && (
+                        <div className="px-1 text-xs text-muted-foreground">
+                          {vocab.collocations && vocab.collocations.length > 0 && (
+                            <p>
+                              <span className="font-medium">Collocations: </span>
+                              {vocab.collocations.join("; ")}
+                            </p>
+                          )}
+                          {vocab.wordFamily && (
+                            <p>
+                              <span className="font-medium">Word family: </span>
+                              {vocab.wordFamily}
+                            </p>
+                          )}
+                        </div>
+                      )}
                     </div>
                   );
                 })}
