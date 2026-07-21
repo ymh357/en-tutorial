@@ -1,5 +1,11 @@
 export type CardType = "vocabulary" | "error" | "expression";
-export type CardSource = "conversation" | "reading" | "writing" | "translate" | "manual";
+export type CardSource =
+  | "conversation"
+  | "ielts-part2"
+  | "reading"
+  | "writing"
+  | "translate"
+  | "manual";
 export type MasteryLevel = "new" | "learning" | "relearning" | "familiar" | "mastered";
 export type ScenarioType = "preset" | "custom" | "free" | "recommended";
 export type WritingTaskType =
@@ -207,4 +213,35 @@ export interface AssessmentResult {
   conversationScore: number;
   overallScore: number;
   levelBand: string;
+}
+
+export interface Part2Review {
+  scores: {
+    fluencyCoherence: number;   // 0-100 (normalized from 0-9 band)
+    lexicalResource: number;    // 0-100
+    grammaticalRange: number;   // 0-100
+    pronunciation: number;      // 0-100 — experimental proxy (see design)
+  };
+  bandEstimate: number;         // 0-9 overall IELTS band (0.5 steps)
+  errors: Array<{ original: string; corrected: string; explanation: string }>;
+  improvements: Array<{ original: string; improved: string; context: string }>;
+  highlights: Array<{ text: string; reason: string }>;
+  newVocabulary: Array<{
+    word: string;
+    lemma: string;
+    definition: string;
+    example: string;
+  }>;
+  followUpFeedback: string;
+}
+
+export interface Part2Session {
+  id: string;
+  cardId: string;
+  topic: string;
+  transcript: string;
+  durationSec: number;
+  review: Part2Review | null;
+  followUps: Array<{ question: string; answer: string }>;
+  createdAt: Date;
 }

@@ -285,6 +285,51 @@ export const poolTaskSchemas: Record<PoolTaskType, z.ZodType> = {
   "writing-prompt": writingPromptGenSchema,
 };
 
+// --- IELTS Part 2 (app/ielts/part2/**) ---
+
+export const part2ReviewSchema = z.object({
+  scores: z.object({
+    fluencyCoherence: z.number().min(0).max(9),
+    lexicalResource: z.number().min(0).max(9),
+    grammaticalRange: z.number().min(0).max(9),
+    pronunciation: z.number().min(0).max(9),
+  }),
+  bandEstimate: z.number().min(0).max(9),
+  errors: z.array(
+    z.object({
+      original: z.string(),
+      corrected: z.string(),
+      explanation: z.string(),
+    })
+  ),
+  improvements: z.array(
+    z.object({
+      original: z.string(),
+      improved: z.string(),
+      context: z.string(),
+    })
+  ),
+  highlights: z.array(
+    z.object({ text: z.string(), reason: z.string() })
+  ),
+  newVocabulary: z.array(
+    z.object({
+      word: z.string(),
+      lemma: z.string(),
+      definition: z.string(),
+      example: z.string(),
+    })
+  ),
+});
+
+export const part2FollowUpSchema = z.object({
+  questions: z.array(z.string()).min(1).max(2),
+});
+
+export const part2FollowUpFeedbackSchema = z.object({
+  feedback: z.string(),
+});
+
 // --- JSON Schema bridge ---
 
 /**

@@ -26,6 +26,7 @@ import {
 
 const sourceLabels: Record<CardSource, string> = {
   conversation: "Conversation",
+  "ielts-part2": "IELTS Part 2",
   reading: "Reading",
   writing: "Writing",
   translate: "Translation",

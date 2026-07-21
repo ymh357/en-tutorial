@@ -10,6 +10,7 @@ import type {
   TranslationExercise,
   PoolTask,
   AssessmentResult,
+  Part2Session,
 } from "./types";
 import { formatDate } from "./date";
 
@@ -24,6 +25,7 @@ const db = new Dexie("EnTutorDB") as Dexie & {
   translationExercises: EntityTable<TranslationExercise, "id">;
   poolTasks: EntityTable<PoolTask, "id">;
   assessments: EntityTable<AssessmentResult, "id">;
+  part2Sessions: EntityTable<Part2Session, "id">;
 };
 
 db.version(1).stores({
@@ -247,5 +249,20 @@ db.version(6)
     }
     // lapsedInterval stays undefined (optional); dailyNewLimit defaults in code.
   });
+
+db.version(7).stores({
+  // identical to v6, plus the new part2Sessions table.
+  cards: "id, type, lemma, source, sourceId, nextReview, masteryLevel, createdAt",
+  conversations: "id, scenarioType, createdAt",
+  readingSessions: "id, source, createdAt",
+  writingSessions: "id, taskType, createdAt",
+  learningProfile: "id",
+  dailyStats: "id",
+  listeningExercises: "id, mode, createdAt",
+  translationExercises: "id, mode, createdAt",
+  poolTasks: "id, type, assignedDate, completed, createdAt",
+  assessments: "id, date",
+  part2Sessions: "id, cardId, createdAt",
+});
 
 export { db };

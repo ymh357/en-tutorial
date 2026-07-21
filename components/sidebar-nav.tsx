@@ -16,6 +16,7 @@ import {
   BookOpenText,
   Map,
   History,
+  GraduationCap,
   type LucideIcon,
 } from "lucide-react";
 import {
@@ -34,6 +35,7 @@ import {
 const NAV_ITEMS: { title: string; href: string; icon: LucideIcon }[] = [
   { title: "Dashboard", href: "/", icon: LayoutDashboard },
   { title: "Conversation", href: "/conversation", icon: MessageSquare },
+  { title: "IELTS Part 2", href: "/ielts/part2", icon: GraduationCap },
   { title: "Reader", href: "/reader", icon: BookOpen },
   { title: "Writing", href: "/writing", icon: PenLine },
   { title: "Listening", href: "/listening", icon: Headphones },
