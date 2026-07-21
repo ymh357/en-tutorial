@@ -26,6 +26,8 @@ import { Badge } from "@/components/ui/badge";
 import { Textarea } from "@/components/ui/textarea";
 import { Input } from "@/components/ui/input";
 import { Alert, AlertDescription } from "@/components/ui/alert";
+import { ScoreCard } from "@/components/feedback/score-card";
+import { ErrorState } from "@/components/states/error-state";
 import {
   Progress,
   ProgressTrack,
@@ -964,9 +966,7 @@ Return ONLY valid JSON (no markdown fences, no explanation) in this exact format
         )}
 
         {error && (
-          <Alert variant="destructive">
-            <AlertDescription>{error}</AlertDescription>
-          </Alert>
+          <ErrorState title="Something went wrong" description={error} />
         )}
 
         <Button size="lg" className="w-full" onClick={startReading} disabled={isLoading}>
@@ -997,9 +997,7 @@ Return ONLY valid JSON (no markdown fences, no explanation) in this exact format
         </div>
 
         {error && (
-          <Alert variant="destructive">
-            <AlertDescription>{error}</AlertDescription>
-          </Alert>
+          <ErrorState title="Something went wrong" description={error} />
         )}
 
         {readingData && (
@@ -1093,9 +1091,7 @@ Return ONLY valid JSON (no markdown fences, no explanation) in this exact format
         </div>
 
         {error && (
-          <Alert variant="destructive">
-            <AlertDescription>{error}</AlertDescription>
-          </Alert>
+          <ErrorState title="Something went wrong" description={error} />
         )}
 
         {clozeData && (
@@ -1158,9 +1154,7 @@ Return ONLY valid JSON (no markdown fences, no explanation) in this exact format
         </div>
 
         {error && (
-          <Alert variant="destructive">
-            <AlertDescription>{error}</AlertDescription>
-          </Alert>
+          <ErrorState title="Something went wrong" description={error} />
         )}
 
         <Card>
@@ -1213,9 +1207,7 @@ Return ONLY valid JSON (no markdown fences, no explanation) in this exact format
         </div>
 
         {error && (
-          <Alert variant="destructive">
-            <AlertDescription>{error}</AlertDescription>
-          </Alert>
+          <ErrorState title="Something went wrong" description={error} />
         )}
 
         <div className="space-y-3">
@@ -1396,27 +1388,17 @@ Return ONLY valid JSON (no markdown fences, no explanation) in this exact format
           </CardContent>
         </Card>
 
-        <div className="space-y-3">
-          <h2 className="text-lg font-semibold">Section Breakdown</h2>
-          {sectionScores.map(({ label, score, icon: Icon }) => (
-            <Card key={label}>
-              <CardContent className="pt-6 space-y-2">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <Icon className="h-4 w-4 text-muted-foreground" />
-                    <span className="text-sm font-medium">{label}</span>
-                  </div>
-                  <span className="text-sm font-semibold">{score}/100</span>
-                </div>
-                <Progress value={score}>
-                  <ProgressTrack>
-                    <ProgressIndicator />
-                  </ProgressTrack>
-                </Progress>
-              </CardContent>
-            </Card>
-          ))}
-        </div>
+        <ScoreCard
+          overallScore={finalResult.overallScore}
+          overallLabel="/100"
+          title="Section Breakdown"
+          subtitle="Scores across the four assessed skills"
+          dimensions={sectionScores.map(({ label, score }) => ({
+            label,
+            score,
+            max: 100,
+          }))}
+        />
 
         {dimensionComparisons && (
           <div className="space-y-2">

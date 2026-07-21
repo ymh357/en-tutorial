@@ -7,6 +7,8 @@ import { Volume2, Loader2, Plus, Check, ArrowLeft, ClipboardCheck } from "lucide
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { SuccessState } from "@/components/states/success-state";
+import { EmptyState } from "@/components/states/empty-state";
 import { Separator } from "@/components/ui/separator";
 import { Input } from "@/components/ui/input";
 import { db } from "@/lib/db";
@@ -575,12 +577,17 @@ const ReaderSessionPage = ({
 
   if (session === null) {
     return (
-      <div className="max-w-2xl space-y-4">
-        <p className="text-muted-foreground">Reading session not found.</p>
-        <Button variant="outline" onClick={() => router.push("/reader")}>
-          <ArrowLeft className="h-4 w-4" />
-          Back to Reader
-        </Button>
+      <div className="max-w-2xl">
+        <EmptyState
+          title="Reading session not found"
+          description="This reading session doesn't exist or has been removed."
+          action={
+            <Button variant="outline" onClick={() => router.push("/reader")}>
+              <ArrowLeft className="h-4 w-4" />
+              Back to Reader
+            </Button>
+          }
+        />
       </div>
     );
   }
@@ -588,32 +595,17 @@ const ReaderSessionPage = ({
   if (finishSummary) {
     return (
       <div className="max-w-xl space-y-6">
-        <Card>
-          <CardHeader>
-            <CardTitle>Reading Complete</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div className="grid grid-cols-3 gap-4 text-center">
-              <div>
-                <div className="text-2xl font-bold">{finishSummary.lookups}</div>
-                <div className="text-xs text-muted-foreground">Words Looked Up</div>
-              </div>
-              <div>
-                <div className="text-2xl font-bold">
-                  {Math.round(finishSummary.duration / 60)}m
-                </div>
-                <div className="text-xs text-muted-foreground">Time Spent</div>
-              </div>
-              <div>
-                <div className="text-2xl font-bold">{finishSummary.coverage}%</div>
-                <div className="text-xs text-muted-foreground">Vocab Coverage</div>
-              </div>
-            </div>
-            <Button className="w-full" onClick={() => router.push("/reader")}>
+        <SuccessState
+          title="Reading Complete"
+          description={`${finishSummary.lookups} words looked up · ${Math.round(
+            finishSummary.duration / 60
+          )}m spent · ${finishSummary.coverage}% vocab coverage`}
+          action={
+            <Button onClick={() => router.push("/reader")}>
               Back to Reader
             </Button>
-          </CardContent>
-        </Card>
+          }
+        />
       </div>
     );
   }
@@ -750,11 +742,16 @@ const ReaderSessionPage = ({
 
   if (isNotFound || !session) {
     return (
-      <div className="max-w-md mx-auto py-20 text-center space-y-4">
-        <p className="text-muted-foreground">Reading session not found.</p>
-        <Button variant="outline" onClick={() => router.push("/reader")}>
-          Back to Reader
-        </Button>
+      <div className="mx-auto max-w-md py-20">
+        <EmptyState
+          title="Reading session not found"
+          description="This reading session doesn't exist or has been removed."
+          action={
+            <Button variant="outline" onClick={() => router.push("/reader")}>
+              Back to Reader
+            </Button>
+          }
+        />
       </div>
     );
   }

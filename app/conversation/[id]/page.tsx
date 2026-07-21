@@ -16,6 +16,7 @@ import { getScenarioById } from "@/lib/scenarios";
 import type { Conversation, ConversationMessage, ScenarioType } from "@/lib/types";
 import type { ChatMessageMetadata } from "@/app/api/chat/route";
 import { speakStream, stopSpeaking } from "@/lib/tts";
+import { VoiceState } from "@/components/voice/voice-state";
 import {
   startRecording,
   isRecordingSupported,
@@ -825,35 +826,30 @@ const ConversationPage = () => {
         {voiceMode ? (
           <div className="space-y-3">
             {/* Status indicator */}
-            <div className="flex items-center gap-3 rounded-lg border bg-muted/20 px-4 py-3">
-              <div
-                className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-full ${
-                  micStatus === "recording"
-                    ? "animate-pulse bg-red-500 text-white"
-                    : isSpeaking
-                      ? "bg-green-500 text-white"
-                      : "bg-muted text-muted-foreground"
-                }`}
-              >
-                <Mic className="h-5 w-5" />
+            {micStatus === "recording" ? (
+              <VoiceState
+                state="recording"
+                title="Listening…"
+                subtitle="Tap Stop when you're done"
+              />
+            ) : micStatus === "transcribing" ? (
+              <VoiceState state="transcribing" />
+            ) : isStreaming ? (
+              <VoiceState state="thinking" title="AI is thinking…" />
+            ) : isSpeaking ? (
+              <VoiceState
+                state="playing"
+                title="AI is speaking…"
+                subtitle="Recording auto-resumes after this"
+              />
+            ) : (
+              <div className="flex items-center gap-3 rounded-lg border bg-muted/20 px-4 py-3">
+                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-muted text-muted-foreground">
+                  <Mic className="h-5 w-5" />
+                </div>
+                <p className="text-sm font-medium">Ready</p>
               </div>
-              <div className="min-w-0 flex-1">
-                <p className="text-sm font-medium">
-                  {micStatus === "recording"
-                    ? "Listening… tap Stop when done"
-                    : micStatus === "transcribing"
-                      ? "Transcribing…"
-                      : isStreaming
-                        ? "AI is thinking…"
-                        : isSpeaking
-                          ? "AI is speaking…"
-                          : "Ready"}
-                </p>
-                <p className="text-xs text-muted-foreground">
-                  {isSpeaking && "Recording auto-resumes after this"}
-                </p>
-              </div>
-            </div>
+            )}
 
             {/* Recording controls */}
             {micStatus === "recording" && (
