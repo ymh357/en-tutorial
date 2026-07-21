@@ -32,19 +32,36 @@ import {
   SidebarFooter,
 } from "@/components/ui/sidebar";
 
-const NAV_ITEMS: { title: string; href: string; icon: LucideIcon }[] = [
-  { title: "Dashboard", href: "/", icon: LayoutDashboard },
-  { title: "Conversation", href: "/conversation", icon: MessageSquare },
-  { title: "IELTS Part 2", href: "/ielts/part2", icon: GraduationCap },
-  { title: "Reader", href: "/reader", icon: BookOpen },
-  { title: "Writing", href: "/writing", icon: PenLine },
-  { title: "Listening", href: "/listening", icon: Headphones },
-  { title: "Translate", href: "/translate", icon: Languages },
-  { title: "Review Cards", href: "/srs", icon: Brain },
-  { title: "Profile", href: "/profile", icon: TrendingUp },
-  { title: "Roadmap", href: "/roadmap", icon: Map },
-  { title: "History", href: "/history", icon: History },
-  { title: "Assessment", href: "/assessment", icon: ClipboardCheck },
+type NavItem = { title: string; href: string; icon: LucideIcon };
+
+// Grouped for scannable hierarchy: a single overview entry, the six core
+// practice modes, then the review/progress tools that are visited less often.
+const NAV_GROUPS: { label: string; items: NavItem[] }[] = [
+  {
+    label: "Overview",
+    items: [{ title: "Dashboard", href: "/", icon: LayoutDashboard }],
+  },
+  {
+    label: "Practice",
+    items: [
+      { title: "Conversation", href: "/conversation", icon: MessageSquare },
+      { title: "IELTS Part 2", href: "/ielts/part2", icon: GraduationCap },
+      { title: "Reader", href: "/reader", icon: BookOpen },
+      { title: "Writing", href: "/writing", icon: PenLine },
+      { title: "Listening", href: "/listening", icon: Headphones },
+      { title: "Translate", href: "/translate", icon: Languages },
+    ],
+  },
+  {
+    label: "Review & Progress",
+    items: [
+      { title: "Review Cards", href: "/srs", icon: Brain },
+      { title: "Roadmap", href: "/roadmap", icon: Map },
+      { title: "Profile", href: "/profile", icon: TrendingUp },
+      { title: "History", href: "/history", icon: History },
+      { title: "Assessment", href: "/assessment", icon: ClipboardCheck },
+    ],
+  },
 ];
 
 export const SidebarNav = () => {
@@ -61,31 +78,33 @@ export const SidebarNav = () => {
         </Link>
       </SidebarHeader>
       <SidebarContent>
-        <SidebarGroup>
-          <SidebarGroupLabel>Learn</SidebarGroupLabel>
-          <SidebarGroupContent>
-            <SidebarMenu>
-              {NAV_ITEMS.map((item) => {
-                const isActive =
-                  item.href === "/"
-                    ? pathname === "/"
-                    : pathname.startsWith(item.href);
-                const Icon = item.icon;
-                return (
-                  <SidebarMenuItem key={item.href}>
-                    <SidebarMenuButton
-                      isActive={isActive}
-                      render={<Link href={item.href} />}
-                    >
-                      <Icon />
-                      <span>{item.title}</span>
-                    </SidebarMenuButton>
-                  </SidebarMenuItem>
-                );
-              })}
-            </SidebarMenu>
-          </SidebarGroupContent>
-        </SidebarGroup>
+        {NAV_GROUPS.map((group) => (
+          <SidebarGroup key={group.label}>
+            <SidebarGroupLabel>{group.label}</SidebarGroupLabel>
+            <SidebarGroupContent>
+              <SidebarMenu>
+                {group.items.map((item) => {
+                  const isActive =
+                    item.href === "/"
+                      ? pathname === "/"
+                      : pathname.startsWith(item.href);
+                  const Icon = item.icon;
+                  return (
+                    <SidebarMenuItem key={item.href}>
+                      <SidebarMenuButton
+                        isActive={isActive}
+                        render={<Link href={item.href} />}
+                      >
+                        <Icon />
+                        <span>{item.title}</span>
+                      </SidebarMenuButton>
+                    </SidebarMenuItem>
+                  );
+                })}
+              </SidebarMenu>
+            </SidebarGroupContent>
+          </SidebarGroup>
+        ))}
       </SidebarContent>
       <SidebarFooter className="p-4">
         <SidebarMenu>
