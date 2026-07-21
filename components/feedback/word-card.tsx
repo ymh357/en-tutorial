@@ -16,6 +16,9 @@ type WordCardProps = Omit<React.ComponentProps<"div">, "onClick"> & {
   example: string
   onAdd?: () => void
   added?: boolean
+  /** Disables the Add button (e.g. while the add request is in flight) without
+   *  removing it — keep onAdd stable and toggle this instead. */
+  addDisabled?: boolean
 }
 
 function WordCard({
@@ -28,6 +31,7 @@ function WordCard({
   example,
   onAdd,
   added = false,
+  addDisabled = false,
   ...props
 }: WordCardProps) {
   // Join "ADJECTIVE · B2" only from the parts that exist.
@@ -69,7 +73,7 @@ function WordCard({
         <button
           type="button"
           onClick={onAdd}
-          disabled={added}
+          disabled={added || addDisabled}
           className={cn(
             "mt-4 flex w-full items-center justify-center gap-1.5 rounded-[9px] px-3 py-[9px] text-sm font-semibold text-primary transition-colors outline-none focus-visible:ring-3 focus-visible:ring-ring/50 disabled:opacity-70",
             "[background:color-mix(in_oklab,var(--primary)_12%,transparent)]",

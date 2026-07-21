@@ -463,19 +463,17 @@ const ReviewPage = () => {
                         definition={vocab.definition}
                         example={vocab.example}
                         added={isAdded}
-                        onAdd={
-                          addingKey === key
-                            ? undefined
-                            : () =>
-                                handleAddToSrs("vocabulary", key, {
-                                  type: "vocabulary",
-                                  lemma: vocab.lemma,
-                                  front: vocab.word,
-                                  back: vocab.definition,
-                                  context: vocab.example,
-                                  collocations: vocab.collocations,
-                                  wordFamily: vocab.wordFamily,
-                                })
+                        addDisabled={addingKey === key}
+                        onAdd={() =>
+                          handleAddToSrs("vocabulary", key, {
+                            type: "vocabulary",
+                            lemma: vocab.lemma,
+                            front: vocab.word,
+                            back: vocab.definition,
+                            context: vocab.example,
+                            collocations: vocab.collocations,
+                            wordFamily: vocab.wordFamily,
+                          })
                         }
                       />
                       {((vocab.collocations && vocab.collocations.length > 0) ||

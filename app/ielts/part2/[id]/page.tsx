@@ -824,7 +824,7 @@ const Part2SessionPage = () => {
             overallScore={review.bandEstimate}
             overallLabel="BAND"
             title="Estimated IELTS Band"
-            subtitle="Band descriptors, out of 100"
+            subtitle="Overall band 0–9; each descriptor scored 0–100 below"
             dimensions={SUB_SCORE_LABELS.map(({ key, label }) => ({
               label,
               score: review.scores[key],
@@ -947,11 +947,8 @@ const Part2SessionPage = () => {
                       definition={vocab.definition}
                       example={vocab.example}
                       added={isAdded}
-                      onAdd={
-                        addingVocab === i
-                          ? undefined
-                          : () => void handleAddVocab(i)
-                      }
+                      addDisabled={addingVocab === i}
+                      onAdd={() => void handleAddVocab(i)}
                     />
                   );
                 })}
