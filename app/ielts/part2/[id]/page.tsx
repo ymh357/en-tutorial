@@ -19,6 +19,12 @@ import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { ScoreCard } from "@/components/feedback/score-card";
+import { CorrectionEntry } from "@/components/feedback/correction-entry";
+import { HighlightPraise } from "@/components/feedback/highlight-praise";
+import { WordCard } from "@/components/feedback/word-card";
+import { VoiceState } from "@/components/voice/voice-state";
+import { ErrorState } from "@/components/states/error-state";
 import { db } from "@/lib/db";
 import { dbHelpers } from "@/lib/db-helpers";
 import {
@@ -681,102 +687,69 @@ const Part2SessionPage = () => {
 
       {/* ---- SPEAKING ---- */}
       {phase === "speaking" && (
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center justify-between text-base">
-              <span className="flex items-center gap-2">
-                <span className="flex h-8 w-8 items-center justify-center rounded-full bg-red-500 text-white animate-pulse">
-                  <Mic className="h-4 w-4" />
-                </span>
-                Speaking
-              </span>
-              <span className="font-mono text-2xl tabular-nums">
-                {formatMmSs(speakElapsed)}
-                <span className="ml-1 text-sm text-muted-foreground">
-                  / {formatMmSs(SPEAK_CAP_SECONDS)}
-                </span>
-              </span>
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-3">
-            <p className="text-sm text-muted-foreground">
-              Speak continuously about the cue card. Recording stops
-              automatically at {formatMmSs(SPEAK_CAP_SECONDS)}.
-            </p>
-            <Button
-              className="w-full min-h-[44px]"
-              disabled={speakElapsed < MIN_SPEAK_SECONDS}
-              onClick={() => void stopAndTranscribe()}
-            >
-              <Send className="h-4 w-4" />
-              {speakElapsed < MIN_SPEAK_SECONDS
-                ? `Keep going… (Stop enabled at ${formatMmSs(MIN_SPEAK_SECONDS)})`
-                : "Stop & get feedback"}
-            </Button>
-          </CardContent>
-        </Card>
+        <div className="space-y-3">
+          <VoiceState
+            state="recording"
+            title={`Speaking · ${formatMmSs(speakElapsed)} / ${formatMmSs(SPEAK_CAP_SECONDS)}`}
+            subtitle={`Speak continuously about the cue card. Recording stops automatically at ${formatMmSs(SPEAK_CAP_SECONDS)}.`}
+          />
+          <Button
+            className="w-full min-h-[44px]"
+            disabled={speakElapsed < MIN_SPEAK_SECONDS}
+            onClick={() => void stopAndTranscribe()}
+          >
+            <Send className="h-4 w-4" />
+            {speakElapsed < MIN_SPEAK_SECONDS
+              ? `Keep going… (Stop enabled at ${formatMmSs(MIN_SPEAK_SECONDS)})`
+              : "Stop & get feedback"}
+          </Button>
+        </div>
       )}
 
       {/* ---- TRANSCRIBING ---- */}
       {phase === "transcribing" && (
-        <Card>
-          <CardContent className="flex flex-col items-center gap-3 py-8">
-            {showReRecord ? (
-              <>
-                <AlertTriangle className="h-6 w-6 text-destructive" />
-                <p className="text-center text-sm text-muted-foreground">
-                  {errorMsg}
-                </p>
-                <Button onClick={reRecord}>
-                  <Mic className="h-4 w-4" />
-                  Re-record
-                </Button>
-              </>
-            ) : (
-              <>
-                <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
-                <p className="text-sm text-muted-foreground">Transcribing…</p>
-              </>
-            )}
-          </CardContent>
-        </Card>
+        showReRecord ? (
+          <ErrorState
+            title="Couldn't transcribe"
+            description={errorMsg ?? "Something went wrong."}
+            onRetry={reRecord}
+          />
+        ) : (
+          <VoiceState state="transcribing" />
+        )
       )}
 
       {/* ---- SCORING (loading OR retry-on-failure) ---- */}
-      {phase === "scoring" && (
-        <Card>
-          <CardContent className="flex flex-col items-center gap-3 py-8">
-            {errorMsg ? (
-              <>
-                <AlertTriangle className="h-6 w-6 text-destructive" />
-                <p className="text-center text-sm text-muted-foreground">
-                  {errorMsg}
-                </p>
-                {transcript && (
-                  <div className="w-full rounded-lg border bg-muted/20 p-3 text-sm">
-                    <p className="mb-1 text-xs font-medium text-muted-foreground">
-                      Your monologue:
-                    </p>
-                    <p className="whitespace-pre-wrap">{transcript}</p>
-                  </div>
-                )}
-                <Button
-                  onClick={() => void scoreTranscript(transcript, durationSec)}
-                >
-                  Retry scoring
-                </Button>
-              </>
-            ) : (
-              <>
-                <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
-                <p className="text-sm text-muted-foreground">
-                  Scoring your response…
-                </p>
-              </>
-            )}
-          </CardContent>
-        </Card>
-      )}
+      {phase === "scoring" &&
+        (errorMsg ? (
+          <Card>
+            <CardContent className="flex flex-col items-center gap-3 py-8">
+              <AlertTriangle className="h-6 w-6 text-destructive" />
+              <p className="text-center text-sm text-muted-foreground">
+                {errorMsg}
+              </p>
+              {transcript && (
+                <div className="w-full rounded-lg border bg-muted/20 p-3 text-sm">
+                  <p className="mb-1 text-xs font-medium text-muted-foreground">
+                    Your monologue:
+                  </p>
+                  <p className="whitespace-pre-wrap">{transcript}</p>
+                </div>
+              )}
+              <Button
+                onClick={() => void scoreTranscript(transcript, durationSec)}
+              >
+                Retry scoring
+              </Button>
+            </CardContent>
+          </Card>
+        ) : (
+          <VoiceState
+            state="thinking"
+            title="Scoring your response…"
+            subtitle="Applying the IELTS band descriptors."
+          />
+        ))}
 
       {/* ---- FOLLOW-UP ---- */}
       {phase === "followup" && (
@@ -846,46 +819,32 @@ const Part2SessionPage = () => {
       {/* ---- DONE (results) ---- */}
       {phase === "done" && review && (
         <>
-          {/* Headline band estimate */}
-          <Card className="border-primary/30 bg-primary/5">
-            <CardContent className="flex flex-col items-center gap-1 py-8">
-              <p className="text-sm font-medium text-muted-foreground">
-                Estimated IELTS Band
-              </p>
-              <p className="text-5xl font-bold">{review.bandEstimate}</p>
-              <p className="text-xs text-muted-foreground">out of 9</p>
-            </CardContent>
-          </Card>
-
-          {/* Sub-scores */}
-          <Card>
-            <CardHeader>
-              <CardTitle>Band descriptors</CardTitle>
-            </CardHeader>
-            <CardContent className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-              {SUB_SCORE_LABELS.map(({ key, label, caveat }) => (
-                <div
+          {/* Headline band estimate + sub-scores */}
+          <ScoreCard
+            overallScore={review.bandEstimate}
+            overallLabel="BAND"
+            title="Estimated IELTS Band"
+            subtitle="Band descriptors, out of 100"
+            dimensions={SUB_SCORE_LABELS.map(({ key, label }) => ({
+              label,
+              score: review.scores[key],
+              max: 100,
+              tone: key === "pronunciation" ? "accent" : "primary",
+            }))}
+          />
+          {/* Pronunciation caveat — must be surfaced (Whisper transcribes text,
+              not audio, so this sub-score is an estimate). */}
+          {SUB_SCORE_LABELS.map(
+            ({ key, label, caveat }) =>
+              caveat && (
+                <p
                   key={key}
-                  className="flex flex-col gap-0.5 rounded-lg border bg-card p-3"
+                  className="-mt-2 px-1 text-xs italic text-muted-foreground"
                 >
-                  <div className="flex items-baseline justify-between">
-                    <span className="text-sm font-medium">{label}</span>
-                    <span className="text-xl font-bold">
-                      {review.scores[key]}
-                      <span className="text-xs font-normal text-muted-foreground">
-                        /100
-                      </span>
-                    </span>
-                  </div>
-                  {caveat && (
-                    <span className="text-xs italic text-amber-600 dark:text-amber-500">
-                      {caveat}
-                    </span>
-                  )}
-                </div>
-              ))}
-            </CardContent>
-          </Card>
+                  {label}: {caveat}
+                </p>
+              )
+          )}
 
           {/* Transcript */}
           {transcript && (
@@ -906,93 +865,46 @@ const Part2SessionPage = () => {
 
           {/* Errors */}
           {review.errors.length > 0 && (
-            <Card className="border-destructive/30 bg-destructive/5">
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2 text-destructive">
-                  <AlertTriangle className="h-4 w-4" />
-                  Error Corrections
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-3">
-                {review.errors.map((error, i) => (
-                  <div
-                    key={`error-${i}`}
-                    className="rounded-lg border bg-card p-3 text-sm"
-                  >
-                    <p>
-                      <span className="text-destructive line-through">
-                        {error.original}
-                      </span>
-                      {" -> "}
-                      <span className="font-medium text-foreground">
-                        {error.corrected}
-                      </span>
-                    </p>
-                    <p className="mt-1 text-xs text-muted-foreground">
-                      {error.explanation}
-                    </p>
-                  </div>
-                ))}
-              </CardContent>
-            </Card>
+            <div className="space-y-3">
+              {review.errors.map((error, i) => (
+                <CorrectionEntry
+                  key={`error-${i}`}
+                  kind="correction"
+                  original={error.original}
+                  corrected={error.corrected}
+                  explanation={error.explanation}
+                />
+              ))}
+            </div>
           )}
 
           {/* Improvements */}
           {review.improvements.length > 0 && (
-            <Card className="border-amber-500/30 bg-amber-500/5">
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2 text-amber-600 dark:text-amber-500">
-                  <Lightbulb className="h-4 w-4" />
-                  Expression Improvements
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-3">
-                {review.improvements.map((improvement, i) => (
-                  <div
-                    key={`improvement-${i}`}
-                    className="rounded-lg border bg-card p-3 text-sm"
-                  >
-                    <p>
-                      <span className="text-muted-foreground">
-                        {improvement.original}
-                      </span>
-                      {" -> "}
-                      <span className="font-medium text-foreground">
-                        {improvement.improved}
-                      </span>
-                    </p>
-                    <p className="mt-1 text-xs text-muted-foreground">
-                      {improvement.context}
-                    </p>
-                  </div>
-                ))}
-              </CardContent>
-            </Card>
+            <div className="space-y-3">
+              {review.improvements.map((improvement, i) => (
+                <CorrectionEntry
+                  key={`improvement-${i}`}
+                  kind="word-choice"
+                  original={improvement.original}
+                  corrected={improvement.improved}
+                  explanation={improvement.context}
+                />
+              ))}
+            </div>
           )}
 
           {/* Highlights */}
           {review.highlights.length > 0 && (
-            <Card className="border-green-500/30 bg-green-500/5">
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2 text-green-600 dark:text-green-500">
-                  <Sparkles className="h-4 w-4" />
-                  Positive Highlights
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-3">
-                {review.highlights.map((highlight, i) => (
-                  <div
-                    key={`highlight-${i}`}
-                    className="rounded-lg border bg-card p-3 text-sm"
-                  >
-                    <p className="font-medium">&ldquo;{highlight.text}&rdquo;</p>
-                    <p className="mt-1 text-xs text-muted-foreground">
-                      {highlight.reason}
-                    </p>
-                  </div>
-                ))}
-              </CardContent>
-            </Card>
+            <div className="space-y-3">
+              {review.highlights.map((highlight, i) => (
+                <HighlightPraise key={`highlight-${i}`} title="Positive highlight">
+                  &ldquo;{highlight.text}&rdquo;
+                  <span className="mt-1 block text-sm text-muted-foreground">
+                    {highlight.reason}
+                  </span>
+                </HighlightPraise>
+              ))}
+            </div>
           )}
 
           {/* Follow-up feedback */}
@@ -1029,37 +941,18 @@ const Part2SessionPage = () => {
                 {review.newVocabulary.map((vocab, i) => {
                   const isAdded = addedVocab.has(i);
                   return (
-                    <div
+                    <WordCard
                       key={`vocab-${i}`}
-                      className="rounded-lg border bg-card p-3 text-sm"
-                    >
-                      <p className="font-medium">{vocab.word}</p>
-                      <p className="mt-1 text-xs text-muted-foreground">
-                        {vocab.definition}
-                      </p>
-                      <p className="mt-1 text-xs italic text-muted-foreground">
-                        {vocab.example}
-                      </p>
-                      <Button
-                        size="sm"
-                        variant={isAdded ? "secondary" : "outline"}
-                        className="mt-2"
-                        disabled={isAdded || addingVocab === i}
-                        onClick={() => void handleAddVocab(i)}
-                      >
-                        {isAdded ? (
-                          <>
-                            <Check className="h-3.5 w-3.5" />
-                            Added!
-                          </>
-                        ) : (
-                          <>
-                            <Plus className="h-3.5 w-3.5" />
-                            Add to review cards
-                          </>
-                        )}
-                      </Button>
-                    </div>
+                      word={vocab.word}
+                      definition={vocab.definition}
+                      example={vocab.example}
+                      added={isAdded}
+                      onAdd={
+                        addingVocab === i
+                          ? undefined
+                          : () => void handleAddVocab(i)
+                      }
+                    />
                   );
                 })}
               </CardContent>
