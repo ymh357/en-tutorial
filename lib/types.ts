@@ -188,6 +188,7 @@ export type PoolTaskType =
   | "listening-dictation"
   | "listening-comprehension"
   | "listening-prediction"
+  | "listening-shadowing"
   | "translation-sentence"
   | "translation-paragraph"
   | "translation-situational"

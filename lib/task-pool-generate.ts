@@ -32,6 +32,7 @@ const TASK_TYPES: PoolTaskType[] = [
   "listening-dictation",
   "listening-comprehension",
   "listening-prediction",
+  "listening-shadowing",
   "translation-sentence",
   "translation-paragraph",
   "translation-situational",
@@ -55,6 +56,11 @@ const buildPrompt = (
     "listening-prediction": {
       system: "You are an English teacher. Return ONLY valid JSON.",
       prompt: `Generate a short English passage (3-4 sentences) at ${level} level with a clear logical progression. Return JSON: { "firstHalf": "first 1-2 sentences", "secondHalf": "remaining", "topic": "brief topic" }`,
+    },
+    "listening-shadowing": {
+      system:
+        "You are an English pronunciation coach. Return ONLY a valid JSON array of strings (no markdown fences, no explanation).",
+      prompt: `Generate 5 short English sentences (5-10 words each) at ${level} level for shadowing practice. Return as JSON array of strings.`,
     },
     "translation-sentence": {
       system: "You are a Chinese-English translation teacher. Return ONLY valid JSON.",

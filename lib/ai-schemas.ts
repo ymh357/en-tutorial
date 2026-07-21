@@ -278,6 +278,7 @@ export const poolTaskSchemas: Record<PoolTaskType, z.ZodType> = {
   "listening-dictation": listeningDictationSchema,
   "listening-comprehension": listeningComprehensionSchema,
   "listening-prediction": listeningPredictionSchema,
+  "listening-shadowing": listeningShadowingSchema,
   "translation-sentence": translateSentenceBatchSchema,
   "translation-paragraph": translateGenSchema,
   "translation-situational": translateGenSchema,

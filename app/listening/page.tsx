@@ -738,6 +738,32 @@ const ShadowingTab = ({ cefrLevel }: { cefrLevel: string }) => {
     setTranscript(null);
     setResult(null);
     setApproximate(false);
+
+    // Try the pre-generated pool first (cron/Blob-backed), matching the other
+    // listening tabs — a pool hit means no live LLM wait.
+    try {
+      const poolTask = await db.poolTasks
+        .where("type").equals("listening-shadowing")
+        .and(t => !t.completed && t.assignedDate !== "")
+        .first();
+
+      if (poolTask) {
+        // Shadowing pool content is a JSON string array (listeningShadowingSchema),
+        // unlike the object-shaped content of the other task types — cast via
+        // unknown and guard at runtime.
+        const content = poolTask.content as unknown as string[];
+        if (Array.isArray(content) && content.length > 0) {
+          setSentences(content);
+          await completeTask(poolTask.id);
+          setIsLoading(false);
+          return;
+        }
+      }
+    } catch {
+      // Fall through to real-time generation
+    }
+
+    // Fallback to real-time generation
     try {
       const system =
         "You are an English pronunciation coach. Return ONLY a valid JSON array of strings (no markdown fences, no explanation).";
@@ -1275,12 +1301,13 @@ const PredictionTab = ({ cefrLevel }: { cefrLevel: string }) => {
 
 // --- Page ---
 
-// Pool task type has no dedicated "shadowing" entry, so only these three
-// modes can be auto-selected based on ready pool content.
+// All four listening modes now have a pool task type, so any of them can be
+// auto-selected when ready pool content exists.
 const POOL_CHECK_MODES: readonly Mode[] = [
   "dictation",
   "comprehension",
   "prediction",
+  "shadowing",
 ];
 
 const ListeningPage = () => {

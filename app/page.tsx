@@ -268,7 +268,7 @@ const DashboardPage = () => {
         // Import dynamically to avoid pulling generation code into the main
         // bundle when the server path succeeds
         const { generatePoolTasks } = await import("@/lib/task-pool-generate");
-        await generatePoolTasks(level, 8); // 1 task per type, all 8 types
+        await generatePoolTasks(level, 9); // 1 task per type, all 9 types
       } catch (err) {
         // Generation failed — release the claim so a later load can retry today.
         localStorage.removeItem(LAST_GEN_KEY);
