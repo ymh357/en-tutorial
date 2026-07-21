@@ -13,6 +13,8 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { ScoreCard } from "@/components/feedback/score-card";
+import { ErrorState } from "@/components/states/error-state";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { db } from "@/lib/db";
@@ -556,17 +558,11 @@ const WritingEditorPage = () => {
         </div>
 
         {reviewError && (
-          <Card className="border-destructive/30 bg-destructive/5">
-            <CardContent className="flex flex-col items-center gap-3 py-6">
-              <AlertTriangle className="h-6 w-6 text-destructive" />
-              <p className="text-center text-sm text-muted-foreground break-words">
-                {reviewError}
-              </p>
-              <Button onClick={handleRetry} className="min-h-[44px]">
-                Retry
-              </Button>
-            </CardContent>
-          </Card>
+          <ErrorState
+            title="Couldn't review your writing"
+            description={reviewError}
+            onRetry={handleRetry}
+          />
         )}
       </div>
     );
@@ -666,31 +662,26 @@ const WritingEditorPage = () => {
       )}
 
       {reviewError && (
-        <Card className="border-destructive/30 bg-destructive/5">
-          <CardContent className="flex flex-col items-center gap-3 py-6">
-            <AlertTriangle className="h-6 w-6 text-destructive" />
-            <p className="text-center text-sm text-muted-foreground break-words">
-              {reviewError}
-            </p>
-            <Button onClick={handleRetry} className="min-h-[44px]">
-              Retry
-            </Button>
-          </CardContent>
-        </Card>
+        <ErrorState
+          title="Couldn't review your writing"
+          description={reviewError}
+          onRetry={handleRetry}
+        />
       )}
 
       {/* Round 2: Language Review (only once submitted) */}
       {reviewRound === 2 && review && (
         <>
           {/* Overall Score */}
-          <Card>
-            <CardContent className="flex flex-col items-center gap-1 py-6">
-              <div className="text-4xl font-bold">{review.score}</div>
-              <div className="text-sm text-muted-foreground">
-                {scoreLabel(review.score)} · out of 100
-              </div>
-            </CardContent>
-          </Card>
+          <ScoreCard
+            overallScore={review.score}
+            overallLabel="SCORE"
+            title={scoreLabel(review.score)}
+            subtitle="Out of 100"
+            dimensions={[
+              { label: "Overall", score: review.score, max: 100 },
+            ]}
+          />
 
           {/* Annotated Text */}
           <Card className="w-full overflow-hidden">

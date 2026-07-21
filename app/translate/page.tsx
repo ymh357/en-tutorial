@@ -17,6 +17,8 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { ScoreCard } from "@/components/feedback/score-card";
+import { ErrorState } from "@/components/states/error-state";
 import {
   Card,
   CardContent,
@@ -622,20 +624,11 @@ const TranslatePage = () => {
       )}
 
       {generateError && (
-        <Card className="border-destructive/30 bg-destructive/5">
-          <CardContent className="flex flex-col items-center gap-3 py-6">
-            <p className="text-center text-sm text-muted-foreground break-words">
-              {generateError}
-            </p>
-            <Button
-              className="min-h-[44px]"
-              onClick={() => void generateExercise(mode)}
-            >
-              <RefreshCw className="h-4 w-4" />
-              Retry
-            </Button>
-          </CardContent>
-        </Card>
+        <ErrorState
+          title="Couldn't load exercise"
+          description={generateError}
+          onRetry={() => void generateExercise(mode)}
+        />
       )}
 
       {exercise && (
@@ -686,20 +679,11 @@ const TranslatePage = () => {
               </div>
 
               {evalError && (
-                <Card className="border-destructive/30 bg-destructive/5">
-                  <CardContent className="flex flex-col items-center gap-3 py-6">
-                    <p className="text-center text-sm text-muted-foreground break-words">
-                      {evalError}
-                    </p>
-                    <Button
-                      className="min-h-[44px]"
-                      onClick={() => void runEvaluation()}
-                    >
-                      <RefreshCw className="h-4 w-4" />
-                      Retry
-                    </Button>
-                  </CardContent>
-                </Card>
+                <ErrorState
+                  title="Couldn't evaluate translation"
+                  description={evalError}
+                  onRetry={() => void runEvaluation()}
+                />
               )}
             </div>
           )}
@@ -709,14 +693,19 @@ const TranslatePage = () => {
       {evaluation && exercise && (
         <>
           {/* Score */}
-          <Card>
-            <CardContent className="flex flex-col items-center gap-1 py-6">
-              <div className="text-4xl font-bold">{normalizeTo100(evaluation.score)}</div>
-              <div className="text-sm text-muted-foreground">
-                {scoreLabel(normalizeTo100(evaluation.score))} · out of 100
-              </div>
-            </CardContent>
-          </Card>
+          <ScoreCard
+            overallScore={normalizeTo100(evaluation.score)}
+            overallLabel="SCORE"
+            title={scoreLabel(normalizeTo100(evaluation.score))}
+            subtitle="Out of 100"
+            dimensions={[
+              {
+                label: "Overall",
+                score: normalizeTo100(evaluation.score),
+                max: 100,
+              },
+            ]}
+          />
 
           {/* User translation with annotations */}
           <Card className="w-full overflow-hidden">
