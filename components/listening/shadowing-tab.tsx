@@ -131,6 +131,9 @@ export const ShadowingTab = ({ cefrLevel }: { cefrLevel: string }) => {
   const [subjectiveComprehension, setSubjectiveComprehension] = useState<number | null>(null);
   const [chunks, setChunks] = useState<SentenceChunk[] | null>(null);
   const [isChunking, setIsChunking] = useState(false);
+  // Token guard for chunkSentence: nextSentence/generateSentences bump it so a
+  // slow in-flight chunk fetch can't land its result on a different sentence.
+  const chunkTokenRef = useRef(0);
   // Focus/attention: methodology demands 100% focus. Track the last meaningful
   // interaction; if the learner goes idle past FOCUS_IDLE_MS during an active
   // stage, show a nudge to pull attention back. Counting resets (re-engagements
@@ -195,7 +198,7 @@ export const ShadowingTab = ({ cefrLevel }: { cefrLevel: string }) => {
       }
     }, 2000);
     return () => clearInterval(timer);
-  }, [stage, index]);
+  }, [stage]);
 
   const generateSentences = async (): Promise<void> => {
     setIsLoading(true);
@@ -206,6 +209,8 @@ export const ShadowingTab = ({ cefrLevel }: { cefrLevel: string }) => {
     setListensCount(0);
     setSubjectiveComprehension(null);
     setChunks(null);
+    chunkTokenRef.current++;
+    setIsChunking(false);
     setTranscript(null);
     setResult(null);
     setApproximate(false);
@@ -228,6 +233,10 @@ export const ShadowingTab = ({ cefrLevel }: { cefrLevel: string }) => {
           setIsLoading(false);
           return;
         }
+        // Stale pre-W1-T2 content (bare string[] shape): mark complete so this
+        // row isn't re-fetched and rejected every visit, then fall through to
+        // real-time generation.
+        await completeTask(poolTask.id);
       }
     } catch {
       // Fall through to real-time generation
@@ -333,6 +342,7 @@ export const ShadowingTab = ({ cefrLevel }: { cefrLevel: string }) => {
               .map((e) => e.word),
             subjectiveComprehension: subjectiveComprehension ?? undefined,
             listensCount,
+            focusResets,
           }
         );
       } catch {
@@ -351,6 +361,7 @@ export const ShadowingTab = ({ cefrLevel }: { cefrLevel: string }) => {
   // path (sentenceChunkSchema).
   const chunkSentence = async (): Promise<void> => {
     if (!currentSentence || isChunking) return;
+    const token = ++chunkTokenRef.current;
     setIsChunking(true);
     setChunks(null);
     try {
@@ -369,11 +380,15 @@ export const ShadowingTab = ({ cefrLevel }: { cefrLevel: string }) => {
       if (!isSentenceChunks(payload.object)) {
         throw new Error("Could not chunk the sentence.");
       }
+      // Discard if the sentence changed (nextSentence/generateSentences) while
+      // the fetch was in flight — otherwise sentence A's chunks land on B.
+      if (token !== chunkTokenRef.current) return;
       setChunks(payload.object.chunks);
     } catch (err) {
+      if (token !== chunkTokenRef.current) return;
       setError(err instanceof Error ? err.message : "Failed to chunk the sentence");
     } finally {
-      setIsChunking(false);
+      if (token === chunkTokenRef.current) setIsChunking(false);
     }
   };
 
@@ -386,6 +401,8 @@ export const ShadowingTab = ({ cefrLevel }: { cefrLevel: string }) => {
     setSubjectiveComprehension(null);
     setChunks(null);
     setShowFocusNudge(false);
+    chunkTokenRef.current++;
+    setIsChunking(false);
     if (data && index + 1 < data.sentences.length) {
       setIndex(index + 1);
     } else {
@@ -517,7 +534,10 @@ export const ShadowingTab = ({ cefrLevel }: { cefrLevel: string }) => {
                         size="sm"
                         variant={playbackRate === r ? "default" : "outline"}
                         className="min-h-[36px]"
-                        onClick={() => setPlaybackRate(r)}
+                        onClick={() => {
+                          markActive();
+                          setPlaybackRate(r);
+                        }}
                       >
                         {r}x
                       </Button>
@@ -545,32 +565,6 @@ export const ShadowingTab = ({ cefrLevel }: { cefrLevel: string }) => {
                       </Button>
                     ))}
                   </div>
-
-                  {/* Didn't catch it? Break the sentence into phrases
-                      (methodology: divide-and-conquer for long sentences). */}
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    className="w-full min-h-[36px]"
-                    onClick={() => void chunkSentence()}
-                    disabled={isChunking || !currentSentence}
-                  >
-                    {isChunking ? (
-                      <Loader2 className="h-4 w-4 animate-spin mr-2" />
-                    ) : null}
-                    {isChunking ? "拆解中..." : "听不懂？拆解成短语"}
-                  </Button>
-                  {chunks && (
-                    <div className="space-y-1 text-sm border-l-2 border-primary/40 pl-3">
-                      {chunks.map((c, i) => (
-                        <div key={i} className="leading-snug">
-                          <span className="font-medium">{c.phrase}</span>
-                          <span className="text-xs text-muted-foreground ml-2">{c.role}</span>
-                          <div className="text-xs text-muted-foreground">{c.meaning}</div>
-                        </div>
-                      ))}
-                    </div>
-                  )}
 
                   <Button
                     size="lg"
@@ -614,7 +608,10 @@ export const ShadowingTab = ({ cefrLevel }: { cefrLevel: string }) => {
                         size="sm"
                         variant={subtitleMode === m ? "default" : "outline"}
                         className="min-h-[36px]"
-                        onClick={() => setSubtitleMode(m)}
+                        onClick={() => {
+                          markActive();
+                          setSubtitleMode(m);
+                        }}
                       >
                         {m === "english" ? "纯英" : m === "bilingual" ? "双语" : "隐藏"}
                       </Button>
@@ -634,7 +631,10 @@ export const ShadowingTab = ({ cefrLevel }: { cefrLevel: string }) => {
                           size="sm"
                           variant={subjectiveComprehension === n ? "default" : "outline"}
                           className="min-h-[36px]"
-                          onClick={() => setSubjectiveComprehension(n)}
+                          onClick={() => {
+                            markActive();
+                            setSubjectiveComprehension(n);
+                          }}
                         >
                           {n === 1 ? "1·没画面" : n === 2 ? "2·模糊" : "3·清晰"}
                         </Button>
@@ -669,6 +669,36 @@ export const ShadowingTab = ({ cefrLevel }: { cefrLevel: string }) => {
                       </>
                     )}
                   </Button>
+
+                  {/* Long sentence? Break it into phrases (methodology:
+                      divide-and-conquer). Lives in recall — where English is
+                      already revealed — so the listen stage stays sound-first. */}
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    className="w-full min-h-[36px]"
+                    onClick={() => {
+                      markActive();
+                      void chunkSentence();
+                    }}
+                    disabled={isChunking || !currentSentence}
+                  >
+                    {isChunking ? (
+                      <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                    ) : null}
+                    {isChunking ? "拆解中..." : "长句？拆成短语逐个理解"}
+                  </Button>
+                  {chunks && (
+                    <div className="space-y-1 text-sm border-l-2 border-primary/40 pl-3">
+                      {chunks.map((c, i) => (
+                        <div key={i} className="leading-snug">
+                          <span className="font-medium">{c.phrase}</span>
+                          <span className="text-xs text-muted-foreground ml-2">{c.role}</span>
+                          <div className="text-xs text-muted-foreground">{c.meaning}</div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
               )}
             </>
@@ -687,6 +717,20 @@ export const ShadowingTab = ({ cefrLevel }: { cefrLevel: string }) => {
             </CardTitle>
           </CardHeader>
           <CardContent className="space-y-2">
+            <div className="flex justify-center">
+              <Button
+                size="sm"
+                variant="outline"
+                className="min-h-[36px]"
+                onClick={() => {
+                  markActive();
+                  void speak(currentSentence, undefined, undefined, voice);
+                }}
+              >
+                <Play className="h-4 w-4" />
+                再听原句
+              </Button>
+            </div>
             <div className="flex flex-wrap gap-1">
               {result.original.map((entry, idx) => (
                 <span key={idx} className="inline-flex flex-col items-center mx-0.5">
@@ -729,7 +773,7 @@ export const ShadowingTab = ({ cefrLevel }: { cefrLevel: string }) => {
         />
       )}
 
-      {data && data.sentences.length > 0 && (
+      {data && data.sentences.length > 0 && !(result && transcript !== null) && (
         <Button
           variant="outline"
           className="w-full min-h-[44px]"

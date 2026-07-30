@@ -45,7 +45,9 @@ export const POST = async (req: Request): Promise<Response> => {
     return new Response(arrayBuffer, {
       headers: {
         "Content-Type": "audio/mpeg",
-        "Cache-Control": "public, max-age=3600",
+        // POST body varies by voice/text/rate; URL-keyed caching could return
+        // the wrong accent. Client-side blob caching (lib/tts.ts) handles reuse.
+        "Cache-Control": "no-store",
       },
     });
   } catch (error) {

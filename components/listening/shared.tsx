@@ -34,6 +34,7 @@ export const saveListeningExercise = async (
     subjectiveComprehension?: number;
     listensCount?: number;
     materialId?: string;
+    focusResets?: number;
   }
 ): Promise<void> => {
   await db.listeningExercises.add({

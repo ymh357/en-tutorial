@@ -16,18 +16,36 @@ let playbackToken = 0;
 // Fetches one chunk's audio from /api/tts. Returns null on any non-OK
 // response so the caller can decide whether to fall back (single speak) or
 // skip the chunk (streaming, where one bad sentence shouldn't abort the rest).
+// Per-process blob cache keyed by text|voice|rate. Speed changes are
+// client-side (playbackRate on the same Audio element), so re-listening or
+// changing speed reuses the fetched blob instead of re-hitting /api/tts.
+// Stores promises to dedupe concurrent identical requests. Voice/rate vary the
+// key so different accents or server-side rates get distinct entries.
+const ttsBlobCache = new Map<string, Promise<Blob | null>>();
+
 const fetchTtsBlob = async (
   text: string,
   rate?: string,
   voice?: string
 ): Promise<Blob | null> => {
-  const res = await fetch("/api/tts", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ text, rate, voice }),
+  const key = `${text}|${voice ?? ""}|${rate ?? ""}`;
+  const cached = ttsBlobCache.get(key);
+  if (cached) return cached;
+  const request = (async () => {
+    const res = await fetch("/api/tts", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text, rate, voice }),
+    });
+    if (!res.ok) return null;
+    return res.blob();
+  })();
+  ttsBlobCache.set(key, request);
+  // Evict on failure so a retry isn't poisoned with a cached null.
+  request.then((blob) => {
+    if (blob === null) ttsBlobCache.delete(key);
   });
-  if (!res.ok) return null;
-  return res.blob();
+  return request;
 };
 
 // Plays one already-fetched audio blob to completion. Shared by speak() and

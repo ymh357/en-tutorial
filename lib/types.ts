@@ -181,6 +181,7 @@ export interface ListeningExercise {
   subjectiveComprehension?: number; // 1-3 self-rated "did the picture fire" — methodology direct-understanding signal
   listensCount?: number; // how many times the clip was replayed this exercise (focus/effort proxy)
   materialId?: string; // link to the Material this exercise drilled (enables cross-scene re-exposure) — W3/W4
+  focusResets?: number; // times attention was re-engaged after a focus nudge (W1)
   createdAt: Date;
 }
 
