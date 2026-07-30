@@ -48,6 +48,13 @@ type RecStatus = "idle" | "recording" | "transcribing";
 type Stage = "imagine" | "listen" | "recall";
 const STAGE_ORDER: readonly Stage[] = ["imagine", "listen", "recall"];
 
+// Subtitle reveal mode, active only in the recall stage. imagine/listen always
+// hide the English (methodology: see the picture first, not the text). In recall
+// the learner can choose how much to reveal — english-only by default (test
+// direct understanding), bilingual to check the translation, hidden to replay
+// from sound alone.
+type SubtitleMode = "hidden" | "english" | "bilingual";
+
 // Runtime shape of a shadowing set (mirrors listeningShadowingSchema).
 export interface ShadowingSentence {
   text: string;
@@ -83,6 +90,7 @@ export const ShadowingTab = ({ cefrLevel }: { cefrLevel: string }) => {
   const [data, setData] = useState<ShadowingData | null>(null);
   const [index, setIndex] = useState(0);
   const [stage, setStage] = useState<Stage>("imagine");
+  const [subtitleMode, setSubtitleMode] = useState<SubtitleMode>("english");
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [recStatus, setRecStatus] = useState<RecStatus>("idle");
@@ -374,7 +382,10 @@ export const ShadowingTab = ({ cefrLevel }: { cefrLevel: string }) => {
                     size="lg"
                     variant="outline"
                     className="w-full min-h-[44px]"
-                    onClick={() => setStage("recall")}
+                    onClick={() => {
+                      setSubtitleMode("english");
+                      setStage("recall");
+                    }}
                   >
                     揭示原文并跟读
                     <ArrowRight className="h-4 w-4 ml-2" />
@@ -384,12 +395,36 @@ export const ShadowingTab = ({ cefrLevel }: { cefrLevel: string }) => {
 
               {stage === "recall" && (
                 <div className="space-y-3">
-                  <p className="text-base font-medium text-center py-2">
-                    {currentSentence}
-                  </p>
-                  <p className="text-sm text-muted-foreground text-center italic">
-                    {currentTranslation}
-                  </p>
+                  {subtitleMode !== "hidden" && (
+                    <p className="text-base font-medium text-center py-2">
+                      {currentSentence}
+                    </p>
+                  )}
+                  {subtitleMode === "bilingual" && (
+                    <p className="text-sm text-muted-foreground text-center italic">
+                      {currentTranslation}
+                    </p>
+                  )}
+                  {subtitleMode === "hidden" && (
+                    <p className="text-xs text-muted-foreground text-center py-2">
+                      字幕已隐藏——纯靠声音跟读。
+                    </p>
+                  )}
+
+                  {/* Subtitle mode switcher */}
+                  <div className="flex flex-wrap gap-2 justify-center">
+                    {(["english", "bilingual", "hidden"] as const).map((m) => (
+                      <Button
+                        key={m}
+                        size="sm"
+                        variant={subtitleMode === m ? "default" : "outline"}
+                        className="min-h-[36px]"
+                        onClick={() => setSubtitleMode(m)}
+                      >
+                        {m === "english" ? "纯英" : m === "bilingual" ? "双语" : "隐藏"}
+                      </Button>
+                    ))}
+                  </div>
 
                   <Button
                     size="lg"
