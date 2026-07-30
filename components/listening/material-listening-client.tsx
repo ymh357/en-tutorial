@@ -8,10 +8,12 @@ import { useProfile } from "@/hooks/use-db";
 import { db } from "@/lib/db";
 import type { Material } from "@/lib/types";
 
-// Loaded once into state (rather than re-read on every render) so the
-// `material` object identity is stable — ShadowingTab depends on it in an
-// effect that (re)creates the YouTube player (Task 5 review note).
-export const VideoListeningClient = ({
+// Shared client for video AND audio listening pages. Loaded once into state
+// (not re-read on every render) so the `material` object identity is stable —
+// ShadowingTab depends on it in an effect that (re)creates the media player.
+// mediaType (video/audio) only matters inside ShadowingTab; this component is
+// agnostic. (Formerly video-only VideoListeningClient; unified for W4-T2.)
+export const MaterialListeningClient = ({
   materialId,
 }: {
   materialId: string;
@@ -44,7 +46,7 @@ export const VideoListeningClient = ({
   if (material === null) {
     return (
       <div className="max-w-3xl p-4 md:p-6">
-        <ErrorState title="素材不存在" description="未找到该视频素材。" />
+        <ErrorState title="素材不存在" description="未找到该素材。" />
       </div>
     );
   }

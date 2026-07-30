@@ -102,6 +102,11 @@ export interface YouTubeMediaSource {
   destroy(): void;
 }
 
+// Generic media-source contract. YouTubeMediaSource (iframe, above) is one
+// implementation; the audio player (HTMLAudioElement, audio-source.ts) is
+// another. shadowing-tab持有 a single MediaSource ref regardless of mediaType.
+export type MediaSource = YouTubeMediaSource;
+
 export const createYouTubePlayer = (
   opts: YouTubePlayerOpts
 ): YouTubeMediaSource => {

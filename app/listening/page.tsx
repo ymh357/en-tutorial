@@ -913,7 +913,7 @@ const ListeningPage = () => {
             href="/listening/import"
             className="shrink-0 whitespace-nowrap text-sm text-primary underline-offset-4 hover:underline"
           >
-            导入 YouTube 视频
+            导入原版素材
           </Link>
         </div>
         <p className="text-muted-foreground text-sm">

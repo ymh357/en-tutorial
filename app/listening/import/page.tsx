@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { Loader2 } from "lucide-react";
+import { upload } from "@vercel/blob/client";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -28,22 +29,32 @@ import { extractVideoId } from "@/lib/youtube";
 import { TOPICS, DEFAULT_TOPIC } from "@/lib/topics";
 import type { MaterialSentence } from "@/lib/types";
 
-export default function ImportVideoPage() {
+type Mode = "video" | "audio";
+
+export default function ImportPage() {
   const router = useRouter();
 
-  const [url, setUrl] = useState("");
+  const [mode, setMode] = useState<Mode>("video");
+
+  // Shared across both modes.
   const [title, setTitle] = useState("");
   const [topic, setTopic] = useState<string>(DEFAULT_TOPIC);
   const [error, setError] = useState<string | null>(null);
   const [sentences, setSentences] = useState<MaterialSentence[] | null>(null);
+
+  // Video mode.
+  const [url, setUrl] = useState("");
   const [videoId, setVideoId] = useState<string | null>(null);
   const [isFetching, setIsFetching] = useState(false);
   const [isCreating, setIsCreating] = useState(false);
-
   // 503 fallback: automatic yt-dlp fetch failed (rate-limited/blocked), so the
   // user pastes srt/vtt/json3 captions by hand instead.
   const [pasting, setPasting] = useState(false);
   const [pasteText, setPasteText] = useState("");
+
+  // Audio mode.
+  const [audioFile, setAudioFile] = useState<File | null>(null);
+  const [isUploading, setIsUploading] = useState(false);
 
   const handleFetchCaptions = async () => {
     const id = extractVideoId(url);
@@ -98,7 +109,20 @@ export default function ImportVideoPage() {
     setPasting(false);
   };
 
-  const handleStart = async () => {
+  // Parse pasted srt/vtt for audio mode (no 503 trigger — the user always
+  // supplies subtitles with an audio upload since we can't auto-transcribe).
+  const handleParseAudioSubtitles = () => {
+    const parsed = parseSubtitles(pasteText);
+    if (parsed.length === 0) {
+      setError("未能从粘贴内容解析出字幕（支持 srt/vtt/json3）。");
+      return;
+    }
+    setError(null);
+    setSentences(parsed);
+    setPasting(false);
+  };
+
+  const handleVideoStart = async () => {
     if (!sentences) return;
     setIsCreating(true);
     try {
@@ -124,36 +148,70 @@ export default function ImportVideoPage() {
     }
   };
 
+  // Audio: stream the file straight to @vercel/blob via a client token from
+  // /api/upload-auth (multipart bypasses the 4.5MB function-body limit), then
+  // persist the blob URL as the Material sourceUrl.
+  const handleAudioStart = async () => {
+    if (!audioFile || !sentences) return;
+    setIsUploading(true);
+    try {
+      const blob = await upload(`audio/${audioFile.name}`, audioFile, {
+        access: "public",
+        handleUploadUrl: "/api/upload-auth",
+        multipart: true,
+      });
+      const mat = await dbHelpers.saveMaterial({
+        topic,
+        mediaType: "audio",
+        sourceKind: "authentic",
+        sourceUrl: blob.url,
+        title: title.trim() || audioFile.name,
+        content: "",
+        sentences,
+      });
+      router.push(`/listening/audio/${mat.id}`);
+    } catch (err) {
+      console.error("audio upload/save failed", err);
+      setError("音频上传或保存失败，请重试。");
+    } finally {
+      setIsUploading(false);
+    }
+  };
+
+  const switchMode = (m: Mode) => {
+    setMode(m);
+    setError(null);
+    setSentences(null);
+    setPasting(false);
+    setPasteText("");
+    setVideoId(null);
+    setAudioFile(null);
+  };
+
   return (
     <div className="mx-auto max-w-2xl space-y-4 p-4">
       <Card>
         <CardHeader>
-          <CardTitle>Import from YouTube</CardTitle>
+          <CardTitle>Import listening material</CardTitle>
           <CardDescription>
-            Paste a YouTube link and we&apos;ll pull its captions for
-            sentence-by-sentence listening practice.
+            导入 YouTube 视频或上传音频，配字幕做逐句精听。
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
           <div className="flex gap-2">
-            <Input
-              placeholder="https://www.youtube.com/watch?v=..."
-              value={url}
-              onChange={(e) => setUrl(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") handleFetchCaptions();
-              }}
-            />
             <Button
-              onClick={handleFetchCaptions}
-              disabled={!url.trim() || isFetching}
-              className="shrink-0"
+              variant={mode === "video" ? "default" : "outline"}
+              size="sm"
+              onClick={() => switchMode("video")}
             >
-              {isFetching ? (
-                <Loader2 className="h-4 w-4 animate-spin" />
-              ) : (
-                "抓字幕"
-              )}
+              YouTube 视频
+            </Button>
+            <Button
+              variant={mode === "audio" ? "default" : "outline"}
+              size="sm"
+              onClick={() => switchMode("audio")}
+            >
+              音频上传
             </Button>
           </div>
 
@@ -188,47 +246,102 @@ export default function ImportVideoPage() {
             </Alert>
           )}
 
-          {pasting && (
-            <div className="space-y-2">
-              <Label>Paste subtitles (srt / vtt / json3)</Label>
-              <Textarea
-                rows={8}
-                placeholder="1&#10;00:00:00,000 --> 00:00:02,000&#10;Hello world"
-                value={pasteText}
-                onChange={(e) => setPasteText(e.target.value)}
-              />
-              <Button onClick={handleParsePaste} disabled={!pasteText.trim()}>
-                解析粘贴
-              </Button>
+          {mode === "video" && (
+            <div className="space-y-4">
+              <div className="flex gap-2">
+                <Input
+                  placeholder="https://www.youtube.com/watch?v=..."
+                  value={url}
+                  onChange={(e) => setUrl(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") handleFetchCaptions();
+                  }}
+                />
+                <Button
+                  onClick={handleFetchCaptions}
+                  disabled={!url.trim() || isFetching}
+                  className="shrink-0"
+                >
+                  {isFetching ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    "抓字幕"
+                  )}
+                </Button>
+              </div>
+
+              {pasting && (
+                <div className="space-y-2">
+                  <Label>Paste subtitles (srt / vtt / json3)</Label>
+                  <Textarea
+                    rows={8}
+                    placeholder="1&#10;00:00:00,000 --> 00:00:02,000&#10;Hello world"
+                    value={pasteText}
+                    onChange={(e) => setPasteText(e.target.value)}
+                  />
+                  <Button onClick={handleParsePaste} disabled={!pasteText.trim()}>
+                    解析粘贴
+                  </Button>
+                </div>
+              )}
+
+              {sentences && (
+                <PreviewCard
+                  thumbnail={videoId ? `https://img.youtube.com/vi/${videoId}/hqdefault.jpg` : null}
+                  title={title.trim() || "Untitled"}
+                  sentences={sentences}
+                  onStart={handleVideoStart}
+                  starting={isCreating}
+                  disabledTooltip="音频模式请用下方按钮"
+                />
+              )}
             </div>
           )}
 
-          {sentences && (
-            <div className="space-y-3 rounded-lg border p-4">
-              {videoId && (
-                // eslint-disable-next-line @next/next/no-img-element
-                <img
-                  src={`https://img.youtube.com/vi/${videoId}/hqdefault.jpg`}
-                  alt={title || "video thumbnail"}
-                  className="mx-auto rounded-md max-w-full"
+          {mode === "audio" && (
+            <div className="space-y-4">
+              <div className="space-y-2">
+                <Label>Audio file</Label>
+                <Input
+                  type="file"
+                  accept="audio/*"
+                  onChange={(e) => {
+                    const f = e.target.files?.[0] ?? null;
+                    setAudioFile(f);
+                    if (f && !title.trim()) setTitle(f.name.replace(/\.[^.]+$/, ""));
+                  }}
+                />
+                {audioFile && (
+                  <p className="text-xs text-muted-foreground">
+                    {audioFile.name} ({(audioFile.size / 1024 / 1024).toFixed(1)} MB)
+                  </p>
+                )}
+              </div>
+
+              <div className="space-y-2">
+                <Label>Paste subtitles (srt / vtt / json3)</Label>
+                <Textarea
+                  rows={8}
+                  placeholder="1&#10;00:00:00,000 --> 00:00:02,000&#10;Hello world"
+                  value={pasteText}
+                  onChange={(e) => setPasteText(e.target.value)}
+                />
+                <Button onClick={handleParseAudioSubtitles} disabled={!pasteText.trim()}>
+                  解析字幕
+                </Button>
+              </div>
+
+              {sentences && (
+                <PreviewCard
+                  thumbnail={null}
+                  title={title.trim() || audioFile?.name || "Untitled"}
+                  sentences={sentences}
+                  onStart={handleAudioStart}
+                  starting={isUploading}
+                  disabled={!audioFile}
+                  disabledTooltip={!audioFile ? "请先选择音频文件" : undefined}
                 />
               )}
-              <div className="font-medium">{title.trim() || "Untitled"}</div>
-              <ul className="space-y-1 text-sm text-muted-foreground">
-                {sentences.slice(0, 3).map((s, i) => (
-                  <li key={i}>{s.text}</li>
-                ))}
-              </ul>
-              <Button onClick={handleStart} disabled={isCreating}>
-                {isCreating ? (
-                  <>
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                    Starting...
-                  </>
-                ) : (
-                  "开始精听"
-                )}
-              </Button>
             </div>
           )}
         </CardContent>
@@ -236,3 +349,50 @@ export default function ImportVideoPage() {
     </div>
   );
 }
+
+interface PreviewCardProps {
+  thumbnail: string | null;
+  title: string;
+  sentences: MaterialSentence[];
+  onStart: () => void;
+  starting: boolean;
+  disabled?: boolean;
+  disabledTooltip?: string;
+}
+
+const PreviewCard = ({
+  thumbnail,
+  title,
+  sentences,
+  onStart,
+  starting,
+  disabled,
+  disabledTooltip,
+}: PreviewCardProps) => (
+  <div className="space-y-3 rounded-lg border p-4">
+    {thumbnail && (
+      // eslint-disable-next-line @next/next/no-img-element
+      <img src={thumbnail} alt={title} className="mx-auto rounded-md max-w-full" />
+    )}
+    <div className="font-medium">{title}</div>
+    <ul className="space-y-1 text-sm text-muted-foreground">
+      {sentences.slice(0, 3).map((s, i) => (
+        <li key={i}>{s.text}</li>
+      ))}
+    </ul>
+    <Button
+      onClick={onStart}
+      disabled={starting || disabled}
+      title={disabled ? disabledTooltip : undefined}
+    >
+      {starting ? (
+        <>
+          <Loader2 className="h-4 w-4 animate-spin" />
+          Uploading...
+        </>
+      ) : (
+        "开始精听"
+      )}
+    </Button>
+  </div>
+);

@@ -43,8 +43,9 @@ import type { Material } from "@/lib/types";
 import { materialToShadowingData } from "@/components/listening/material-adapter";
 import {
   createYouTubePlayer,
-  type YouTubeMediaSource,
+  type MediaSource,
 } from "@/components/listening/media-source";
+import { createAudioPlayer } from "@/components/listening/audio-source";
 import { extractVideoId } from "@/lib/youtube";
 
 type RecStatus = "idle" | "recording" | "transcribing";
@@ -136,64 +137,68 @@ export const ShadowingTab = ({
   cefrLevel: string;
   material?: Material;
 }) => {
-  // Video materials (authentic YouTube source, W4-T3) swap the TTS audio
-  // source for a YouTube player and skip LLM sentence generation entirely —
-  // the text path (material undefined) is completely unaffected below.
-  const isVideo = material?.mediaType === "video";
-  const videoId = extractVideoId(material?.sourceUrl);
+  // Media materials (authentic video/audio source, W4-T2/T3) swap the TTS
+  // audio source for a real media player and skip LLM sentence generation
+  // entirely — the text path (material undefined) is completely unaffected.
+  // video uses YouTubeMediaSource (iframe), audio uses createAudioPlayer
+  // (HTMLAudioElement); both implement the same MediaSource contract.
+  const mediaKind = material?.mediaType;
+  const isVideo = mediaKind === "video";
+  const isAudio = mediaKind === "audio";
+  const isMedia = isVideo || isAudio;
+  const videoId = isVideo ? extractVideoId(material?.sourceUrl) : null;
   // Methodology: level decides step fineness. fine (A1-A2) => slower default
   // playback + forced imagine context; coarse (C1-C2) => native speed, may
   // skip the guided imagine step.
   const granularity: StepGranularity = granularityForLevel(cefrLevel);
   // Default rate derives from granularity (fine => 0.75, else 1). The user's
   // manual speed choice is held separately so a runtime cefrLevel change updates
-  // the default without clobbering an explicit override (review W2 S3). Video
-  // mode always starts at 1x — YouTube native audio is the practice material,
-  // and forcing 0.75 here would only mislead (the iframe player defaulted to 1x
-  // and play() never synced the rate, so A1-A2 showed "0.75x" while playing
-  // 1x — deferred ②). The learner still slows down manually via the rate
-  // buttons, which DO call setRate.
-  const defaultRate = granularity === "fine" && !isVideo ? 0.75 : 1;
+  // the default without clobbering an explicit override (review W2 S3). Media
+  // mode always starts at 1x — the native recording is the practice material,
+  // and forcing 0.75 here would only mislead (the player defaulted to 1x and
+  // play() never synced the rate, so A1-A2 showed "0.75x" while playing 1x —
+  // deferred ②). The learner still slows down manually via the rate buttons,
+  // which DO call setRate.
+  const defaultRate = granularity === "fine" && !isMedia ? 0.75 : 1;
   const [userRateOverride, setUserRateOverride] = useState<number | null>(null);
   const playbackRate = userRateOverride ?? defaultRate;
-  // Video mode: the YouTube player instance lives in a ref (mutating it must
-  // not trigger a re-render — media-source.ts is imperative). availableRates
-  // is mirrored into state once the player is ready so the rate buttons can
-  // disable rates the underlying <video> doesn't actually support.
+  // Media mode: the player instance lives in a ref (mutating it must not
+  // trigger a re-render — media-source/audio-source are imperative).
+  // availableRates is mirrored into state once the player is ready so the rate
+  // buttons can disable rates the underlying media doesn't actually support
+  // (YouTube only; HTMLAudio supports the full grid).
   const router = useRouter();
-  const ytSourceRef = useRef<YouTubeMediaSource | null>(null);
-  // React-owned wrapper for the YouTube player. The player mounts INSIDE it as
-  // a non-React child (see media-source.ts createYouTubePlayer): we hand the
-  // host element to the source, which appends its own mount <div> that YT.Player
-  // replaces with an iframe. Because React never owns that mount/iframe, its
-  // reconciliation cannot collide with YT's DOM takeover — the stage-driven
-  // className stays on this wrapper and is never smeared onto the iframe. This
-  // fixes the C1-class regression observed in A1: the iframe ended up
-  // className="hidden" / 0×0 / 640×360-default and the video was invisible in
-  // the listen stage.
+  const sourceRef = useRef<MediaSource | null>(null);
+  // React-owned wrapper for the YouTube player (video only). The player mounts
+  // INSIDE it as a non-React child (see media-source.ts createYouTubePlayer):
+  // we hand the host element to the source, which appends its own mount <div>
+  // that YT.Player replaces with an iframe. Because React never owns that
+  // mount/iframe, its reconciliation cannot collide with YT's DOM takeover —
+  // the stage-driven className stays on this wrapper and is never smeared onto
+  // the iframe. Audio has no on-screen player (sound only), so no host needed.
   const playerHostRef = useRef<HTMLDivElement | null>(null);
   const [availableRates, setAvailableRates] = useState<number[] | null>(null);
   const [abLoop, setAbLoop] = useState(false);
-  // Video mode only: surfaced when the learner finishes the last sentence
+  // Media mode only: surfaced when the learner finishes the last sentence
   // (deferred ① — previously "Next Sentence" on the last sentence silently
   // no-op'd, leaving no completion signal).
   const [finished, setFinished] = useState(false);
-  // Pool/LLM-generated sentence set (text mode only). Video mode derives
+  // Pool/LLM-generated sentence set (text mode only). Media mode derives
   // `data` directly from `material` below instead of going through state —
   // materialToShadowingData is a pure sync function of `material`, so there's
   // nothing to synchronize via an effect (React 19 flags setState-in-effect).
   const [genData, setGenData] = useState<ShadowingData | null>(null);
   const data = useMemo(
-    () => (isVideo && material ? materialToShadowingData(material) : genData),
-    [isVideo, material, genData]
+    () => (isMedia && material ? materialToShadowingData(material) : genData),
+    [isMedia, material, genData]
   );
   const [index, setIndex] = useState(0);
   const [stage, setStage] = useState<Stage>("imagine");
   // Mirror stage into a ref so the player-construction effect's onStateChange
   // callback (which closes over `stage` at mount time and never re-runs on
-  // stage change — deps are [isVideo,material,videoId]) can read the CURRENT
-  // stage. Without this, activeInterval would keep feeding markActive in recall
-  // (where the player can still be playing) and suppress the focus nudge there.
+  // stage change — deps are [isMedia,…]) can read the CURRENT stage. Without
+  // this, activeInterval would keep feeding markActive in recall (where the
+  // player can still be playing) and suppress the focus nudge there.
   const stageRef = useRef<Stage>(stage);
   useEffect(() => {
     stageRef.current = stage;
@@ -273,18 +278,27 @@ export const ShadowingTab = ({
     return () => clearInterval(timer);
   }, [stage]);
 
-  // Video mode: construct the YouTube player once. The effect body only
-  // builds the player, refs it, and registers callbacks — setState happens
-  // inside those callbacks only (React 19 rule, see the focus-watchdog effect
-  // above for the same pattern). `data` itself is derived from `material`
-  // above (no state needed — see the `data` derivation comment).
+  // Media mode: construct the player once (video: YouTube iframe via host;
+  // audio: HTMLAudioElement from sourceUrl). The effect body only builds the
+  // player, refs it, and registers callbacks — setState happens inside those
+  // callbacks only (React 19 rule, see the focus-watchdog effect above for the
+  // same pattern). `data` itself is derived from `material` above (no state
+  // needed — see the `data` derivation comment).
   useEffect(() => {
-    if (!isVideo || !material || !videoId) return;
-    const host = playerHostRef.current;
-    if (!host) return;
-    const source = createYouTubePlayer({ videoId, host });
-    ytSourceRef.current = source;
-    // Video playback is a legitimately still, sustained-attention activity —
+    if (!isMedia || !material) return;
+    let source: MediaSource;
+    if (isVideo) {
+      if (!videoId) return;
+      const host = playerHostRef.current;
+      if (!host) return;
+      source = createYouTubePlayer({ videoId, host });
+    } else if (isAudio && material.sourceUrl) {
+      source = createAudioPlayer({ src: material.sourceUrl });
+    } else {
+      return;
+    }
+    sourceRef.current = source;
+    // Media playback is a legitimately still, sustained-attention activity —
     // register with the focus watchdog so continuous PLAYING doesn't get
     // mistaken for going idle. A single markActive() on the state change is
     // NOT enough: the player then plays for many seconds with no further
@@ -292,18 +306,19 @@ export const ShadowingTab = ({
     // fire its 20s nudge mid-playback. Keep marking active on a cadence while
     // playing, and stop when paused/ended (A1 found this nudge firing during
     // playback). Gate markActive on stage==="listen" via stageRef (the effect
-    // doesn't re-run on stage change) so a still-playing video can't keep the
+    // doesn't re-run on stage change) so a still-playing clip can't keep the
     // watchdog fed in recall, where idle SHOULD nudge (review [重要]).
     let activeInterval: ReturnType<typeof setInterval> | null = null;
     const markActiveIfListening = (): void => {
       if (stageRef.current === "listen") markActive();
     };
-    // Capture availableRates + sync the iframe's rate once, at onReady — the
-    // earliest point getAvailableRates() reflects the actual video. Doing this
+    // Capture availableRates + sync the player's rate once, at onReady — the
+    // earliest point getAvailableRates() reflects the actual media. Doing this
     // on the first onStateChange was unreliable: if the video is unavailable or
     // auto-play is blocked, the player sits at -1 (unstarted, mapState null)
     // and onStateChange never fires, leaving availableRates null forever and
-    // rate buttons undisabled pre-ready (review [次要]).
+    // rate buttons undisabled pre-ready (review [次要]). Audio's onReady fires
+    // on loadedmetadata.
     const unsubscribeReady = source.onReady(() => {
       const rates = source.getAvailableRates();
       setAvailableRates(rates);
@@ -333,13 +348,13 @@ export const ShadowingTab = ({
       unsubscribe();
       unsubscribeReady();
       source.destroy();
-      ytSourceRef.current = null;
+      sourceRef.current = null;
     };
     // playbackRate is captured at first-readiness above, not on every change —
     // re-running this effect would tear down and rebuild the player. The rate
     // buttons call setRate imperatively for live changes.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isVideo, material, videoId]);
+  }, [isMedia, isVideo, isAudio, material, videoId]);
 
   const generateSentences = async (): Promise<void> => {
     setIsLoading(true);
@@ -427,9 +442,9 @@ export const ShadowingTab = ({
   };
 
   useEffect(() => {
-    // Video mode feeds data directly from `material` (effect above) — skip
+    // Media mode feeds data directly from `material` (effect above) — skip
     // LLM/pool sentence generation entirely.
-    if (isVideo) return;
+    if (isMedia) return;
     const timer = setTimeout(() => void generateSentences(), 0);
     return () => clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -438,12 +453,12 @@ export const ShadowingTab = ({
   const currentSentence = data?.sentences[index]?.text ?? "";
   const currentTranslation = data?.sentences[index]?.translation ?? "";
   const currentImageryHint = data?.sentences[index]?.imageryHint ?? "";
-  // Video mode only: true on the last sentence, where "Next Sentence" becomes
+  // Media mode only: true on the last sentence, where "Next Sentence" becomes
   // "完成练习" and triggers the finished state (deferred ①).
   const isLastSentence =
-    isVideo && !!data && index >= data.sentences.length - 1;
+    isMedia && !!data && index >= data.sentences.length - 1;
 
-  // Video mode: play sentence `i`'s audio range. parseJson3 emits
+  // Media mode: play sentence `i`'s audio range. parseJson3 emits
   // audioEndMs: undefined whenever a json3 event is missing dDurationMs or
   // carries dDurationMs: 0 (both occur in real auto-caption tracks) — so we
   // can't just no-op when it's absent, or the learner hits a silent dead end.
@@ -457,7 +472,7 @@ export const ShadowingTab = ({
       s.audioEndMs ??
       Math.min(nextStart ?? s.audioStartMs + 5000, s.audioStartMs + 15000);
     setListensCount((c) => c + 1);
-    ytSourceRef.current?.play(s.audioStartMs, endMs);
+    sourceRef.current?.play(s.audioStartMs, endMs);
   };
 
   const startAttempt = async (): Promise<void> => {
@@ -595,22 +610,22 @@ export const ShadowingTab = ({
       // the TTS path never auto-speaks on advance. Also reset AB-loop — it's
       // a per-sentence practice aid, not a standing preference, so it must
       // not carry over and silently loop the next sentence's first playback.
-      if (isVideo && material?.sentences) {
+      if (isMedia && material?.sentences) {
         const next = material.sentences[nextIndex];
         setAbLoop(false);
-        ytSourceRef.current?.setAbLoop(false);
-        ytSourceRef.current?.pause();
+        sourceRef.current?.setAbLoop(false);
+        sourceRef.current?.pause();
         if (next?.audioStartMs != null) {
-          ytSourceRef.current?.seekTo(next.audioStartMs);
+          sourceRef.current?.seekTo(next.audioStartMs);
         }
       }
-    } else if (!isVideo) {
+    } else if (!isMedia) {
       await generateSentences();
     } else {
-      // Video mode reached the last sentence: surface completion instead of
+      // Media mode reached the last sentence: surface completion instead of
       // silently no-op'ing (deferred ①). Pause the player and show a finished
       // state with a way back to listening practice.
-      ytSourceRef.current?.pause();
+      sourceRef.current?.pause();
       setFinished(true);
     }
   };
@@ -712,9 +727,9 @@ export const ShadowingTab = ({
                   <p className="text-sm text-muted-foreground text-center italic">
                     {data?.context}
                   </p>
-                  {isVideo && currentImageryHint === "" ? (
+                  {isMedia && currentImageryHint === "" ? (
                     <div className="space-y-2 text-center">
-                      {videoId && (
+                      {isVideo && videoId && (
                         // eslint-disable-next-line @next/next/no-img-element
                         <img
                           src={`https://img.youtube.com/vi/${videoId}/hqdefault.jpg`}
@@ -723,7 +738,9 @@ export const ShadowingTab = ({
                         />
                       )}
                       <p className="text-sm py-2 border-l-2 border-primary/40 pl-3 ml-3 mr-3 text-left">
-                        先看视频标题和封面，想象这个视频会讲什么，不要急着播放。
+                        {isVideo
+                          ? "先看视频标题和封面，想象这个视频会讲什么，不要急着播放。"
+                          : "先看标题，想象这段音频会讲什么，不要急着播放。"}
                       </p>
                     </div>
                   ) : (
@@ -758,7 +775,7 @@ export const ShadowingTab = ({
                     className="w-full min-h-[44px]"
                     onClick={() => {
                       markActive();
-                      if (isVideo) {
+                      if (isMedia) {
                         playSentence(index);
                       } else {
                         setListensCount((c) => c + 1);
@@ -770,7 +787,7 @@ export const ShadowingTab = ({
                     播放（{playbackRate}x）
                   </Button>
 
-                  {isVideo && (
+                  {isMedia && (
                     <div className="flex justify-center">
                       <Button
                         size="sm"
@@ -780,7 +797,7 @@ export const ShadowingTab = ({
                           markActive();
                           const next = !abLoop;
                           setAbLoop(next);
-                          ytSourceRef.current?.setAbLoop(next);
+                          sourceRef.current?.setAbLoop(next);
                         }}
                       >
                         {abLoop ? "AB 循环开" : "AB 循环关"}
@@ -802,8 +819,8 @@ export const ShadowingTab = ({
                         onClick={() => {
                           markActive();
                           setUserRateOverride(r);
-                          if (isVideo) {
-                            const applied = ytSourceRef.current?.setRate(r);
+                          if (isMedia) {
+                            const applied = sourceRef.current?.setRate(r);
                             if (applied != null) setUserRateOverride(applied);
                           }
                         }}
@@ -816,10 +833,10 @@ export const ShadowingTab = ({
                     听不清就减速反复听；听清后可加速到 1.5x/2x 增加强度。
                   </p>
 
-                  {/* Accent selection (methodology: accent training) — video
-                      mode has one fixed voice (the speaker in the video), so
-                      the accent picker doesn't apply. */}
-                  {!isVideo && (
+                  {/* Accent selection (methodology: accent training) — media
+                      mode has one fixed voice (the speaker in the recording),
+                      so the accent picker doesn't apply. */}
+                  {!isMedia && (
                     <div className="flex flex-wrap gap-2 justify-center items-center">
                       <span className="text-xs text-muted-foreground">口音：</span>
                       {VOICE_OPTIONS.map((v) => (
@@ -847,13 +864,14 @@ export const ShadowingTab = ({
                       markActive();
                       setSubtitleMode("english");
                       setStage("recall");
-                      // Video mode: pause when leaving the listen stage — the
+                      // Media mode: pause when leaving the listen stage — video's
                       // host goes display:none but YT audio keeps playing under
-                      // it (and AB-loop would loop forever). Without this the
-                      // sentence clip bleeds into recall and, while still
-                      // playing, keeps the focus watchdog fed (review [重要]).
-                      if (isVideo) {
-                        ytSourceRef.current?.pause();
+                      // it (and AB-loop would loop forever); audio has no host
+                      // but plays just the same. Without this the sentence clip
+                      // bleeds into recall and, while still playing, keeps the
+                      // focus watchdog fed (review [重要]).
+                      if (isMedia) {
+                        sourceRef.current?.pause();
                       }
                     }}
                   >
@@ -881,19 +899,19 @@ export const ShadowingTab = ({
                       字幕已隐藏——纯靠声音跟读。
                     </p>
                   )}
-                  {isVideo && currentTranslation === "" && (
+                  {isMedia && currentTranslation === "" && (
                     <p className="text-xs text-muted-foreground text-center">
-                      该视频素材无中文译文。
+                      该素材无中文译文。
                     </p>
                   )}
 
-                  {/* Subtitle mode switcher. Video materials have no
+                  {/* Subtitle mode switcher. Media materials have no
                       translation (only real captions), so "bilingual" is
                       dropped — only english/hidden remain. Text mode always
                       keeps "bilingual" even if the LLM happens to return an
                       empty translation (pre-existing behavior, out of scope). */}
                   <div className="flex flex-wrap gap-2 justify-center">
-                    {(isVideo && currentTranslation === ""
+                    {(isMedia && currentTranslation === ""
                       ? (["english", "hidden"] as const)
                       : (["english", "bilingual", "hidden"] as const)
                     ).map((m) => (
@@ -1023,7 +1041,7 @@ export const ShadowingTab = ({
                 className="min-h-[36px]"
                 onClick={() => {
                   markActive();
-                  if (isVideo) {
+                  if (isMedia) {
                     playSentence(index);
                   } else {
                     void speak(currentSentence, undefined, undefined, voice);
