@@ -276,6 +276,15 @@ export const ShadowingTab = ({
     const source = createYouTubePlayer({ videoId, host });
     ytSourceRef.current = source;
     let ratesCaptured = false;
+    // Video playback is a legitimately still, sustained-attention activity —
+    // register with the focus watchdog so continuous PLAYING doesn't get
+    // mistaken for going idle. A single markActive() on the state change is
+    // NOT enough: the player then plays for many seconds with no further
+    // state events, so the watchdog (which arms on listen/recall entry) would
+    // fire its 20s nudge mid-playback. Keep marking active on a cadence while
+    // playing, and stop when paused/ended (A1 found this nudge firing during
+    // playback).
+    let activeInterval: ReturnType<typeof setInterval> | null = null;
     const unsubscribe = source.onStateChange((state) => {
       // The player becomes ready asynchronously (media-source.ts loads the
       // IFrame API before constructing YT.Player); the first state change
@@ -295,12 +304,21 @@ export const ShadowingTab = ({
           source.setRate(playbackRate);
         }
       }
-      // Video playback is a legitimately still, sustained-attention activity —
-      // register with the focus watchdog so continuous PLAYING doesn't get
-      // mistaken for going idle.
-      if (state === "playing") markActive();
+      if (state === "playing") {
+        markActive();
+        if (!activeInterval) {
+          activeInterval = setInterval(() => markActive(), 5000);
+        }
+      } else {
+        if (activeInterval) {
+          clearInterval(activeInterval);
+          activeInterval = null;
+        }
+        markActive();
+      }
     });
     return () => {
+      if (activeInterval) clearInterval(activeInterval);
       unsubscribe();
       source.destroy();
       ytSourceRef.current = null;
