@@ -30,19 +30,9 @@ import { completeTask } from "@/lib/task-pool";
 import { recordCost } from "@/lib/cost-tracker";
 import { readerArticleGenSchema, toJsonSchema } from "@/lib/ai-schemas";
 import { UNKNOWN_DIFFICULTY, type ReadingSession } from "@/lib/types";
+import { TOPICS } from "@/lib/topics";
 
 const DIFFICULTIES = ["A2", "B1", "B2", "C1"] as const;
-
-const TOPICS = [
-  "Technology",
-  "Business",
-  "Science",
-  "Culture",
-  "Daily Life",
-  "Health",
-  "Education",
-  "Environment",
-] as const;
 
 const SOURCE_LABEL: Record<ReadingSession["source"], string> = {
   ai_generated: "AI Generated",

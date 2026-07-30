@@ -8,6 +8,7 @@ import {
   getKnownWordsForLevel,
   type CefrLevel,
 } from "@/lib/frequency-list";
+import { TOPICS as INTEREST_TOPICS } from "@/lib/topics";
 import {
   Card,
   CardDescription,
@@ -55,19 +56,6 @@ const LEVELS: Array<{ value: CefrLevel; label: string; description: string }> =
         "I use English with near-native ease across virtually any context.",
     },
   ];
-
-const INTEREST_TOPICS = [
-  "Technology",
-  "Business",
-  "Science",
-  "Culture",
-  "Daily Life",
-  "Health",
-  "Education",
-  "Travel",
-  "Food",
-  "Music",
-] as const;
 
 const OnboardingPage = () => {
   const router = useRouter();
