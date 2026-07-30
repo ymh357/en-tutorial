@@ -74,9 +74,12 @@ def fetch_captions(video_id):
             with open(filepath, "r", encoding="utf-8") as f:
                 data = json.load(f)
             # Deferred ③: en-orig can yield a structurally valid but empty
-            # json3 (events missing/empty) on some videos. Don't return that —
-            # fall through to the next language (en) instead of silently
-            # shipping an empty caption set.
+            # json3 (events missing/None/[]) on some videos. Don't return that
+            # — fall through to the next language (en) instead of silently
+            # shipping an empty caption set. `if data.get("events"):` is falsy
+            # for all three empty shapes. Each lang writes its own file under
+            # /tmp, and the `finally` below removes this lang's filepath before
+            # the loop advances — the next iteration opens a different file.
             if data.get("events"):
                 return {"languageCode": lang, "json3": data}
         finally:

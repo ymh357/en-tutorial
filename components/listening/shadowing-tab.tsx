@@ -189,6 +189,15 @@ export const ShadowingTab = ({
   );
   const [index, setIndex] = useState(0);
   const [stage, setStage] = useState<Stage>("imagine");
+  // Mirror stage into a ref so the player-construction effect's onStateChange
+  // callback (which closes over `stage` at mount time and never re-runs on
+  // stage change — deps are [isVideo,material,videoId]) can read the CURRENT
+  // stage. Without this, activeInterval would keep feeding markActive in recall
+  // (where the player can still be playing) and suppress the focus nudge there.
+  const stageRef = useRef<Stage>(stage);
+  useEffect(() => {
+    stageRef.current = stage;
+  }, [stage]);
   const [subtitleMode, setSubtitleMode] = useState<SubtitleMode>("english");
   const [voice, setVoice] = useState<string>("en-US-AriaNeural");
   const [listensCount, setListensCount] = useState<number>(0);
@@ -275,7 +284,6 @@ export const ShadowingTab = ({
     if (!host) return;
     const source = createYouTubePlayer({ videoId, host });
     ytSourceRef.current = source;
-    let ratesCaptured = false;
     // Video playback is a legitimately still, sustained-attention activity —
     // register with the focus watchdog so continuous PLAYING doesn't get
     // mistaken for going idle. A single markActive() on the state change is
@@ -283,43 +291,47 @@ export const ShadowingTab = ({
     // state events, so the watchdog (which arms on listen/recall entry) would
     // fire its 20s nudge mid-playback. Keep marking active on a cadence while
     // playing, and stop when paused/ended (A1 found this nudge firing during
-    // playback).
+    // playback). Gate markActive on stage==="listen" via stageRef (the effect
+    // doesn't re-run on stage change) so a still-playing video can't keep the
+    // watchdog fed in recall, where idle SHOULD nudge (review [重要]).
     let activeInterval: ReturnType<typeof setInterval> | null = null;
-    const unsubscribe = source.onStateChange((state) => {
-      // The player becomes ready asynchronously (media-source.ts loads the
-      // IFrame API before constructing YT.Player); the first state change
-      // callback is the earliest point getAvailableRates() reflects the
-      // actual video rather than the pre-ready fallback default.
-      if (!ratesCaptured) {
-        ratesCaptured = true;
-        const rates = source.getAvailableRates();
-        setAvailableRates(rates);
-        // Sync the iframe's rate to playbackRate once, on first readiness —
-        // otherwise the player stays at its native 1x regardless of the
-        // derived default / any override captured before ready (deferred ②).
-        if (!rates.includes(playbackRate)) {
-          const applied = source.setRate(playbackRate);
-          setUserRateOverride(applied);
-        } else {
-          source.setRate(playbackRate);
-        }
+    const markActiveIfListening = (): void => {
+      if (stageRef.current === "listen") markActive();
+    };
+    // Capture availableRates + sync the iframe's rate once, at onReady — the
+    // earliest point getAvailableRates() reflects the actual video. Doing this
+    // on the first onStateChange was unreliable: if the video is unavailable or
+    // auto-play is blocked, the player sits at -1 (unstarted, mapState null)
+    // and onStateChange never fires, leaving availableRates null forever and
+    // rate buttons undisabled pre-ready (review [次要]).
+    const unsubscribeReady = source.onReady(() => {
+      const rates = source.getAvailableRates();
+      setAvailableRates(rates);
+      if (!rates.includes(playbackRate)) {
+        const applied = source.setRate(playbackRate);
+        if (applied != null) setUserRateOverride(applied);
+      } else {
+        source.setRate(playbackRate);
       }
+    });
+    const unsubscribe = source.onStateChange((state) => {
       if (state === "playing") {
-        markActive();
+        markActiveIfListening();
         if (!activeInterval) {
-          activeInterval = setInterval(() => markActive(), 5000);
+          activeInterval = setInterval(() => markActiveIfListening(), 5000);
         }
       } else {
         if (activeInterval) {
           clearInterval(activeInterval);
           activeInterval = null;
         }
-        markActive();
+        markActiveIfListening();
       }
     });
     return () => {
       if (activeInterval) clearInterval(activeInterval);
       unsubscribe();
+      unsubscribeReady();
       source.destroy();
       ytSourceRef.current = null;
     };
@@ -835,6 +847,14 @@ export const ShadowingTab = ({
                       markActive();
                       setSubtitleMode("english");
                       setStage("recall");
+                      // Video mode: pause when leaving the listen stage — the
+                      // host goes display:none but YT audio keeps playing under
+                      // it (and AB-loop would loop forever). Without this the
+                      // sentence clip bleeds into recall and, while still
+                      // playing, keeps the focus watchdog fed (review [重要]).
+                      if (isVideo) {
+                        ytSourceRef.current?.pause();
+                      }
                     }}
                   >
                     揭示原文并跟读
@@ -923,7 +943,11 @@ export const ShadowingTab = ({
                     className="w-full min-h-[44px]"
                     onClick={() => {
                       markActive();
-                      recStatus === "recording" ? void stopAttempt() : void startAttempt();
+                      if (recStatus === "recording") {
+                        void stopAttempt();
+                      } else {
+                        void startAttempt();
+                      }
                     }}
                     disabled={!speechSupported || recStatus === "transcribing"}
                   >
@@ -1052,7 +1076,7 @@ export const ShadowingTab = ({
         />
       )}
 
-      {data && data.sentences.length > 0 && !(result && transcript !== null) && (
+      {data && data.sentences.length > 0 && !(result && transcript !== null) && !finished && (
         <Button
           variant="outline"
           className="w-full min-h-[44px]"

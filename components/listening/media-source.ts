@@ -35,7 +35,7 @@ interface YTPlayer {
 
 interface YTPlayerCtor {
   // YT.Player accepts either an element or its id as the first argument.
-  new (element: HTMLElement, options: YTPlayerOptions): YTPlayer;
+  new (element: HTMLElement | string, options: YTPlayerOptions): YTPlayer;
 }
 
 interface YTNamespace {
@@ -86,14 +86,18 @@ export interface YouTubeMediaSource {
   play(startMs: number, endMs: number): void;
   pause(): void;
   seekTo(ms: number): void;
-  /** Clamp to nearest available rate; returns actual applied rate. */
-  setRate(rate: number): number;
+  /** Clamp to nearest available rate; returns actual applied rate, or null if
+   * the player isn't ready yet (caller should keep the user's selection). */
+  setRate(rate: number): number | null;
   getRate(): number;
   getAvailableRates(): number[];
   /** Toggle AB-loop replay of the current sentence range. */
   setAbLoop(on: boolean): void;
   /** Subscribe to play/pause/ended state changes (for watchdog). */
   onStateChange(cb: (state: "playing" | "paused" | "ended") => void): () => void;
+  /** Fire once when the player is ready — the earliest point
+   * getAvailableRates() reflects the actual video. */
+  onReady(cb: () => void): () => void;
   /** Pause video, clear interval, destroy iframe, remove mount node. */
   destroy(): void;
 }
@@ -112,6 +116,7 @@ export const createYouTubePlayer = (
   // immediately after construction) would be silently dropped.
   let pendingPlay: { startMs: number; endMs: number } | null = null;
   const stateCbs = new Set<(s: "playing" | "paused" | "ended") => void>();
+  const onReadyCbs = new Set<() => void>();
   // -1 unstarted, 0 ended, 1 playing, 2 paused, 3 buffering, 5 cued.
   // Buffering/unstarted/cued are transient, non-user-initiated states that
   // are neither "playing" nor a real "paused" — surfacing them as "paused"
@@ -182,6 +187,11 @@ export const createYouTubePlayer = (
           stateCbs.forEach((cb) => cb(mapped));
         },
         onReady: () => {
+          // Fire readiness subscribers BEFORE flushing pendingPlay so callers
+          // (shadowing-tab) can capture availableRates / sync the rate at the
+          // earliest moment the video reflects them — onStateChange can lag or
+          // (auto-play blocked / unavailable video) never arrive.
+          onReadyCbs.forEach((cb) => cb());
           if (pendingPlay) {
             const { startMs, endMs } = pendingPlay;
             pendingPlay = null;
@@ -217,11 +227,12 @@ export const createYouTubePlayer = (
       player?.seekTo?.(ms / 1000, true);
     },
     setRate(rate) {
-      const avail = player?.getAvailablePlaybackRates?.() ?? [0.5, 1, 1.5, 2];
+      if (!player) return null;
+      const avail = player.getAvailablePlaybackRates?.() ?? [0.5, 1, 1.5, 2];
       const clamped = [...avail].sort(
         (a, b) => Math.abs(a - rate) - Math.abs(b - rate)
       )[0];
-      player?.setPlaybackRate?.(clamped);
+      player.setPlaybackRate?.(clamped);
       return clamped;
     },
     getRate() {
@@ -237,18 +248,21 @@ export const createYouTubePlayer = (
       stateCbs.add(cb);
       return () => stateCbs.delete(cb);
     },
+    onReady(cb) {
+      onReadyCbs.add(cb);
+      return () => onReadyCbs.delete(cb);
+    },
     destroy() {
       destroyed = true;
       pendingPlay = null;
       clearPoll();
       stateCbs.clear();
+      onReadyCbs.clear();
       player?.destroy?.();
       player = null;
       // player.destroy() removes the iframe it created, but if construction
       // hadn't finished (or YT left the mount div behind), drop it manually.
-      if (mountNode && mountNode.parentElement) {
-        mountNode.parentElement.removeChild(mountNode);
-      }
+      mountNode?.remove();
       mountNode = null;
     },
   };
