@@ -505,9 +505,13 @@ export const ShadowingTab = ({
       setIndex(nextIndex);
       // Video mode: pause and seek to the next sentence's start, but don't
       // auto-play — the learner presses play in the listen stage, same as
-      // the TTS path never auto-speaks on advance.
+      // the TTS path never auto-speaks on advance. Also reset AB-loop — it's
+      // a per-sentence practice aid, not a standing preference, so it must
+      // not carry over and silently loop the next sentence's first playback.
       if (isVideo && material?.sentences) {
         const next = material.sentences[nextIndex];
+        setAbLoop(false);
+        ytSourceRef.current?.setAbLoop(false);
         ytSourceRef.current?.pause();
         if (next?.audioStartMs != null) {
           ytSourceRef.current?.seekTo(next.audioStartMs);
