@@ -320,8 +320,8 @@ const GuidePage = () => {
           <p>计划生成算法：</p>
           <ul>
             <li>
-              <strong className="text-foreground">SRS 复习永远优先</strong>{" "}
-              — 只要有到期的复习卡片，第一步永远是 SRS 复习
+              <strong className="text-foreground">复习优先级随学习目标切换</strong>{" "}
+              — 精通轨道（mastery）下 SRS 复习永远优先；流利轨道（fluency，默认）下 SRS 与听力/阅读平等轮换，复习欠账不会挤占直接听懂练习
             </li>
             <li>
               <strong className="text-foreground">按闲置时间排序</strong> —
@@ -419,7 +419,7 @@ const GuidePage = () => {
             </li>
             <li>
               <strong className="text-foreground">AI 朗读</strong>：每条 AI
-              消息旁有喇叭按钮，点击可以听 AI 的回复（使用浏览器 TTS）
+              消息旁有喇叭按钮，点击可以听 AI 的回复（使用 Edge 神经语音 TTS）
             </li>
             <li>
               <strong className="text-foreground">停止生成</strong>：AI
@@ -615,11 +615,10 @@ const GuidePage = () => {
         {/* 听力练习 */}
         <Section id="listening" title="听力练习">
           <ModuleCard icon={<span>&#127911;</span>} title="Listening" path="/listening">
-            用耳朵学英语。AI 生成听力材料，浏览器 TTS
-            朗读，配合语音识别检测你的听写和跟读准确度。
+            用耳朵学英语。AI 生成听力材料，Edge 神经语音（TTS）朗读，配合语音识别检测你的听写和跟读准确度。
           </ModuleCard>
 
-          <h3>三种练习模式</h3>
+          <h3>四种练习模式</h3>
           <ol>
             <li>
               <strong className="text-foreground">听写（Dictation）</strong>{" "}
@@ -631,8 +630,12 @@ const GuidePage = () => {
               道选择题，音频可以重复播放。
             </li>
             <li>
-              <strong className="text-foreground">跟读（Shadowing）</strong>{" "}
-              — AI 提供句子，TTS 分别以正常语速和慢速朗读，你通过语音识别录音跟读，系统比对你的发音与原文的准确度。
+              <strong className="text-foreground">跟读（Shadowing，直接听懂三步法）</strong>{" "}
+              — 先看语境在脑海中构造画面（不露英文），再反复听声音（可变速、多口音），最后揭示原文录音跟读，系统比对的是你说出的词与原文的词匹配度（内容准确度，非发音分）。听不懂的长句可一键拆成短语逐个理解。
+            </li>
+            <li>
+              <strong className="text-foreground">预测（Prediction）</strong>{" "}
+              — 听一段话的前半段，预测后半段会说什么，训练anticipation 能力。
             </li>
           </ol>
 
@@ -711,7 +714,7 @@ const GuidePage = () => {
         <Section id="srs" title="间隔重复复习 (SRS)">
           <ModuleCard icon={<span>&#129504;</span>} title="Review Cards" path="/srs">
             基于 SM-2
-            算法的间隔重复系统。你在对话、阅读、写作中遇到的生词和错误表达会自动变成复习卡片，按科学间隔安排复习。
+            算法的间隔重复系统。你在对话、阅读、写作中遇到的生词和错误表达会自动变成复习卡片，按科学间隔安排复习。SRS 属于&ldquo;精通轨道&rdquo;（mastery）：用于精确识记词汇与表达。如果你在&ldquo;流利轨道&rdquo;（fluency，默认）以直接听懂为目标，复习卡片不会挤占听力练习——遗忘是正常的，相同语料会在不同场景自然重现。
           </ModuleCard>
 
           <h3>卡片来源</h3>
@@ -775,11 +778,10 @@ const GuidePage = () => {
           </ul>
 
           <Tip label="核心原则">
-            SRS 的威力在于
-            <strong className="text-foreground">每天坚持复习</strong>
-            。哪怕只有 5
-            分钟，把到期的卡片过一遍，也比一次突击复习 1
-            小时有效得多。Dashboard 的今日计划会优先提醒你复习到期卡片。
+            <strong className="text-foreground">精通轨道</strong>下，SRS
+            的威力在于每天坚持复习——哪怕只有 5
+            分钟，把到期的卡片过一遍，也比一次突击复习 1 小时有效得多。
+            <strong className="text-foreground">流利轨道</strong>下则相反：遗忘是正常现象，不必为复习欠账焦虑。一路往前学新内容，相同语料会在不同练习场景里自然重现（交替重复），很快就能直接听懂。
           </Tip>
         </Section>
 
