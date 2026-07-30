@@ -1,11 +1,12 @@
 "use client";
 
 // Shadowing (repeat-after-me) tab for the listening page. Extracted from
-// app/listening/page.tsx (W1-T1) — behavior unchanged on this step; the 3-step
-// stage machine / subtitle gating / variable speed land in later W1 tasks.
+// app/listening/page.tsx (W1-T1). W1-T3 added the 3-step direct-comprehension
+// stage machine (imagine → listen → recall); subtitle gating / variable speed
+// land in later W1 tasks.
 
 import { useEffect, useRef, useState } from "react";
-import { Loader2, Mic, Play, Square, Turtle } from "lucide-react";
+import { ArrowRight, Loader2, Mic, Play, Square, Turtle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -37,6 +38,15 @@ import {
 } from "@/components/listening/shared";
 
 type RecStatus = "idle" | "recording" | "transcribing";
+
+// The 3-step direct-comprehension stage machine (methodology):
+//   imagine — read the topic/context/imageryHint and form the mental picture
+//             BEFORE hearing or reading the English (fire-together-wire-together)
+//   listen  — hear the audio repeatedly until the sound is clear; English stays hidden
+//   recall  — reveal the English line + translation, then record & check
+// Orthogonal to RecStatus (which tracks the microphone device, not the learning step).
+type Stage = "imagine" | "listen" | "recall";
+const STAGE_ORDER: readonly Stage[] = ["imagine", "listen", "recall"];
 
 // Runtime shape of a shadowing set (mirrors listeningShadowingSchema).
 export interface ShadowingSentence {
@@ -72,6 +82,7 @@ const isShadowingData = (value: unknown): value is ShadowingData => {
 export const ShadowingTab = ({ cefrLevel }: { cefrLevel: string }) => {
   const [data, setData] = useState<ShadowingData | null>(null);
   const [index, setIndex] = useState(0);
+  const [stage, setStage] = useState<Stage>("imagine");
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [recStatus, setRecStatus] = useState<RecStatus>("idle");
@@ -114,6 +125,7 @@ export const ShadowingTab = ({ cefrLevel }: { cefrLevel: string }) => {
     setError(null);
     setData(null);
     setIndex(0);
+    setStage("imagine");
     setTranscript(null);
     setResult(null);
     setApproximate(false);
@@ -175,6 +187,8 @@ export const ShadowingTab = ({ cefrLevel }: { cefrLevel: string }) => {
   }, []);
 
   const currentSentence = data?.sentences[index]?.text ?? "";
+  const currentTranslation = data?.sentences[index]?.translation ?? "";
+  const currentImageryHint = data?.sentences[index]?.imageryHint ?? "";
 
   const startAttempt = async (): Promise<void> => {
     if (startingRef.current || recStatus !== "idle") return;
@@ -246,6 +260,7 @@ export const ShadowingTab = ({ cefrLevel }: { cefrLevel: string }) => {
     setTranscript(null);
     setResult(null);
     setApproximate(false);
+    setStage("imagine");
     if (data && index + 1 < data.sentences.length) {
       setIndex(index + 1);
     } else {
@@ -279,7 +294,7 @@ export const ShadowingTab = ({ cefrLevel }: { cefrLevel: string }) => {
             )}
           </CardTitle>
           <CardDescription className="text-xs">
-            Listen, then record yourself repeating the sentence.
+            先想画面 → 听声音 → 揭示原文跟读，让英语声音直接唤起画面。
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
@@ -290,56 +305,120 @@ export const ShadowingTab = ({ cefrLevel }: { cefrLevel: string }) => {
             </div>
           ) : (
             <>
-              <p className="text-base font-medium text-center py-2">
-                {currentSentence}
-              </p>
-
-              <div className="flex flex-wrap gap-2 justify-center">
-                <Button
-                  size="lg"
-                  className="min-h-[44px] flex-1 sm:flex-none"
-                  onClick={() => void speak(currentSentence)}
-                >
-                  <Play className="h-4 w-4" />
-                  Normal Speed
-                </Button>
-                <Button
-                  size="lg"
-                  variant="secondary"
-                  className="min-h-[44px] flex-1 sm:flex-none"
-                  onClick={() => void speak(currentSentence, "-40%")}
-                >
-                  <Turtle className="h-4 w-4" />
-                  Slow Speed
-                </Button>
+              {/* 3-step progress indicator */}
+              <div className="flex items-center justify-center gap-2 text-xs text-muted-foreground">
+                {STAGE_ORDER.map((s, i) => (
+                  <span
+                    key={s}
+                    className={
+                      s === stage
+                        ? "font-medium text-foreground"
+                        : "text-muted-foreground/60"
+                    }
+                  >
+                    {i + 1}. {s === "imagine" ? "想画面" : s === "listen" ? "听声音" : "跟读"}
+                  </span>
+                ))}
               </div>
 
-              <Button
-                size="lg"
-                variant={recStatus === "recording" ? "destructive" : "default"}
-                className="w-full min-h-[44px]"
-                onClick={() =>
-                  recStatus === "recording" ? void stopAttempt() : void startAttempt()
-                }
-                disabled={!speechSupported || recStatus === "transcribing"}
-              >
-                {recStatus === "recording" ? (
-                  <>
-                    <Square className="h-4 w-4" />
-                    Stop &amp; Check
-                  </>
-                ) : recStatus === "transcribing" ? (
-                  <>
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                    Transcribing...
-                  </>
-                ) : (
-                  <>
-                    <Mic className="h-4 w-4" />
-                    Record My Attempt
-                  </>
-                )}
-              </Button>
+              {stage === "imagine" && (
+                <div className="space-y-3 py-1">
+                  <p className="text-xs uppercase tracking-wide text-muted-foreground text-center">
+                    {data?.topic}
+                  </p>
+                  <p className="text-sm text-muted-foreground text-center italic">
+                    {data?.context}
+                  </p>
+                  <p className="text-sm text-center py-2 border-l-2 border-primary/40 pl-3 ml-3 mr-3">
+                    {currentImageryHint}
+                  </p>
+                  <p className="text-xs text-muted-foreground text-center">
+                    闭上眼睛，先在脑海中构造这个画面，不要急着看英文。
+                  </p>
+                  <Button
+                    size="lg"
+                    className="w-full min-h-[44px]"
+                    onClick={() => setStage("listen")}
+                  >
+                    我已想好画面
+                    <ArrowRight className="h-4 w-4 ml-2" />
+                  </Button>
+                </div>
+              )}
+
+              {stage === "listen" && (
+                <div className="space-y-3">
+                  <div className="flex flex-wrap gap-2 justify-center">
+                    <Button
+                      size="lg"
+                      className="min-h-[44px] flex-1 sm:flex-none"
+                      onClick={() => void speak(currentSentence)}
+                    >
+                      <Play className="h-4 w-4" />
+                      Normal Speed
+                    </Button>
+                    <Button
+                      size="lg"
+                      variant="secondary"
+                      className="min-h-[44px] flex-1 sm:flex-none"
+                      onClick={() => void speak(currentSentence, "-40%")}
+                    >
+                      <Turtle className="h-4 w-4" />
+                      Slow Speed
+                    </Button>
+                  </div>
+                  <p className="text-xs text-muted-foreground text-center">
+                    反复听，直到声音清晰——英文文本先不揭示。
+                  </p>
+                  <Button
+                    size="lg"
+                    variant="outline"
+                    className="w-full min-h-[44px]"
+                    onClick={() => setStage("recall")}
+                  >
+                    揭示原文并跟读
+                    <ArrowRight className="h-4 w-4 ml-2" />
+                  </Button>
+                </div>
+              )}
+
+              {stage === "recall" && (
+                <div className="space-y-3">
+                  <p className="text-base font-medium text-center py-2">
+                    {currentSentence}
+                  </p>
+                  <p className="text-sm text-muted-foreground text-center italic">
+                    {currentTranslation}
+                  </p>
+
+                  <Button
+                    size="lg"
+                    variant={recStatus === "recording" ? "destructive" : "default"}
+                    className="w-full min-h-[44px]"
+                    onClick={() =>
+                      recStatus === "recording" ? void stopAttempt() : void startAttempt()
+                    }
+                    disabled={!speechSupported || recStatus === "transcribing"}
+                  >
+                    {recStatus === "recording" ? (
+                      <>
+                        <Square className="h-4 w-4" />
+                        Stop &amp; Check
+                      </>
+                    ) : recStatus === "transcribing" ? (
+                      <>
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                        Transcribing...
+                      </>
+                    ) : (
+                      <>
+                        <Mic className="h-4 w-4" />
+                        Record My Attempt
+                      </>
+                    )}
+                  </Button>
+                </div>
+              )}
             </>
           )}
         </CardContent>
