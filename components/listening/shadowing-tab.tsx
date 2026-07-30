@@ -343,10 +343,22 @@ export const ShadowingTab = ({
         markActiveIfListening();
       }
     });
+    // Surface media load failures (blob URL dead / file corrupt / video
+    // unavailable / embedding disabled). Without this, audio in particular — a
+    // detached <audio> with no visible error frame — fails silently: ready
+    // never true, play() no-ops, listensCount still climbs (review [重要]).
+    const unsubscribeError = source.onError((message) => {
+      setError(message);
+      if (activeInterval) {
+        clearInterval(activeInterval);
+        activeInterval = null;
+      }
+    });
     return () => {
       if (activeInterval) clearInterval(activeInterval);
       unsubscribe();
       unsubscribeReady();
+      unsubscribeError();
       source.destroy();
       sourceRef.current = null;
     };

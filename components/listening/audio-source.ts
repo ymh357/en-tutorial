@@ -25,12 +25,14 @@ export const createAudioPlayer = (opts: AudioPlayerOpts): MediaSource => {
 
   const stateCbs = new Set<(s: "playing" | "paused" | "ended") => void>();
   const onReadyCbs = new Set<() => void>();
+  const onErrorCbs = new Set<(message: string) => void>();
   let pollInterval: ReturnType<typeof setInterval> | null = null;
   let abLoop = false;
   let currentStartMs = 0;
   let currentEndMs = 0;
   let pendingPlay: { startMs: number; endMs: number } | null = null;
   let ready = false;
+  let failed = false;
   let destroyed = false;
 
   const mapAudioEvent = (
@@ -47,6 +49,26 @@ export const createAudioPlayer = (opts: AudioPlayerOpts): MediaSource => {
       pendingPlay = null;
       playInternal(startMs, endMs);
     }
+  });
+  // Audio is a detached <audio> (sound only — no visible error frame like
+  // YouTube's iframe), so a load failure (blob URL dead/token removed/file
+  // corrupt/CORS) would otherwise leave ready=false forever: onReady never
+  // fires, pendingPlay queues endlessly, the play button does nothing and
+  // listensCount still increments — a silent dead end. Surface it via onError
+  // so the caller can setError (review [重要]).
+  audio.addEventListener("error", () => {
+    if (destroyed) return;
+    failed = true;
+    pendingPlay = null;
+    clearPoll();
+    const err = audio.error;
+    const msg =
+      err?.code === 4
+        ? "音频加载失败（URL 失效或网络错误）"
+        : err?.code === 3
+          ? "音频解码失败（文件可能损坏）"
+          : "音频加载失败";
+    onErrorCbs.forEach((cb) => cb(msg));
   });
   audio.addEventListener("play", () => {
     const s = mapAudioEvent("play");
@@ -89,12 +111,22 @@ export const createAudioPlayer = (opts: AudioPlayerOpts): MediaSource => {
     currentStartMs = startMs;
     currentEndMs = endMs;
     audio.currentTime = startMs / 1000;
-    void audio.play().catch(() => {});
+    // Autoplay policy can reject play() when called outside a user gesture
+    // (e.g. the pendingPlay flush from loadedmetadata, which isn't a gesture).
+    // Log the rejection so it's diagnosable — don't surface as a hard error
+    // since the user's own click-path goes through a gesture and works.
+    void audio.play().catch((e) => {
+      console.warn("audio play() rejected (autoplay policy?)", e);
+    });
     startPoll();
   };
 
   return {
     play(startMs, endMs) {
+      // If the media failed to load, don't queue/play and don't let the caller
+      // count a listen (C2-class: a guarded action that fails silently while
+      // side effects accumulate). The error is already surfaced via onError.
+      if (failed) return;
       if (!ready) {
         pendingPlay = { startMs, endMs };
         clearPoll();
@@ -139,12 +171,19 @@ export const createAudioPlayer = (opts: AudioPlayerOpts): MediaSource => {
       if (ready) cb();
       return () => onReadyCbs.delete(cb);
     },
+    onError(cb) {
+      onErrorCbs.add(cb);
+      // If the error already fired before subscription, surface it now.
+      if (failed) cb("音频加载失败");
+      return () => onErrorCbs.delete(cb);
+    },
     destroy() {
       destroyed = true;
       pendingPlay = null;
       clearPoll();
       stateCbs.clear();
       onReadyCbs.clear();
+      onErrorCbs.clear();
       audio.pause();
       audio.src = "";
       audio.removeAttribute("src");

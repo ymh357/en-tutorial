@@ -29,6 +29,7 @@ const AUDIO_CONTENT_TYPES = [
   "audio/ogg",
   "audio/webm",
   "audio/x-m4a",
+  "audio/m4a",
   "audio/mp4",
   "audio/aac",
   "audio/flac",
@@ -43,8 +44,10 @@ export async function POST(request: Request): Promise<Response> {
   }
 
   // Same-origin only — blocks cross-site callers from minting upload tokens.
+  // Require the Origin header to be present AND in the allowlist (a missing
+  // Origin is treated as untrusted rather than passed through).
   const origin = request.headers.get("origin");
-  if (origin != null && !ALLOWED_ORIGINS.has(origin)) {
+  if (origin == null || !ALLOWED_ORIGINS.has(origin)) {
     return Response.json({ error: "forbidden origin" }, { status: 403 });
   }
 

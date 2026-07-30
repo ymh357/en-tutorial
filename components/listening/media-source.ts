@@ -13,6 +13,7 @@ interface YTOnStateChangeEvent {
 interface YTPlayerEvents {
   onReady?: () => void;
   onStateChange?: (event: YTOnStateChangeEvent) => void;
+  onError?: (event: { data: number }) => void;
 }
 
 interface YTPlayerOptions {
@@ -96,8 +97,14 @@ export interface YouTubeMediaSource {
   /** Subscribe to play/pause/ended state changes (for watchdog). */
   onStateChange(cb: (state: "playing" | "paused" | "ended") => void): () => void;
   /** Fire once when the player is ready — the earliest point
-   * getAvailableRates() reflects the actual video. */
+   * getAvailableRates() reflects the actual video. If already ready when
+   * subscribed, fires immediately (matches audio-source's loadedmetadata
+   * contract — no subscription-order race). */
   onReady(cb: () => void): () => void;
+  /** Subscribe to load failures (blob URL dead, file corrupt, CORS, video
+   * unavailable). The caller surfaces these so playback doesn't fail silently
+   * (audio is a detached <audio> with no visible error frame like YouTube's). */
+  onError(cb: (message: string) => void): () => void;
   /** Pause video, clear interval, destroy iframe, remove mount node. */
   destroy(): void;
 }
@@ -122,6 +129,19 @@ export const createYouTubePlayer = (
   let pendingPlay: { startMs: number; endMs: number } | null = null;
   const stateCbs = new Set<(s: "playing" | "paused" | "ended") => void>();
   const onReadyCbs = new Set<() => void>();
+  const onErrorCbs = new Set<(message: string) => void>();
+  // Mirrors audio-source: a subscription after onReady already fired should
+  // still run the callback once (no subscription-order race).
+  let playerReady = false;
+  // YT onError event data codes: 2 invalid param, 5 HTML5 error, 100 not
+  // found/private, 101/150 embedding disabled. All surface as a load failure.
+  const YT_ERROR_MESSAGES: Record<number, string> = {
+    2: "视频参数无效",
+    5: "视频播放器错误",
+    100: "视频不存在或私密",
+    101: "该视频禁止嵌入播放",
+    150: "该视频禁止嵌入播放",
+  };
   // -1 unstarted, 0 ended, 1 playing, 2 paused, 3 buffering, 5 cued.
   // Buffering/unstarted/cued are transient, non-user-initiated states that
   // are neither "playing" nor a real "paused" — surfacing them as "paused"
@@ -192,6 +212,7 @@ export const createYouTubePlayer = (
           stateCbs.forEach((cb) => cb(mapped));
         },
         onReady: () => {
+          playerReady = true;
           // Fire readiness subscribers BEFORE flushing pendingPlay so callers
           // (shadowing-tab) can capture availableRates / sync the rate at the
           // earliest moment the video reflects them — onStateChange can lag or
@@ -202,6 +223,13 @@ export const createYouTubePlayer = (
             pendingPlay = null;
             playInternal(startMs, endMs);
           }
+        },
+        onError: (e: { data: number }) => {
+          // Video unavailable / embedding disabled / player error — surface so
+          // the caller can setError instead of leaving the learner with a blank
+          // iframe and a play button that does nothing.
+          const msg = YT_ERROR_MESSAGES[e.data] ?? "视频加载失败";
+          onErrorCbs.forEach((cb) => cb(msg));
         },
       },
     });
@@ -255,7 +283,14 @@ export const createYouTubePlayer = (
     },
     onReady(cb) {
       onReadyCbs.add(cb);
+      // If onReady already fired before this subscription, run it now — matches
+      // audio-source's contract and removes a subscription-order race.
+      if (playerReady) cb();
       return () => onReadyCbs.delete(cb);
+    },
+    onError(cb) {
+      onErrorCbs.add(cb);
+      return () => onErrorCbs.delete(cb);
     },
     destroy() {
       destroyed = true;
@@ -263,6 +298,7 @@ export const createYouTubePlayer = (
       clearPoll();
       stateCbs.clear();
       onReadyCbs.clear();
+      onErrorCbs.clear();
       player?.destroy?.();
       player = null;
       // player.destroy() removes the iframe it created, but if construction

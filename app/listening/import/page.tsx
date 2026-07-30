@@ -101,7 +101,10 @@ export default function ImportPage() {
     }
   };
 
-  const handleParsePaste = () => {
+  // Parse pasted srt/vtt/json3 into sentences. Shared by video's 503 fallback
+  // and audio's always-paste path (audio can't be auto-transcribed, so the
+  // user always supplies subtitles with an upload).
+  const parsePasted = () => {
     const parsed = parseSubtitles(pasteText);
     if (parsed.length === 0) {
       setError("未能从粘贴内容解析出字幕（支持 srt/vtt/json3）。");
@@ -111,19 +114,6 @@ export default function ImportPage() {
     setSentences(parsed);
     // Hide the paste box once parsing succeeded — otherwise it stays visible
     // alongside the preview card, stacking two UI regions (deferred ⑦).
-    setPasting(false);
-  };
-
-  // Parse pasted srt/vtt for audio mode (no 503 trigger — the user always
-  // supplies subtitles with an audio upload since we can't auto-transcribe).
-  const handleParseAudioSubtitles = () => {
-    const parsed = parseSubtitles(pasteText);
-    if (parsed.length === 0) {
-      setError("未能从粘贴内容解析出字幕（支持 srt/vtt/json3）。");
-      return;
-    }
-    setError(null);
-    setSentences(parsed);
     setPasting(false);
   };
 
@@ -160,11 +150,19 @@ export default function ImportPage() {
     if (!audioFile || !sentences) return;
     setIsUploading(true);
     try {
-      const blob = await upload(`audio/${audioFile.name}`, audioFile, {
-        access: "public",
-        handleUploadUrl: "/api/upload-auth",
-        multipart: true,
-      });
+      const blob = await upload(
+        // Sanitize the filename so a `/` or `\` in it can't create an
+        // unexpected nested blob path (blob store isn't a filesystem, but the
+        // path structure would be surprising). addRandomSuffix prevents
+        // collisions.
+        `audio/${audioFile.name.replace(/[/\\]/g, "_")}`,
+        audioFile,
+        {
+          access: "public",
+          handleUploadUrl: "/api/upload-auth",
+          multipart: true,
+        }
+      );
       const mat = await dbHelpers.saveMaterial({
         topic,
         mediaType: "audio",
@@ -298,7 +296,7 @@ export default function ImportPage() {
                     value={pasteText}
                     onChange={(e) => setPasteText(e.target.value)}
                   />
-                  <Button onClick={handleParsePaste} disabled={!pasteText.trim()}>
+                  <Button onClick={parsePasted} disabled={!pasteText.trim()}>
                     解析粘贴
                   </Button>
                 </div>
@@ -344,7 +342,7 @@ export default function ImportPage() {
                   value={pasteText}
                   onChange={(e) => setPasteText(e.target.value)}
                 />
-                <Button onClick={handleParseAudioSubtitles} disabled={!pasteText.trim()}>
+                <Button onClick={parsePasted} disabled={!pasteText.trim()}>
                   解析字幕
                 </Button>
               </div>
