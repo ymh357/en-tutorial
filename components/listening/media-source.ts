@@ -97,26 +97,18 @@ export const createYouTubePlayer = (
   let abLoop = false;
   let currentStartMs = 0;
   let currentEndMs = 0;
+  // play() calls issued before the async player is ready are queued here and
+  // flushed from onReady — otherwise the most common call pattern (play()
+  // immediately after construction) would be silently dropped.
+  let pendingPlay: { startMs: number; endMs: number } | null = null;
   const stateCbs = new Set<(s: "playing" | "paused" | "ended") => void>();
-  const mapState = (data: number): "playing" | "paused" | "ended" =>
-    data === 1 ? "playing" : data === 0 ? "ended" : "paused";
-
-  // Player is constructed async after the API loads. Calls before ready are
-  // queued by YT.Player itself; we guard play/seek with a ready check.
-  void loadIframeApi().then(() => {
-    if (!window.YT) return;
-    player = new window.YT.Player(opts.containerId, {
-      videoId: opts.videoId,
-      events: {
-        onStateChange: (e) => {
-          stateCbs.forEach((cb) => cb(mapState(e.data)));
-        },
-        onReady: () => {
-          // nothing — rate queried on demand
-        },
-      },
-    });
-  });
+  // -1 unstarted, 0 ended, 1 playing, 2 paused, 3 buffering, 5 cued.
+  // Buffering/unstarted/cued are transient, non-user-initiated states that
+  // are neither "playing" nor a real "paused" — surfacing them as "paused"
+  // would make a watchdog mistake a network stall for a user pause, so we
+  // return null for those and skip notifying subscribers entirely.
+  const mapState = (data: number): "playing" | "paused" | "ended" | null =>
+    data === 1 ? "playing" : data === 0 ? "ended" : data === 2 ? "paused" : null;
 
   const clearPoll = (): void => {
     if (pollInterval) {
@@ -140,13 +132,51 @@ export const createYouTubePlayer = (
     }, 100);
   };
 
+  // Shared logic for both the public play() and the flushed pendingPlay —
+  // requires `player` to be non-null (caller must check).
+  const playInternal = (startMs: number, endMs: number): void => {
+    currentStartMs = startMs;
+    currentEndMs = endMs;
+    player?.seekTo?.(startMs / 1000, true);
+    player?.playVideo?.();
+    startPoll();
+  };
+
+  // Player is constructed async after the API loads. Calls before ready are
+  // queued by YT.Player itself; we guard play/seek with a ready check.
+  void loadIframeApi().then(() => {
+    if (!window.YT) return;
+    player = new window.YT.Player(opts.containerId, {
+      videoId: opts.videoId,
+      events: {
+        onStateChange: (e) => {
+          const mapped = mapState(e.data);
+          if (mapped === null) return;
+          stateCbs.forEach((cb) => cb(mapped));
+        },
+        onReady: () => {
+          if (pendingPlay) {
+            const { startMs, endMs } = pendingPlay;
+            pendingPlay = null;
+            playInternal(startMs, endMs);
+          }
+        },
+      },
+    });
+  });
+
   return {
     play(startMs, endMs) {
-      currentStartMs = startMs;
-      currentEndMs = endMs;
-      player?.seekTo?.(startMs / 1000, true);
-      player?.playVideo?.();
-      startPoll();
+      if (!player) {
+        // Not ready yet — replace any earlier pending request (reentrancy:
+        // a newer play() call supersedes a stale one that hasn't fired) and
+        // clear any stale poll from a previous play() that did run.
+        pendingPlay = { startMs, endMs };
+        clearPoll();
+        return;
+      }
+      pendingPlay = null;
+      playInternal(startMs, endMs);
     },
     pause() {
       player?.pauseVideo?.();
