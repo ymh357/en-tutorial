@@ -4,7 +4,7 @@
 
 ## 一句话状态
 
-方法论四招中前三招已落地（练习三步、水平精细度、遗忘交替重复），原版素材数据层已铺好（W4-T1）；**剩余 W4-T2（音频）和 W4-T3（YouTube）未做**。新 session 从 W4-T2 开始。
+方法论四招中前三招已落地（练习三步、水平精细度、遗忘交替重复），原版素材数据层已铺好（W4-T1 文本 + W4-T3 YouTube 视频全链路完成）；**剩余 W4-T2（音频）未做**。新 session 从 W4-T2 开始，或先收尾 W4-T3 浏览器交互实测 + deferred 项。
 
 ## 项目约束（必读）
 
@@ -125,15 +125,26 @@ W4-T1b：reader ImportUrlTab 加 Topic 选择，URL 抓取的真实文章同步�
 - 字幕 baseUrl 带 `expire`，但 yt-dlp 内嵌 POT 处理，**实时解析**即可，不缓存签名。
 
 **实现要点**：
-- 新建 **Python** function `api/youtube_captions.py`（ASGI app，非 TS route）：`?v=VIDEOID` → `yt_dlp.YoutubeDL` Python API（`--write-auto-subs --sub-langs en --skip-download --sub-format json3`，outtmpl `/tmp/...`）→ 解析 json3 → 返回 `{videoId, languageCode, sentences:[{text,startMs,endMs}]}`。配 `requirements.txt`（`yt-dlp`+`certifi`，后者 macOS python.org Python 缺 root cert 必需）。经 Vercel Services 机制与 Next 同项目部署。**Step 0 spike 已完成并验证通过（命门 ①② 均过）。**
+- 新建 **Python** function `api/youtube_captions.py`（ASGI app，非 TS route）：`?v=VIDEOID` → `yt_dlp.YoutubeDL` Python API（`--write-auto-subs --sub-langs en --skip-download --sub-format json3`，outtmpl `/tmp/...`）→ 返回**原始 json3** `{videoId, languageCode, json3:{events:[...]}}`（**Task 1 改：不再 server-side flatten**，过滤交给前端 `parseJson3`，YouTube/srt/vtt 统一路径）。配 `requirements.txt`（`yt-dlp`+`certifi`，后者 macOS python.org Python 缺 root cert 必需）。经 Vercel Services 机制与 Next 同项目部署。**Step 0 spike 已完成并验证通过（命门 ①② 均过）。**
 - 统一字幕解析库 `lib/subtitle-parse.ts`：`parseJson3/parseSrt/parseVtt → MaterialSentence[]`。Python function 返原始 json3，TS 库归一化；**W4-T2 音频上传的 srt/vtt 也复用此库**（两任务共享）。
 - 旧 `app/api/youtube-captions/route.ts`（TS 裸 fetch，已证死）→ **删除**，json3 解析逻辑迁入 `lib/subtitle-parse.ts`。
-- 前端 YouTube iframe（`<iframe src="https://www.youtube.com/embed/VIDEOID">`）按主题（房车旅行/隐士生活等，方法论原话）。
-- 字幕即 listening 素材：复用 W1 三招流程（imagine/listen/recall）。但 video Material 的"声音"来自 iframe 视频，非 Edge-TTS——`speak` 不适用，需视频播放控制。
+- **Step 2（前端 + 三招接 video）已完成**（commits 3226259..36f296d，8 任务 SDD + final review + fix wave）：
+  - `lib/topics.ts` 统一 reader/onboarding 两份漂移 topic 常量（11 项并集）。
+  - `lib/youtube.ts` `extractVideoId(url)`（watch/youtu.be/embed）。
+  - `components/listening/media-source.ts` `YouTubeMediaSource`（IFrame API 封装，逐句模型 play(startMs,endMs) 到 endMs 停/AB 循环/setRate 规整 getAvailableRates/onStateChange/pendingPlay 排队/destroyed 防 StrictMode 泄漏）。
+  - `components/listening/material-adapter.ts` `materialToShadowingData(material)`（translation/imageryHint 填空串）。
+  - `shadowing-tab.tsx` 加 `material?: Material` prop，**mediaType 分支**：text 走原 `speak`（零改动），video 走 YouTubeMediaSource + materialToShadowingData + 跳过 generateSentences。逐句 seek（`material.sentences[index].audioStartMs/audioEndMs`）、变速 getAvailableRates 禁不合法档、口音选择器 video 隐藏、AB 循环 toggle（nextSentence 重置）、imagine 显标题+缩略图（`https://img.youtube.com/vi/${id}/hqdefault.jpg`）、recall 空 translation 隐藏 bilingual 仅 english/hidden、watchdog video playing 计入 active、saveListeningExercise 传 materialId + bumpMaterialExposure。**yt-player 用 wrapper(React className)+inner(YT 替换) 双层**（C1 修复：IFrame API 替换非插入容器）。`playSentence(i)` helper 处理 audioEndMs undefined fallback（C2）。
+  - `app/listening/import/page.tsx`：URL 导入（extractVideoId → `/api/youtube_captions` → `parseJson3(data.json3)` → 预览缩略图+前 3 句 → saveMaterial → 跳 video 路由）。**503/网络异常触发手动粘贴降级**（parseSubtitles）。不调 oEmbed。
+  - `app/listening/video/[id]/page.tsx`（Server Component，Next 16 `await params: Promise`）+ `video-client.tsx`（Client，db.materials.get 存 state 稳定身份 → ShadowingTab 透传）。listening 页加"导入 YouTube 视频"Link。
 - `mediaType:"video"`，`sourceUrl=watch URL`。
-- **分阶段**：Step 0 spike（最小 Python function 部署验证命门）✅ 完成；Step 1（`lib/subtitle-parse.ts` + 删旧 route）✅ 完成；Step 2（前端 YouTube 导入 UI + iframe 播放，复用 W4-T2 媒体播放器）⏳ 待做。
-- **Code Reviewer 审查修复（已完成）**：B1 合并 `automatic_captions`+`subtitles`（修前仅读 manual，auto-only 视频静默 404——被 Rick Astley 手动字幕样本掩盖）、I1 `outtmpl` 改 `%(id)s`（`%(title)s` 有路径遍历风险）、I2 `/tmp` 文件 try/finally 清理、I3 ASGI lifespan 分支、I4 `detail:str(e)` 收敛到 `YTC_DEBUG` env 开关、S1 `parse_qs`、S2 删 sample、S3 异常分类（404 unavailable/503 transient）、S4 requirements 钉版本下限。ruff Python lint 待用户确认是否引入（dev-only 依赖）。
-- **进 Step 2 前端要点**：对 503 友好降级（命门②边界，长尾视频可能 Vercel IP 限流），提示换视频或手动粘贴字幕（复用 `lib/subtitle-parse.ts` 的 srt/vtt 解析）。
+- **分阶段**：Step 0 spike（最小 Python function 部署验证命门）✅ 完成；Step 1（`lib/subtitle-parse.ts` + 删旧 route）✅ 完成；Step 2（前端 YouTube 导入 UI + iframe 播放 + 三招接 video）✅ 完成（SDD 8 任务 + final review + fix wave）。
+- **Code Reviewer 审查修复（Step 0/1，已完成）**：B1 合并 `automatic_captions`+`subtitles`（修前仅读 manual，auto-only 视频静默 404——被 Rick Astley 手动字幕样本掩盖）、I1 `outtmpl` 改 `%(id)s`（`%(title)s` 有路径遍历风险）、I2 `/tmp` 文件 try/finally 清理、I3 ASGI lifespan 分支、I4 `detail:str(e)` 收敛到 `YTC_DEBUG` env 开关、S1 `parse_qs`、S2 删 sample、S3 异常分类（404 unavailable/503 transient）、S4 requirements 钉版本下限。ruff Python lint 待用户确认是否引入（dev-only 依赖）。
+- **Step 2 final review BLOCKER 教训（务必吸取）**：
+  1. **IFrame API 替换非插入容器**（C1）：`new YT.Player(containerId)` **替换**该元素而非插入 iframe 进去。React 拥有的 `<div id="yt-player">` 被替换后，stage className 打在游离节点、iframe 用默认尺寸且 imagine/recall 可见。**修法：wrapper(React className)+inner(YT 可替换) 双层 + 构造传 width/height 100%**。教训：用第三方"接管 DOM"的库（YT/地图等），React 拥有的 className 必须在外层 wrapper，内层交给库替换。
+  2. **Optional chaining 静默吞 null**（C2）：`audioEndMs` 缺失时 `ytSource?.play()` 被条件跳过但 `listensCount` 仍自增 → 用户点播放静音无提示。教训：guarded action 失败时要么 fallback 要么不计副作用（计数）。
+  3. **门禁缺 scope 谓词漏进 text 路径**（C3）：`currentTranslation === ""` 没加 `&& isVideo` → text 路径 LLM 返空译文丢双语按钮 + 误提示"该视频素材"。**这是"text 路径零改动"承诺的破口**。教训：video/text 双路径的每个 video-only 门禁都要带 `isVideo` 谓词，review 要专门查这条。
+- **Step 2 deferred（非阻塞，下一 slice）**：① **末句 nextSentence 死循环**（video 模式最后一句点 next 跑完 reset 落回同句 imagine 无完成信号）——需 end-of-material UX 决策，列下一 slice 首项。② video 不应用 default rate（A1-A2 显 0.75x 实播 1x）。③ Python `en-orig`→`en` fallback 丢失（两行可修）。④ loading fragment 无视觉反馈。⑤ `playSentence` fallback 窗口启发式待浏览器实测。⑥ iframe 100%/逐句 seek/AB/变速的浏览器目视交互实测（生产域名 en-tutorial.vercel.app，[Python+导入页已 curl 验通]）。
+- **进生产前清单**：iframe 播放交互行为浏览器实测（见 deferred ⑥）；503 友好降级已实现（命门②边界，长尾视频 Vercel IP 限流 → 提示换视频或手动粘贴 srt/vtt）。
 
 ## 其它遗留（非阻塞，可顺手）
 
@@ -147,5 +158,5 @@ W4-T1b：reader ImportUrlTab 加 Topic 选择，URL 抓取的真实文章同步�
 1. 读本文件 + 计划文件。
 2. `git log --oneline -30` 确认状态。
 3. **W4-T2**：先验证 `@vercel/blob` 客户端直传可行性（查文档/写最小实测）→ 实现 → `tsc`+`eslint` → commit → 派 Code Reviewer 审查 → 修复全部。
-4. **W4-T3**：路线已重定为 Python yt-dlp function（纯 HTTP 实测全死，见上）。**第一件事 spike**：写最小 `api/youtube_captions.py`+`requirements.txt`，`vercel` CLI preview 部署，实调 `?v=` 验证 Vercel IP 下非空（命门：429/runtime 权限）。非空→进 Step 1/2；被拦→回退取舍（粘贴/缩水），不沉没成本。
+4. **W4-T3**：✅ 全链路完成（Step 0/1/2 + final review + fix wave）。剩余：浏览器交互实测（iframe 逐句 seek/AB/变速）+ deferred 项（末句 end-of-material UX 等，见"Step 2 deferred"）。或转 W4-T2。
 5. 全部完成后，可对 W4 整体跑一轮审查。
