@@ -73,7 +73,12 @@ def fetch_captions(video_id):
         try:
             with open(filepath, "r", encoding="utf-8") as f:
                 data = json.load(f)
-            return {"languageCode": lang, "json3": data}
+            # Deferred ③: en-orig can yield a structurally valid but empty
+            # json3 (events missing/empty) on some videos. Don't return that —
+            # fall through to the next language (en) instead of silently
+            # shipping an empty caption set.
+            if data.get("events"):
+                return {"languageCode": lang, "json3": data}
         finally:
             # Reused warm containers keep /tmp; don't let captions accumulate.
             try:

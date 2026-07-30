@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { Loader2 } from "lucide-react";
 import { ShadowingTab } from "@/components/listening/shadowing-tab";
 import { ErrorState } from "@/components/states/error-state";
 import { useProfile } from "@/hooks/use-db";
@@ -30,7 +31,15 @@ export const VideoListeningClient = ({
     };
   }, [materialId]);
 
-  if (material === undefined) return <></>;
+  if (material === undefined) {
+    // Deferred ④: previously an empty fragment gave no visual feedback while
+    // the material loaded from IndexedDB.
+    return (
+      <div className="flex max-w-3xl items-center justify-center p-16 text-muted-foreground">
+        <Loader2 className="h-5 w-5 animate-spin" />
+      </div>
+    );
+  }
 
   if (material === null) {
     return (

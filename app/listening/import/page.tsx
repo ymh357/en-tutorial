@@ -93,6 +93,9 @@ export default function ImportVideoPage() {
     }
     setError(null);
     setSentences(parsed);
+    // Hide the paste box once parsing succeeded — otherwise it stays visible
+    // alongside the preview card, stacking two UI regions (deferred ⑦).
+    setPasting(false);
   };
 
   const handleStart = async () => {
@@ -109,6 +112,11 @@ export default function ImportVideoPage() {
         sentences,
       });
       router.push(`/listening/video/${mat.id}`);
+    } catch {
+      // Previously this had no catch — a save failure (e.g. QuotaExceeded on
+      // IndexedDB) would leave isCreating stuck true and the button spinning
+      // forever with no error surfaced (deferred ⑦).
+      setError("保存素材失败，请重试。");
     } finally {
       setIsCreating(false);
     }

@@ -6,6 +6,7 @@
 // land in later W1 tasks.
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
 import { ArrowRight, Loader2, Mic, Play, Square } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -146,17 +147,37 @@ export const ShadowingTab = ({
   const granularity: StepGranularity = granularityForLevel(cefrLevel);
   // Default rate derives from granularity (fine => 0.75, else 1). The user's
   // manual speed choice is held separately so a runtime cefrLevel change updates
-  // the default without clobbering an explicit override (review W2 S3).
-  const defaultRate = granularity === "fine" ? 0.75 : 1;
+  // the default without clobbering an explicit override (review W2 S3). Video
+  // mode always starts at 1x — YouTube native audio is the practice material,
+  // and forcing 0.75 here would only mislead (the iframe player defaulted to 1x
+  // and play() never synced the rate, so A1-A2 showed "0.75x" while playing
+  // 1x — deferred ②). The learner still slows down manually via the rate
+  // buttons, which DO call setRate.
+  const defaultRate = granularity === "fine" && !isVideo ? 0.75 : 1;
   const [userRateOverride, setUserRateOverride] = useState<number | null>(null);
   const playbackRate = userRateOverride ?? defaultRate;
   // Video mode: the YouTube player instance lives in a ref (mutating it must
   // not trigger a re-render — media-source.ts is imperative). availableRates
   // is mirrored into state once the player is ready so the rate buttons can
   // disable rates the underlying <video> doesn't actually support.
+  const router = useRouter();
   const ytSourceRef = useRef<YouTubeMediaSource | null>(null);
+  // React-owned wrapper for the YouTube player. The player mounts INSIDE it as
+  // a non-React child (see media-source.ts createYouTubePlayer): we hand the
+  // host element to the source, which appends its own mount <div> that YT.Player
+  // replaces with an iframe. Because React never owns that mount/iframe, its
+  // reconciliation cannot collide with YT's DOM takeover — the stage-driven
+  // className stays on this wrapper and is never smeared onto the iframe. This
+  // fixes the C1-class regression observed in A1: the iframe ended up
+  // className="hidden" / 0×0 / 640×360-default and the video was invisible in
+  // the listen stage.
+  const playerHostRef = useRef<HTMLDivElement | null>(null);
   const [availableRates, setAvailableRates] = useState<number[] | null>(null);
   const [abLoop, setAbLoop] = useState(false);
+  // Video mode only: surfaced when the learner finishes the last sentence
+  // (deferred ① — previously "Next Sentence" on the last sentence silently
+  // no-op'd, leaving no completion signal).
+  const [finished, setFinished] = useState(false);
   // Pool/LLM-generated sentence set (text mode only). Video mode derives
   // `data` directly from `material` below instead of going through state —
   // materialToShadowingData is a pure sync function of `material`, so there's
@@ -250,7 +271,9 @@ export const ShadowingTab = ({
   // above (no state needed — see the `data` derivation comment).
   useEffect(() => {
     if (!isVideo || !material || !videoId) return;
-    const source = createYouTubePlayer({ videoId, containerId: "yt-player" });
+    const host = playerHostRef.current;
+    if (!host) return;
+    const source = createYouTubePlayer({ videoId, host });
     ytSourceRef.current = source;
     let ratesCaptured = false;
     const unsubscribe = source.onStateChange((state) => {
@@ -260,7 +283,17 @@ export const ShadowingTab = ({
       // actual video rather than the pre-ready fallback default.
       if (!ratesCaptured) {
         ratesCaptured = true;
-        setAvailableRates(source.getAvailableRates());
+        const rates = source.getAvailableRates();
+        setAvailableRates(rates);
+        // Sync the iframe's rate to playbackRate once, on first readiness —
+        // otherwise the player stays at its native 1x regardless of the
+        // derived default / any override captured before ready (deferred ②).
+        if (!rates.includes(playbackRate)) {
+          const applied = source.setRate(playbackRate);
+          setUserRateOverride(applied);
+        } else {
+          source.setRate(playbackRate);
+        }
       }
       // Video playback is a legitimately still, sustained-attention activity —
       // register with the focus watchdog so continuous PLAYING doesn't get
@@ -272,6 +305,9 @@ export const ShadowingTab = ({
       source.destroy();
       ytSourceRef.current = null;
     };
+    // playbackRate is captured at first-readiness above, not on every change —
+    // re-running this effect would tear down and rebuild the player. The rate
+    // buttons call setRate imperatively for live changes.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isVideo, material, videoId]);
 
@@ -372,6 +408,10 @@ export const ShadowingTab = ({
   const currentSentence = data?.sentences[index]?.text ?? "";
   const currentTranslation = data?.sentences[index]?.translation ?? "";
   const currentImageryHint = data?.sentences[index]?.imageryHint ?? "";
+  // Video mode only: true on the last sentence, where "Next Sentence" becomes
+  // "完成练习" and triggers the finished state (deferred ①).
+  const isLastSentence =
+    isVideo && !!data && index >= data.sentences.length - 1;
 
   // Video mode: play sentence `i`'s audio range. parseJson3 emits
   // audioEndMs: undefined whenever a json3 event is missing dDurationMs or
@@ -536,6 +576,12 @@ export const ShadowingTab = ({
       }
     } else if (!isVideo) {
       await generateSentences();
+    } else {
+      // Video mode reached the last sentence: surface completion instead of
+      // silently no-op'ing (deferred ①). Pause the player and show a finished
+      // state with a way back to listening practice.
+      ytSourceRef.current?.pause();
+      setFinished(true);
     }
   };
 
@@ -611,24 +657,21 @@ export const ShadowingTab = ({
               )}
 
               {isVideo && (
-                // Always mounted (not just during "listen") so the inner div
-                // exists in the DOM before the player-construction effect
-                // (which runs once on mount, independent of `stage`) looks it
-                // up by id — YT.Player throws if the container isn't there
-                // yet. YT.Player REPLACES the element it's given (does not
-                // append into it), so the stage-driven className/visibility
-                // must live on this outer wrapper, which React keeps — never
-                // on #yt-player itself, which becomes a detached node the
-                // moment the player constructs.
+                // Always mounted (not just during "listen") so the host exists
+                // in the DOM before the player-construction effect (which runs
+                // once on mount, independent of `stage`) reads playerHostRef.
+                // The player mounts INSIDE this wrapper as a non-React child
+                // (see media-source.ts), so the stage-driven className/visibility
+                // lives here on the React-owned wrapper — never on the iframe,
+                // which React does not own and thus cannot smear className onto.
                 <div
+                  ref={playerHostRef}
                   className={
                     stage === "listen"
-                      ? "aspect-video w-full rounded-md overflow-hidden"
+                      ? "aspect-video w-full rounded-md overflow-hidden [&>iframe]:block [&>iframe]:h-full [&>iframe]:w-full"
                       : "hidden"
                   }
-                >
-                  <div id="yt-player" />
-                </div>
+                />
               )}
 
               {stage === "imagine" && (
@@ -998,8 +1041,27 @@ export const ShadowingTab = ({
           onClick={() => void nextSentence()}
           disabled={isLoading || recStatus !== "idle"}
         >
-          {isLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : "Next Sentence"}
+          {isLoading ? (
+            <Loader2 className="h-4 w-4 animate-spin" />
+          ) : isLastSentence ? (
+            "完成练习"
+          ) : (
+            "Next Sentence"
+          )}
         </Button>
+      )}
+
+      {finished && (
+        <Card>
+          <CardContent className="py-8 text-center space-y-4">
+            <p className="text-sm font-medium">
+              已完成全部 {data?.sentences.length ?? 0} 句精听练习。
+            </p>
+            <Button onClick={() => router.push("/listening")}>
+              返回听力练习
+            </Button>
+          </CardContent>
+        </Card>
       )}
     </div>
   );

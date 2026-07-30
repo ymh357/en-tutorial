@@ -34,7 +34,8 @@ interface YTPlayer {
 }
 
 interface YTPlayerCtor {
-  new (containerId: string, options: YTPlayerOptions): YTPlayer;
+  // YT.Player accepts either an element or its id as the first argument.
+  new (element: HTMLElement, options: YTPlayerOptions): YTPlayer;
 }
 
 interface YTNamespace {
@@ -71,7 +72,13 @@ const loadIframeApi = (): Promise<void> => {
 
 export interface YouTubePlayerOpts {
   videoId: string;
-  containerId: string; // iframe 挂载的 div id
+  // React-owned wrapper element. The player mounts INSIDE it as a non-React
+  // child: we create a fresh <div> and let YT.Player replace that div with its
+  // iframe. Because React never owns the mount div (it is created and appended
+  // imperatively here, not declared in JSX), React's reconciliation cannot
+  // collide with YT's DOM takeover — the wrapper's stage-driven className stays
+  // on the React-owned element and is never smeared onto the iframe.
+  host: HTMLElement;
 }
 
 export interface YouTubeMediaSource {
@@ -87,13 +94,14 @@ export interface YouTubeMediaSource {
   setAbLoop(on: boolean): void;
   /** Subscribe to play/pause/ended state changes (for watchdog). */
   onStateChange(cb: (state: "playing" | "paused" | "ended") => void): () => void;
-  /** Pause video, clear interval, destroy iframe. */
+  /** Pause video, clear interval, destroy iframe, remove mount node. */
   destroy(): void;
 }
 
 export const createYouTubePlayer = (
   opts: YouTubePlayerOpts
 ): YouTubeMediaSource => {
+  const { host, videoId } = opts;
   let player: YTPlayer | null = null;
   let pollInterval: ReturnType<typeof setInterval> | null = null;
   let abLoop = false;
@@ -111,6 +119,12 @@ export const createYouTubePlayer = (
   // return null for those and skip notifying subscribers entirely.
   const mapState = (data: number): "playing" | "paused" | "ended" | null =>
     data === 1 ? "playing" : data === 0 ? "ended" : data === 2 ? "paused" : null;
+
+  // The mount <div> is created imperatively and handed to YT.Player, which
+  // REPLACES it with an <iframe>. Retain a ref so destroy() can clean up the
+  // iframe (via player.destroy) and any leftover mount node if YT itself fails
+  // to remove it.
+  let mountNode: HTMLDivElement | null = null;
 
   const clearPoll = (): void => {
     if (pollInterval) {
@@ -149,13 +163,16 @@ export const createYouTubePlayer = (
   // `destroyed` guards against the React StrictMode double-invoke case: if
   // destroy() runs before this .then() resolves (mount→unmount within the
   // API-load window), we must not construct a player nobody will ever clean
-  // up — it would find the *next* mount's "yt-player" element (or a stale
-  // leftover iframe) and hold onto it forever.
+  // up — and we must not append a mount node to a host whose effect already
+  // cleaned up.
   let destroyed = false;
   void loadIframeApi().then(() => {
     if (!window.YT || destroyed) return;
-    player = new window.YT.Player(opts.containerId, {
-      videoId: opts.videoId,
+    const mount = document.createElement("div");
+    host.appendChild(mount);
+    mountNode = mount;
+    player = new window.YT.Player(mount, {
+      videoId,
       width: "100%",
       height: "100%",
       events: {
@@ -227,6 +244,12 @@ export const createYouTubePlayer = (
       stateCbs.clear();
       player?.destroy?.();
       player = null;
+      // player.destroy() removes the iframe it created, but if construction
+      // hadn't finished (or YT left the mount div behind), drop it manually.
+      if (mountNode && mountNode.parentElement) {
+        mountNode.parentElement.removeChild(mountNode);
+      }
+      mountNode = null;
     },
   };
 };
