@@ -43,3 +43,7 @@ next-env.d.ts
 # local env overrides
 .env.local
 .env*.local
+
+# python (W4-T3 service)
+__pycache__/
+*.pyc

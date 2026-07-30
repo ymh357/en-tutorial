@@ -118,7 +118,8 @@ W4-T1b：reader ImportUrlTab 加 Topic 选择，URL 抓取的真实文章同步�
 - **新路线 A（已与用户确认）**：独立 **Vercel Python serverless function** 跑 yt-dlp 抓字幕。yt-dlp 最小 pip 安装仅 25MB（纯 Python，brotli/websockets/mutagen 非硬依赖、未装；import 不需），远低于 250MB；`--skip-download` 不需 ffmpeg、不下载视频，超时/体积/下载大小的担忧均不适用。
 - **Vercel Python+Next 同项目**：经 [Services](https://vercel.com/docs/services) 机制共存。**裸 `api/*.py` 不生效**（被 Next 框架吞，不进路由表）；`vercel.json` 的 `functions.runtime:"@vercel/python"` 已弃用（报错）。正确形态：`vercel.json` 用 `services` key 声明 `web`(nextjs, root `.`)+`captions`(python, root `api/`, entrypoint `youtube_captions:app`)，配 top-level `rewrites` 把 `/api/youtube_captions` → captions service、`/(.*)` → web。Python service 须用 **ASGI app**（`async def app(scope,receive,send)`），非 `BaseHTTPRequestHandler`。
 - **命门 ①（runtime/Services 可用性 + 经济成本）已验证通过**：Services 在当前 plan 可用（无 plan/permission 报错）；compute 按 Vercel Functions 标准计费（Hobby 免费额度：Active CPU 4h / mem 360GB-hr / invocation 1M 含，无 baseline/per-service 费）；service-to-service binding 才计 service request，本场景单 service 接公网不触发。Python 3.12 venv + yt-dlp(25MB)+certifi 构建成功，build cache 137MB < 250MB。
-- **命门 ②（Vercel 出口 IP 429 死结）已验证通过**（2026-07-30 实部署实测）：preview 部署（iad1 华盛顿出口 IP）实调 `/api/youtube_captions?v=dQw4w9WgXcQ` 返回非空字幕——`languageCode:en, sentenceCount:60`，首句 `♪ We're no strangers to love ♪`@18640ms。**Vercel 共享 IP 未被 YouTube 429 拦截**。yt-dlp 内嵌 POT 处理是关键。
+- **命门 ②（Vercel 出口 IP 429 死结）已验证通过**（2026-07-30 实部署实测）：preview 部署（iad1 华盛顿出口 IP）实调 `/api/youtube_captions?v=dQw4w9WgXcQ` 返回非空字幕——`languageCode:en, sentenceCount:48`（manual `en-orig` 优先），首句 `We're no strangers to`@18800ms。**Vercel 共享 IP 未被 YouTube 429 拦截**（热门视频稳定通过）。yt-dlp 内嵌 POT 处理是关键。
+- **命门 ② 的真实边界（已知风险，非缺陷）**：热门视频（Rick Astley）稳定 200；但长尾/某些 auto-only 视频（实测 `M7lc1UVf-VE`）在 Vercel IP 下返 503（yt-dlp DownloadError，疑似该视频对 Vercel 共享出口 IP 限流，本机同视频可拿到 572 句）。即"自动抓取非 100% 视频"——前端需对 503 友好降级（提示用户换视频或手动粘贴字幕）。B1 修复（合并 `automatic_captions`+`subtitles`）本机验证通过：强制 auto-only 仍返非空。
 - **部署适配坑（已修）**：Vercel serverless cwd 只读，yt-dlp `outtmpl` 必须指向 `/tmp`（`/tmp/yt-caption-%(title)s.%(ext)s`），否则 `[Errno 30] Read-only file system`。
 - **Deployment Protection 注意**：本项目开了 SSO Protection `all_except_custom_domains`，preview URL 需 SSO 登录才能访问 → 纯客户端前端在 preview 环境调不到 function（302 到 SSO）。**生产 custom domain 豁免**，故 W4-T3 字幕抓取仅在生产域名工作；preview 验证须临时关 protection（vercel API `PATCH /v9/projects/{id}` `{"ssoProtection":null}`，验完恢复）。原值已备份。
 - 字幕 baseUrl 带 `expire`，但 yt-dlp 内嵌 POT 处理，**实时解析**即可，不缓存签名。
@@ -131,6 +132,8 @@ W4-T1b：reader ImportUrlTab 加 Topic 选择，URL 抓取的真实文章同步�
 - 字幕即 listening 素材：复用 W1 三招流程（imagine/listen/recall）。但 video Material 的"声音"来自 iframe 视频，非 Edge-TTS——`speak` 不适用，需视频播放控制。
 - `mediaType:"video"`，`sourceUrl=watch URL`。
 - **分阶段**：Step 0 spike（最小 Python function 部署验证命门）✅ 完成；Step 1（`lib/subtitle-parse.ts` + 删旧 route）✅ 完成；Step 2（前端 YouTube 导入 UI + iframe 播放，复用 W4-T2 媒体播放器）⏳ 待做。
+- **Code Reviewer 审查修复（已完成）**：B1 合并 `automatic_captions`+`subtitles`（修前仅读 manual，auto-only 视频静默 404——被 Rick Astley 手动字幕样本掩盖）、I1 `outtmpl` 改 `%(id)s`（`%(title)s` 有路径遍历风险）、I2 `/tmp` 文件 try/finally 清理、I3 ASGI lifespan 分支、I4 `detail:str(e)` 收敛到 `YTC_DEBUG` env 开关、S1 `parse_qs`、S2 删 sample、S3 异常分类（404 unavailable/503 transient）、S4 requirements 钉版本下限。ruff Python lint 待用户确认是否引入（dev-only 依赖）。
+- **进 Step 2 前端要点**：对 503 友好降级（命门②边界，长尾视频可能 Vercel IP 限流），提示换视频或手动粘贴字幕（复用 `lib/subtitle-parse.ts` 的 srt/vtt 解析）。
 
 ## 其它遗留（非阻塞，可顺手）
 
