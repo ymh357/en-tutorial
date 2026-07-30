@@ -92,6 +92,8 @@ export const ShadowingTab = ({ cefrLevel }: { cefrLevel: string }) => {
   const [stage, setStage] = useState<Stage>("imagine");
   const [subtitleMode, setSubtitleMode] = useState<SubtitleMode>("english");
   const [playbackRate, setPlaybackRate] = useState<number>(1);
+  const [listensCount, setListensCount] = useState<number>(0);
+  const [subjectiveComprehension, setSubjectiveComprehension] = useState<number | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [recStatus, setRecStatus] = useState<RecStatus>("idle");
@@ -135,6 +137,8 @@ export const ShadowingTab = ({ cefrLevel }: { cefrLevel: string }) => {
     setData(null);
     setIndex(0);
     setStage("imagine");
+    setListensCount(0);
+    setSubjectiveComprehension(null);
     setTranscript(null);
     setResult(null);
     setApproximate(false);
@@ -253,7 +257,15 @@ export const ShadowingTab = ({ cefrLevel }: { cefrLevel: string }) => {
           "shadowing",
           currentSentence,
           said,
-          shadowResult.accuracy
+          shadowResult.accuracy,
+          {
+            stage,
+            missedWords: shadowResult.original
+              .filter((e) => !e.correct)
+              .map((e) => e.word),
+            subjectiveComprehension: subjectiveComprehension ?? undefined,
+            listensCount,
+          }
         );
       } catch {
         // Stats are non-critical; keep the result visible.
@@ -270,6 +282,8 @@ export const ShadowingTab = ({ cefrLevel }: { cefrLevel: string }) => {
     setResult(null);
     setApproximate(false);
     setStage("imagine");
+    setListensCount(0);
+    setSubjectiveComprehension(null);
     if (data && index + 1 < data.sentences.length) {
       setIndex(index + 1);
     } else {
@@ -360,7 +374,10 @@ export const ShadowingTab = ({ cefrLevel }: { cefrLevel: string }) => {
                   <Button
                     size="lg"
                     className="w-full min-h-[44px]"
-                    onClick={() => void speak(currentSentence, undefined, playbackRate)}
+                    onClick={() => {
+                      setListensCount((c) => c + 1);
+                      void speak(currentSentence, undefined, playbackRate);
+                    }}
                   >
                     <Play className="h-4 w-4" />
                     播放（{playbackRate}x）
@@ -431,6 +448,27 @@ export const ShadowingTab = ({ cefrLevel }: { cefrLevel: string }) => {
                         {m === "english" ? "纯英" : m === "bilingual" ? "双语" : "隐藏"}
                       </Button>
                     ))}
+                  </div>
+
+                  {/* Self-rated direct comprehension: did the picture fire from
+                      the sound alone? 1=没画面 2=模糊 3=清晰。Methodology signal. */}
+                  <div className="space-y-1">
+                    <p className="text-xs text-muted-foreground text-center">
+                      听的时候画面浮现了吗？
+                    </p>
+                    <div className="flex flex-wrap gap-2 justify-center">
+                      {[1, 2, 3].map((n) => (
+                        <Button
+                          key={n}
+                          size="sm"
+                          variant={subjectiveComprehension === n ? "default" : "outline"}
+                          className="min-h-[36px]"
+                          onClick={() => setSubjectiveComprehension(n)}
+                        >
+                          {n === 1 ? "1·没画面" : n === 2 ? "2·模糊" : "3·清晰"}
+                        </Button>
+                      ))}
+                    </div>
                   </div>
 
                   <Button

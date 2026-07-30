@@ -20,11 +20,21 @@ export const stripFences = (raw: string): string => {
 };
 
 // Persist a completed listening exercise to the local DB for the history page.
+// `extra` carries the W1 methodology fields (stage reached, missed words,
+// self-rated comprehension, replay count) when available — omitted by older
+// call sites that only have accuracy.
 export const saveListeningExercise = async (
   mode: Mode,
   prompt: string,
   userAnswer: string,
-  accuracy: number
+  accuracy: number,
+  extra?: {
+    stage?: string;
+    missedWords?: string[];
+    subjectiveComprehension?: number;
+    listensCount?: number;
+    materialId?: string;
+  }
 ): Promise<void> => {
   await db.listeningExercises.add({
     id: crypto.randomUUID(),
@@ -32,6 +42,7 @@ export const saveListeningExercise = async (
     prompt,
     userAnswer,
     accuracy,
+    ...extra,
     createdAt: new Date(),
   });
 };
