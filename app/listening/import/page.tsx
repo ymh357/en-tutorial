@@ -4,6 +4,11 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { Loader2 } from "lucide-react";
 import { upload } from "@vercel/blob/client";
+import {
+  BlobAccessError,
+  BlobContentTypeNotAllowedError,
+  BlobFileTooLargeError,
+} from "@vercel/blob";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -172,7 +177,17 @@ export default function ImportPage() {
       router.push(`/listening/audio/${mat.id}`);
     } catch (err) {
       console.error("audio upload/save failed", err);
-      setError("音频上传或保存失败，请重试。");
+      // Classify @vercel/blob failures so the user can act on the cause rather
+      // than a generic "try again" (review [次要]).
+      if (err instanceof BlobFileTooLargeError) {
+        setError("文件超过 100MB 上限，请用更短的音频。");
+      } else if (err instanceof BlobContentTypeNotAllowedError) {
+        setError("该音频格式不被支持，请用 mp3/wav/m4a/ogg/webm/aac/flac。");
+      } else if (err instanceof BlobAccessError) {
+        setError("存储访问被拒（token 未配置或过期），请联系管理员。");
+      } else {
+        setError("音频上传或保存失败，请重试。");
+      }
     } finally {
       setIsUploading(false);
     }
@@ -186,6 +201,10 @@ export default function ImportPage() {
     setPasteText("");
     setVideoId(null);
     setAudioFile(null);
+    // Clear the URL too — otherwise video→audio→video leaves a stale URL with
+    // no videoId, so the preview thumbnail never appears and the learner can't
+    // tell why (review [次要]).
+    setUrl("");
   };
 
   return (
@@ -292,7 +311,6 @@ export default function ImportPage() {
                   sentences={sentences}
                   onStart={handleVideoStart}
                   starting={isCreating}
-                  disabledTooltip="音频模式请用下方按钮"
                 />
               )}
             </div>
@@ -304,7 +322,7 @@ export default function ImportPage() {
                 <Label>Audio file</Label>
                 <Input
                   type="file"
-                  accept="audio/*"
+                  accept=".mp3,.wav,.ogg,.webm,.m4a,.mp4,.aac,.flac,audio/mpeg,audio/wav,audio/ogg,audio/webm,audio/mp4,audio/aac,audio/flac"
                   onChange={(e) => {
                     const f = e.target.files?.[0] ?? null;
                     setAudioFile(f);

@@ -148,6 +148,10 @@ export const createAudioPlayer = (opts: AudioPlayerOpts): MediaSource => {
       audio.pause();
       audio.src = "";
       audio.removeAttribute("src");
+      // Explicitly abort any in-flight media fetch — setting src="" alone
+      // doesn't fully release the network connection on every browser until
+      // load() is called (review [次要]).
+      audio.load();
     },
   };
 };
