@@ -244,7 +244,7 @@ const DashboardPage = () => {
             type: task.type,
             difficulty: task.difficulty,
             content: task.content,
-            assignedDate: serverData?.date ?? null,
+            assignedDate: serverData?.date ?? "",
             completed: existingById.get(task.id)?.completed ?? task.completed ?? false,
             createdAt: existingById.get(task.id)?.createdAt ?? task.createdAt ?? new Date(),
           }))

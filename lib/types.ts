@@ -38,6 +38,9 @@ export interface Card {
   wordFamily?: string; // Related word from the same family
   lapses?: number; // cumulative failure count; algorithm reads `card.lapses ?? 0`
   lapsedInterval?: number; // interval right before entering relearning, for graduation scaling; cleared once graduated
+  materialId?: string; // link to the Material this card was mined from (W4)
+  sourceSentence?: string; // the real sentence where the word was actually encountered, kept distinct from a fresh `example`
+  imageryHint?: string; // a cue to form the mental picture for abstract words (methodology: fire-together-wire-together)
 }
 
 export interface ConversationMessage {
@@ -148,6 +151,9 @@ export interface LearningProfile {
   studyLevel: string; // difficulty used for generation/content, user-adjustable
   knownWordsBase: string[];
   dailyNewLimit?: number; // new SRS cards per day (default 20 when absent)
+  interests?: string[]; // user-chosen topics for authentic-material selection (W4)
+  activeTopic?: string; // the topic currently being driven toward 98% coverage before expanding
+  primaryTrack?: "fluency" | "mastery"; // fluency = listening-first direct-comprehension track; mastery = SRS-first (default "fluency", W3)
 }
 
 export interface DailyStats {
@@ -170,6 +176,11 @@ export interface ListeningExercise {
   prompt: string; // the sentence/passage that was played
   userAnswer: string; // what the user typed/said
   accuracy: number; // 0-100
+  stage?: string; // which 3-step stage produced this record (imagine | listen | recall) — W1
+  missedWords?: string[]; // words the listener failed to catch, persisted from alignWords diff — W1
+  subjectiveComprehension?: number; // 1-3 self-rated "did the picture fire" — methodology direct-understanding signal
+  listensCount?: number; // how many times the clip was replayed this exercise (focus/effort proxy)
+  materialId?: string; // link to the Material this exercise drilled (enables cross-scene re-exposure) — W3/W4
   createdAt: Date;
 }
 
@@ -200,9 +211,15 @@ export interface PoolTask {
   type: PoolTaskType;
   difficulty: string; // CEFR level
   content: Record<string, unknown>; // type-specific generated content
-  assignedDate: string | null; // YYYY-MM-DD or null if unassigned
+  assignedDate: string; // YYYY-MM-DD, or "" when unassigned (Dexie can't index null — queries use .equals(""))
   completed: boolean;
   createdAt: Date;
+  topic?: string; // controlled topic tag for authentic-material selection & coverage aggregation (W4)
+  mediaType?: MaterialMediaType; // form the material takes (W4)
+  sourceKind?: MaterialSourceKind; // authentic vs LLM-generated (methodology prefers authentic)
+  exposureCount?: number; // cross-scene re-exposure count for the alternating-repetition pool (W3)
+  lastSeenAt?: Date;
+  lastSeenIn?: string; // which module last consumed this material
 }
 
 export interface AssessmentResult {
@@ -214,6 +231,10 @@ export interface AssessmentResult {
   conversationScore: number;
   overallScore: number;
   levelBand: string;
+  locatedLevel?: string; // CEFR level the spread-probe actually located (more precise than band) — drives step granularity (W2)
+  atCeiling?: boolean; // locator hit the top of the probe spread — result may under-state level
+  atFloor?: boolean; // locator hit the bottom — result may over-state level
+  lowConfidence?: boolean; // objective/subjective mismatch or ceiling/floor hit — persisted so callers can adapt (W2)
 }
 
 export interface Part2Review {
@@ -244,5 +265,37 @@ export interface Part2Session {
   durationSec: number;
   review: Part2Review | null;
   followUps: Array<{ question: string; answer: string }>;
+  createdAt: Date;
+}
+
+export type MaterialMediaType = "text" | "audio" | "video";
+export type MaterialSourceKind = "authentic" | "generated";
+
+// A sentence-segmented, optionally audio-aligned unit within a Material.
+export interface MaterialSentence {
+  text: string;
+  translation?: string;
+  imageryHint?: string; // cue to form the mental picture (methodology core)
+  audioStartMs?: number; // timestamp for audio/video materials
+  audioEndMs?: number;
+}
+
+// Unified corpus unit. Unlike a PoolTask (consumed-once), a Material persists
+// so the same source can be re-listened/re-read across scenes (alternating
+// repetition, W3) and carries topic for the "one topic to 98% then expand"
+// model (W4).
+export interface Material {
+  id: string;
+  topic: string;
+  mediaType: MaterialMediaType;
+  sourceKind: MaterialSourceKind;
+  sourceUrl?: string; // watch URL (video), page URL (text), or blob URL (audio)
+  title: string;
+  content: string; // full text / transcript
+  sentences?: MaterialSentence[];
+  difficulty?: string; // CEFR; omitted/UNKNOWN_DIFFICULTY for authentic materials
+  vocabCoverage?: number; // per-topic cumulative coverage toward the 98% gate
+  exposureCount: number; // cross-scene re-exposure count
+  lastSeenAt?: Date;
   createdAt: Date;
 }

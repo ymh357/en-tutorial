@@ -107,39 +107,6 @@ interface WordPopupState {
   error: string | null;
 }
 
-// Parses the AI response for a word lookup. Expected format is a definition,
-// optionally followed by "Collocations: a, b, c" and "Word family: x" lines,
-// each on their own line. Falls back gracefully if the AI omits either.
-const parseWordLookupResponse = (
-  raw: string
-): { definition: string; collocations: string[]; wordFamily: string | null } => {
-  const lines = raw.split("\n").map((l) => l.trim()).filter(Boolean);
-  const definitionLines: string[] = [];
-  let collocations: string[] = [];
-  let wordFamily: string | null = null;
-
-  for (const line of lines) {
-    const collocationsMatch = line.match(/^collocations?:\s*(.+)$/i);
-    const wordFamilyMatch = line.match(/^word family:\s*(.+)$/i);
-    if (collocationsMatch) {
-      collocations = collocationsMatch[1]
-        .split(/[,;]/)
-        .map((c) => c.trim())
-        .filter(Boolean);
-    } else if (wordFamilyMatch) {
-      wordFamily = wordFamilyMatch[1].trim();
-    } else {
-      definitionLines.push(line);
-    }
-  }
-
-  return {
-    definition: definitionLines.join(" ").trim() || raw.trim(),
-    collocations,
-    wordFamily,
-  };
-};
-
 interface SentencePanelState {
   sentence: string;
   analysis: string | null;

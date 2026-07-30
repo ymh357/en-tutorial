@@ -11,6 +11,7 @@ import type {
   PoolTask,
   AssessmentResult,
   Part2Session,
+  Material,
 } from "./types";
 import { formatDate } from "./date";
 
@@ -26,6 +27,7 @@ const db = new Dexie("EnTutorDB") as Dexie & {
   poolTasks: EntityTable<PoolTask, "id">;
   assessments: EntityTable<AssessmentResult, "id">;
   part2Sessions: EntityTable<Part2Session, "id">;
+  materials: EntityTable<Material, "id">;
 };
 
 db.version(1).stores({
@@ -263,6 +265,40 @@ db.version(7).stores({
   poolTasks: "id, type, assignedDate, completed, createdAt",
   assessments: "id, date",
   part2Sessions: "id, cardId, createdAt",
+});
+
+db.version(8).stores({
+  // Identical to v7, plus the new `materials` table and a `topic` index on
+  // poolTasks (the alternating-repetition pool queries by topic/difficulty — W3/W4).
+  cards: "id, type, lemma, source, sourceId, nextReview, masteryLevel, createdAt",
+  conversations: "id, scenarioType, createdAt",
+  readingSessions: "id, source, createdAt",
+  writingSessions: "id, taskType, createdAt",
+  learningProfile: "id",
+  dailyStats: "id",
+  listeningExercises: "id, mode, createdAt",
+  translationExercises: "id, mode, createdAt",
+  poolTasks: "id, type, assignedDate, completed, createdAt, topic",
+  assessments: "id, date",
+  part2Sessions: "id, cardId, createdAt",
+  materials: "id, topic, mediaType, createdAt",
+}).upgrade(async (tx) => {
+  // Backfill required new optional fields on existing rows (non-indexed additions).
+  const poolTasks = tx.table("poolTasks");
+  for (const row of await poolTasks.toArray()) {
+    if (typeof row.exposureCount !== "number") {
+      await poolTasks.put({ ...row, exposureCount: 0 });
+    }
+  }
+  const profileTable = tx.table("learningProfile");
+  for (const row of await profileTable.toArray()) {
+    const patch: Partial<LearningProfile> = {};
+    if (!row.primaryTrack) patch.primaryTrack = "fluency";
+    if (!Array.isArray(row.interests)) patch.interests = [];
+    if (Object.keys(patch).length > 0) {
+      await profileTable.put({ ...row, ...patch });
+    }
+  }
 });
 
 export { db };
