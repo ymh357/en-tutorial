@@ -110,10 +110,16 @@ export const generateStudyPlan = (
     todayStats,
   } = opts;
   const targetMinutes = opts.targetMinutes ?? DEFAULT_TARGET_MINUTES;
+  // Fluency track (default): SRS is one activity among many, not the
+  // always-first never-dropped gate. Mastery track keeps the classic SRS-first
+  // behavior. methodology: don't let review backlog dominate the fluency path.
+  const srsFirst = opts.profile?.primaryTrack === "mastery";
 
   const steps: StudyStep[] = [];
 
-  // Rule 1: SRS review is always first if there are due cards.
+  // Rule 1: SRS review. On the mastery track it's always first (priority 100);
+  // on the fluency track (default) it's just another rotation candidate so the
+  // review backlog can't crowd out listening/reading practice.
   if (dueCards > 0) {
     steps.push({
       type: "srs",
@@ -121,9 +127,10 @@ export const generateStudyPlan = (
       description: "Spaced repetition review",
       estimatedMinutes: srsMinutes(dueCards),
       href: "/srs",
-      priority: 100,
-      reason:
-        "You have overdue cards — spaced repetition breaks if reviews are skipped, so this comes first.",
+      priority: srsFirst ? 100 : 50,
+      reason: srsFirst
+        ? "You have overdue cards — spaced repetition breaks if reviews are skipped, so this comes first."
+        : "You have cards due for review.",
     });
   }
 
@@ -233,7 +240,9 @@ export const generateStudyPlan = (
     });
   }
 
-  // Sort by priority (SRS always wins since it's 100+).
+  // Sort by priority. Mastery track: SRS (100) wins. Fluency track: SRS (50)
+  // competes with rotation candidates (50 + gapDays), so a long-unpracticed
+  // skill can come first instead.
   steps.sort((a, b) => b.priority - a.priority);
 
   // Rule 3: never schedule more than 3 distinct activity types per session.
@@ -247,13 +256,14 @@ export const generateStudyPlan = (
   }
 
   // Rule 6: trim to stay within the target time budget where possible.
-  // SRS is non-negotiable (rule 1) so it's always kept; everything else is
-  // trimmed from lowest priority first if the total would exceed the target.
+  // Mastery track: SRS is non-negotiable, always kept. Fluency track: SRS is
+  // trimmable like anything else — the review backlog shouldn't override the
+  // user's practice mix.
   let totalMinutes = limited.reduce((sum, s) => sum + s.estimatedMinutes, 0);
   const trimmed = [...limited];
   while (trimmed.length > 1 && totalMinutes > targetMinutes) {
     const last = trimmed[trimmed.length - 1];
-    if (last.type === "srs") break; // never drop SRS
+    if (srsFirst && last.type === "srs") break; // mastery: never drop SRS
     trimmed.pop();
     totalMinutes -= last.estimatedMinutes;
   }
