@@ -126,13 +126,16 @@ export const ShadowingTab = ({ cefrLevel }: { cefrLevel: string }) => {
   // playback + forced imagine context; coarse (C1-C2) => native speed, may
   // skip the guided imagine step.
   const granularity: StepGranularity = granularityForLevel(cefrLevel);
+  // Default rate derives from granularity (fine => 0.75, else 1). The user's
+  // manual speed choice is held separately so a runtime cefrLevel change updates
+  // the default without clobbering an explicit override (review W2 S3).
+  const defaultRate = granularity === "fine" ? 0.75 : 1;
+  const [userRateOverride, setUserRateOverride] = useState<number | null>(null);
+  const playbackRate = userRateOverride ?? defaultRate;
   const [data, setData] = useState<ShadowingData | null>(null);
   const [index, setIndex] = useState(0);
   const [stage, setStage] = useState<Stage>("imagine");
   const [subtitleMode, setSubtitleMode] = useState<SubtitleMode>("english");
-  const [playbackRate, setPlaybackRate] = useState<number>(
-    () => (granularity === "fine" ? 0.75 : 1)
-  );
   const [voice, setVoice] = useState<string>("en-US-AriaNeural");
   const [listensCount, setListensCount] = useState<number>(0);
   const [subjectiveComprehension, setSubjectiveComprehension] = useState<number | null>(null);
@@ -500,7 +503,9 @@ export const ShadowingTab = ({ cefrLevel }: { cefrLevel: string }) => {
                     {currentImageryHint}
                   </p>
                   <p className="text-xs text-muted-foreground text-center">
-                    闭上眼睛，先在脑海中构造这个画面，不要急着看英文。
+                    {granularity === "coarse"
+                      ? "高阶段：可略过画面引导，直接进入听力。"
+                      : "闭上眼睛，先在脑海中构造这个画面，不要急着看英文。"}
                   </p>
                   <Button
                     size="lg"
@@ -510,22 +515,9 @@ export const ShadowingTab = ({ cefrLevel }: { cefrLevel: string }) => {
                       setStage("listen");
                     }}
                   >
-                    我已想好画面
+                    {granularity === "coarse" ? "直接听" : "我已想好画面"}
                     <ArrowRight className="h-4 w-4 ml-2" />
                   </Button>
-                  {granularity === "coarse" && (
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      className="w-full min-h-[36px]"
-                      onClick={() => {
-                        markActive();
-                        setStage("listen");
-                      }}
-                    >
-                      跳过引导，直接听
-                    </Button>
-                  )}
                 </div>
               )}
 
@@ -556,7 +548,7 @@ export const ShadowingTab = ({ cefrLevel }: { cefrLevel: string }) => {
                         className="min-h-[36px]"
                         onClick={() => {
                           markActive();
-                          setPlaybackRate(r);
+                          setUserRateOverride(r);
                         }}
                       >
                         {r}x

@@ -63,6 +63,7 @@ export const conversationReviewSchema = z.object({
       word: z.string(),
       lemma: z.string(),
       definition: z.string(),
+      sourceSentence: z.string().optional(),
       example: z.string(),
       collocations: z.array(z.string()).optional(),
       wordFamily: z.string().optional(),
@@ -346,7 +347,7 @@ export const part2ReviewSchema = z.object({
       word: z.string(),
       lemma: z.string(),
       definition: z.string(),
-      sourceSentence: z.string(),
+      sourceSentence: z.string().optional(),
       example: z.string(),
     })
   ),

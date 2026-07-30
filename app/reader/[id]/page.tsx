@@ -488,6 +488,7 @@ const ReaderSessionPage = ({
           front: wordPopup.word,
           back: wordPopup.definition,
           context: wordPopup.sentence,
+          sourceSentence: wordPopup.sentence,
           source: "reading",
           sourceId: session.id,
           easeFactor: 2.5,

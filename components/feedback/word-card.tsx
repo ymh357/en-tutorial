@@ -37,6 +37,8 @@ function WordCard({
   definition,
   example,
   sourceSentence,
+  // TODO(W4): imageryHint/audioSrc are reserved slots — declared but not yet
+  // rendered (no data source until authentic audio/picture materials land).
   imageryHint,
   audioSrc,
   onAdd,
@@ -82,10 +84,13 @@ function WordCard({
         </p>
       ) : null}
 
-      <p className="mt-3 border-l-2 border-border pl-[11px] text-sm text-muted-foreground italic">
-        <span className="not-italic text-[10px] uppercase tracking-wide text-muted-foreground/70 mr-1">例句</span>
-        {example}
-      </p>
+      {/* Hide the fresh-example line when it duplicates the source sentence. */}
+      {sourceSentence !== example ? (
+        <p className="mt-3 border-l-2 border-border pl-[11px] text-sm text-muted-foreground italic">
+          <span className="not-italic text-[10px] uppercase tracking-wide text-muted-foreground/70 mr-1">例句</span>
+          {example}
+        </p>
+      ) : null}
 
       {onAdd ? (
         <button

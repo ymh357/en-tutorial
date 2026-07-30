@@ -450,12 +450,7 @@ const AssessmentPage = () => {
   );
 
   const previousAssessments = useLiveQuery(() => dbHelpers.getAssessments(), []) ?? [];
-  // lowConfidence is session-only (not part of the persisted AssessmentResult
-  // shape — see computeFinalBand/finishAssessment); D3b will surface it in
-  // the results UI.
-  const [finalResult, setFinalResult] = useState<
-    (Omit<AssessmentResult, "id"> & { lowConfidence: boolean }) | null
-  >(null);
+  const [finalResult, setFinalResult] = useState<Omit<AssessmentResult, "id"> | null>(null);
   const [pendingLevel, setPendingLevel] = useState<string | null>(null);
 
   // dbHelpers.getAssessments() sorts newest-first, so the most recent prior
@@ -863,7 +858,7 @@ Return ONLY valid JSON (no markdown fences, no explanation) in this exact format
     // live query and would otherwise reflect the row we're about to insert.
     setPriorResult(previousAssessments[0] ?? null);
     await dbHelpers.saveAssessment(result);
-    setFinalResult({ ...result, lowConfidence: final.lowConfidence });
+    setFinalResult(result);
 
     // assessedLevel is display-only and always kept current. studyLevel
     // drives content generation, so only change it with the user's
@@ -1358,6 +1353,13 @@ Return ONLY valid JSON (no markdown fences, no explanation) in this exact format
             </Badge>
           </CardHeader>
           <CardContent className="space-y-3">
+            {finalResult.locatedLevel && (
+              <p className="text-xs text-muted-foreground text-center">
+                定位级别：{finalResult.locatedLevel}
+                {finalResult.atCeiling && "（触及上限，实际可能更高）"}
+                {finalResult.atFloor && "（触及下限，实际可能更低）"}
+              </p>
+            )}
             {finalResult.lowConfidence && (
               <Alert className="border-amber-300 bg-amber-50 text-amber-900 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-200">
                 <AlertTriangle className="h-4 w-4 text-amber-600 dark:text-amber-400" />

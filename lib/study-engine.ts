@@ -19,10 +19,6 @@ export interface StudyStep {
   href: string;
   priority: number; // higher = more important
   reason: string; // why this step was chosen
-  // Methodology: lower-level learners get finer practice steps (forced
-  // context, slower default speed, auto-chunking); higher-level learners get
-  // coarser steps. Derived from the assessed CEFR level (W2-T2).
-  granularity?: StepGranularity;
 }
 
 export interface GenerateStudyPlanOptions {
@@ -111,15 +107,9 @@ export const generateStudyPlan = (
     lastWriting,
     lastListening = null,
     lastTranslation = null,
-    profile,
     todayStats,
   } = opts;
   const targetMinutes = opts.targetMinutes ?? DEFAULT_TARGET_MINUTES;
-  // assessedLevel is the most recent objective placement; fall back to the
-  // user-adjustable studyLevel, then the initial onboarding level.
-  const granularity = granularityForLevel(
-    profile?.assessedLevel || profile?.studyLevel || profile?.initialCefrLevel
-  );
 
   const steps: StudyStep[] = [];
 
@@ -134,7 +124,6 @@ export const generateStudyPlan = (
       priority: 100,
       reason:
         "You have overdue cards — spaced repetition breaks if reviews are skipped, so this comes first.",
-      granularity,
     });
   }
 
@@ -226,7 +215,6 @@ export const generateStudyPlan = (
       href: candidate.href,
       priority: 50 + candidate.gapDays, // longer gap => higher priority
       reason,
-      granularity,
     });
   }
 
@@ -242,7 +230,6 @@ export const generateStudyPlan = (
         translationGap >= NEVER_DONE_GAP
           ? "You haven't done a translation warm-up yet."
           : `It's been ${translationGap} days since your last translation warm-up.`,
-      granularity,
     });
   }
 
