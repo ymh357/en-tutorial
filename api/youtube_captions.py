@@ -28,7 +28,7 @@ DEBUG_DETAIL = os.environ.get("YTC_DEBUG", "") not in ("", "0", "false")
 
 
 def fetch_captions(video_id):
-    """Download English subtitles as json3 via yt-dlp, return normalized rows.
+    """Download English subtitles as json3 via yt-dlp, return the raw json3 object.
 
     yt-dlp splits captions: `subtitles` for manually uploaded, and
     `automatic_captions` for auto-generated (the majority of long-tail topic
@@ -72,10 +72,8 @@ def fetch_captions(video_id):
             continue
         try:
             with open(filepath, "r", encoding="utf-8") as f:
-                events = json.load(f).get("events", [])
-            sentences = _flatten_events(events)
-            if sentences:
-                return {"languageCode": lang, "sentences": sentences}
+                data = json.load(f)
+            return {"languageCode": lang, "json3": data}
         finally:
             # Reused warm containers keep /tmp; don't let captions accumulate.
             try:
@@ -83,22 +81,6 @@ def fetch_captions(video_id):
             except OSError:
                 pass
     return None
-
-
-def _flatten_events(events):
-    out = []
-    for ev in events:
-        start = ev.get("tStartMs")
-        if start is None:
-            continue
-        text = "".join(seg.get("utf8", "") for seg in ev.get("segs", []))
-        text = text.replace("\n", " ").strip()
-        # Skip YouTube's non-speech markers ([Music], [Applause], ♪♪♪).
-        if not text or text.startswith("[") or text.startswith("("):
-            continue
-        dur = ev.get("dDurationMs", 0)
-        out.append({"text": text, "startMs": start, "endMs": start + (dur or 0)})
-    return out
 
 
 async def app(scope, receive, send):
@@ -162,8 +144,7 @@ async def app(scope, receive, send):
         {
             "videoId": video_id,
             "languageCode": result["languageCode"],
-            "sentenceCount": len(result["sentences"]),
-            "sentences": result["sentences"],
+            "json3": result["json3"],
         },
     )
 
