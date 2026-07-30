@@ -69,8 +69,9 @@ const srsMinutes = (count: number): number => {
 // step fineness). A1-A2 → fine (forced context, slow default, auto-chunk),
 // B1-B2 → medium, C1-C2 → coarse (skip hand-holding, native speed).
 // Falls back to "medium" when the level is absent/unrecognized rather than
-// guessing fine/coarse.
-const granularityForLevel = (level: string | undefined): StepGranularity => {
+// guessing fine/coarse. Exported so module UIs (e.g. listening) can derive the
+// same granularity locally from the profile.
+export const granularityForLevel = (level: string | undefined): StepGranularity => {
   switch (level) {
     case "A1":
     case "A2":
