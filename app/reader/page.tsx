@@ -400,6 +400,7 @@ const ImportUrlTab = ({
   onSessionCreated: (id: string) => void;
 }) => {
   const [url, setUrl] = useState("");
+  const [topic, setTopic] = useState<string>(TOPICS[0]);
   const [isExtracting, setIsExtracting] = useState(false);
   const [isCreating, setIsCreating] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -460,6 +461,21 @@ const ImportUrlTab = ({
         source: "url",
         sourceUrl: url.trim(),
       });
+      // W4: also register this authentic article as a Material so it can
+      // resurface across listening/reading by topic (alternating repetition).
+      await db.materials.add({
+        id: crypto.randomUUID(),
+        topic,
+        mediaType: "text",
+        sourceKind: "authentic",
+        sourceUrl: url.trim(),
+        title: extracted.title || "Untitled",
+        content: extracted.content,
+        difficulty: UNKNOWN_DIFFICULTY,
+        vocabCoverage: 0,
+        exposureCount: 0,
+        createdAt: new Date(),
+      });
       onSessionCreated(id);
     } finally {
       setIsCreating(false);
@@ -495,6 +511,22 @@ const ImportUrlTab = ({
               "Extract"
             )}
           </Button>
+        </div>
+
+        <div className="space-y-1.5">
+          <Label>Topic</Label>
+          <Select value={topic} onValueChange={(value) => value && setTopic(value)}>
+            <SelectTrigger className="w-full">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {TOPICS.map((t) => (
+                <SelectItem key={t} value={t}>
+                  {t}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
         </div>
 
         {error && (
