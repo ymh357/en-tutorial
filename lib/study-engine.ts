@@ -9,6 +9,8 @@ export type StudyStepType =
   | "listening"
   | "translate";
 
+export type StepGranularity = "fine" | "medium" | "coarse";
+
 export interface StudyStep {
   type: StudyStepType;
   title: string;
@@ -17,6 +19,10 @@ export interface StudyStep {
   href: string;
   priority: number; // higher = more important
   reason: string; // why this step was chosen
+  // Methodology: lower-level learners get finer practice steps (forced
+  // context, slower default speed, auto-chunking); higher-level learners get
+  // coarser steps. Derived from the assessed CEFR level (W2-T2).
+  granularity?: StepGranularity;
 }
 
 export interface GenerateStudyPlanOptions {
@@ -59,6 +65,27 @@ const srsMinutes = (count: number): number => {
   return Math.min(SRS_MAX_MINUTES, Math.max(1, Math.round(count * SRS_MINUTES_PER_CARD)));
 };
 
+// Map a CEFR level to practice-step granularity (methodology: level decides
+// step fineness). A1-A2 → fine (forced context, slow default, auto-chunk),
+// B1-B2 → medium, C1-C2 → coarse (skip hand-holding, native speed).
+// Falls back to "medium" when the level is absent/unrecognized rather than
+// guessing fine/coarse.
+const granularityForLevel = (level: string | undefined): StepGranularity => {
+  switch (level) {
+    case "A1":
+    case "A2":
+      return "fine";
+    case "B1":
+    case "B2":
+      return "medium";
+    case "C1":
+    case "C2":
+      return "coarse";
+    default:
+      return "medium";
+  }
+};
+
 interface RotationCandidate {
   type: Exclude<StudyStepType, "srs" | "translate">;
   gapDays: number;
@@ -83,9 +110,15 @@ export const generateStudyPlan = (
     lastWriting,
     lastListening = null,
     lastTranslation = null,
+    profile,
     todayStats,
   } = opts;
   const targetMinutes = opts.targetMinutes ?? DEFAULT_TARGET_MINUTES;
+  // assessedLevel is the most recent objective placement; fall back to the
+  // user-adjustable studyLevel, then the initial onboarding level.
+  const granularity = granularityForLevel(
+    profile?.assessedLevel || profile?.studyLevel || profile?.initialCefrLevel
+  );
 
   const steps: StudyStep[] = [];
 
@@ -100,6 +133,7 @@ export const generateStudyPlan = (
       priority: 100,
       reason:
         "You have overdue cards — spaced repetition breaks if reviews are skipped, so this comes first.",
+      granularity,
     });
   }
 
@@ -191,6 +225,7 @@ export const generateStudyPlan = (
       href: candidate.href,
       priority: 50 + candidate.gapDays, // longer gap => higher priority
       reason,
+      granularity,
     });
   }
 
@@ -206,6 +241,7 @@ export const generateStudyPlan = (
         translationGap >= NEVER_DONE_GAP
           ? "You haven't done a translation warm-up yet."
           : `It's been ${translationGap} days since your last translation warm-up.`,
+      granularity,
     });
   }
 
