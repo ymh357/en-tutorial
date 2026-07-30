@@ -6,6 +6,7 @@ import type {
   ListeningExercise,
   MasteryLevel,
   AssessmentResult,
+  Material,
 } from "./types";
 import { formatDate, today } from "./date";
 import { ensureLemmatizer, lemmatize } from "./lemma";
@@ -42,7 +43,8 @@ export const dbHelpers = {
 
   async initProfile(
     cefrLevel: string,
-    knownWords: string[]
+    knownWords: string[],
+    interests?: string[]
   ): Promise<void> {
     await db.learningProfile.put({
       ...DEFAULT_PROFILE,
@@ -53,6 +55,8 @@ export const dbHelpers = {
       assessedLevel: "",
       studyLevel: cefrLevel,
       knownWordsBase: knownWords,
+      interests: interests ?? [],
+      primaryTrack: "fluency",
     });
   },
 
@@ -278,5 +282,36 @@ export const dbHelpers = {
   async getAssessments(): Promise<AssessmentResult[]> {
     const all = await db.assessments.toArray();
     return all.sort((a, b) => b.date.localeCompare(a.date));
+  },
+
+  // --- Material (authentic corpus, W4) ---
+  async saveMaterial(
+    material: Omit<Material, "id" | "createdAt" | "exposureCount">
+  ): Promise<Material> {
+    const row: Material = {
+      ...material,
+      id: crypto.randomUUID(),
+      exposureCount: 0,
+      createdAt: new Date(),
+    };
+    await db.materials.add(row);
+    return row;
+  },
+
+  async getMaterials(topic?: string): Promise<Material[]> {
+    if (topic) {
+      return db.materials.where("topic").equals(topic).toArray();
+    }
+    return db.materials.toArray();
+  },
+
+  // Bump a material's re-exposure count (alternating repetition across scenes).
+  async bumpMaterialExposure(materialId: string): Promise<void> {
+    const m = await db.materials.get(materialId);
+    if (!m) return;
+    await db.materials.update(materialId, {
+      exposureCount: m.exposureCount + 1,
+      lastSeenAt: new Date(),
+    });
   },
 };

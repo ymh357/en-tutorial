@@ -56,18 +56,38 @@ const LEVELS: Array<{ value: CefrLevel; label: string; description: string }> =
     },
   ];
 
+const INTEREST_TOPICS = [
+  "Technology",
+  "Business",
+  "Science",
+  "Culture",
+  "Daily Life",
+  "Health",
+  "Education",
+  "Travel",
+  "Food",
+  "Music",
+] as const;
+
 const OnboardingPage = () => {
   const router = useRouter();
   const setOnboarded = useAppStore((s) => s.setOnboarded);
   const [selectedLevel, setSelectedLevel] = useState<CefrLevel | null>(null);
+  const [selectedInterests, setSelectedInterests] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
+
+  const toggleInterest = (topic: string) => {
+    setSelectedInterests((prev) =>
+      prev.includes(topic) ? prev.filter((t) => t !== topic) : [...prev, topic]
+    );
+  };
 
   const handleComplete = async () => {
     if (!selectedLevel) return;
     setLoading(true);
 
     const knownWords = getKnownWordsForLevel(selectedLevel);
-    await dbHelpers.initProfile(selectedLevel, knownWords);
+    await dbHelpers.initProfile(selectedLevel, knownWords, selectedInterests);
     setOnboarded(true);
     router.push("/");
   };
@@ -110,6 +130,29 @@ const OnboardingPage = () => {
             </strong>{" "}
             as already known. You can always adjust this later.
           </p>
+
+          <div className="space-y-2">
+            <p className="text-sm font-medium">Pick topics you&rsquo;re interested in (optional)</p>
+            <p className="text-xs text-muted-foreground">
+              We&rsquo;ll prefer authentic listening/reading material on these. You can change this later in Settings.
+            </p>
+            <div className="flex flex-wrap gap-2">
+              {INTEREST_TOPICS.map((topic) => {
+                const active = selectedInterests.includes(topic);
+                return (
+                  <Button
+                    key={topic}
+                    variant={active ? "default" : "outline"}
+                    size="sm"
+                    onClick={() => toggleInterest(topic)}
+                  >
+                    {topic}
+                  </Button>
+                );
+              })}
+            </div>
+          </div>
+
           <Button
             onClick={handleComplete}
             disabled={loading}
