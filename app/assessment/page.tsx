@@ -852,6 +852,12 @@ Return ONLY valid JSON (no markdown fences, no explanation) in this exact format
       conversationScore: finalConversationScore,
       overallScore: final.overallScore,
       levelBand: final.band,
+      // Persist locator + confidence so downstream (study-engine step
+      // granularity, W2-T2) can read them — was session-only before.
+      locatedLevel: loc.level,
+      atCeiling: loc.atCeiling,
+      atFloor: loc.atFloor,
+      lowConfidence: final.lowConfidence,
     };
     // Capture the prior assessment BEFORE saving — previousAssessments is a
     // live query and would otherwise reflect the row we're about to insert.
