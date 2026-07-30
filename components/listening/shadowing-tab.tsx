@@ -5,7 +5,7 @@
 // stage machine (imagine → listen → recall); subtitle gating / variable speed
 // land in later W1 tasks.
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { ArrowRight, Loader2, Mic, Play, Square } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -38,6 +38,13 @@ import {
   ExerciseCompletionActions,
 } from "@/components/listening/shared";
 import { granularityForLevel, type StepGranularity } from "@/lib/study-engine";
+import type { Material } from "@/lib/types";
+import { materialToShadowingData } from "@/components/listening/material-adapter";
+import {
+  createYouTubePlayer,
+  type YouTubeMediaSource,
+} from "@/components/listening/media-source";
+import { extractVideoId } from "@/lib/youtube";
 
 type RecStatus = "idle" | "recording" | "transcribing";
 
@@ -121,7 +128,18 @@ const isSentenceChunks = (value: unknown): value is { chunks: SentenceChunk[] } 
 };
 
 
-export const ShadowingTab = ({ cefrLevel }: { cefrLevel: string }) => {
+export const ShadowingTab = ({
+  cefrLevel,
+  material,
+}: {
+  cefrLevel: string;
+  material?: Material;
+}) => {
+  // Video materials (authentic YouTube source, W4-T3) swap the TTS audio
+  // source for a YouTube player and skip LLM sentence generation entirely —
+  // the text path (material undefined) is completely unaffected below.
+  const isVideo = material?.mediaType === "video";
+  const videoId = extractVideoId(material?.sourceUrl);
   // Methodology: level decides step fineness. fine (A1-A2) => slower default
   // playback + forced imagine context; coarse (C1-C2) => native speed, may
   // skip the guided imagine step.
@@ -132,7 +150,22 @@ export const ShadowingTab = ({ cefrLevel }: { cefrLevel: string }) => {
   const defaultRate = granularity === "fine" ? 0.75 : 1;
   const [userRateOverride, setUserRateOverride] = useState<number | null>(null);
   const playbackRate = userRateOverride ?? defaultRate;
-  const [data, setData] = useState<ShadowingData | null>(null);
+  // Video mode: the YouTube player instance lives in a ref (mutating it must
+  // not trigger a re-render — media-source.ts is imperative). availableRates
+  // is mirrored into state once the player is ready so the rate buttons can
+  // disable rates the underlying <video> doesn't actually support.
+  const ytSourceRef = useRef<YouTubeMediaSource | null>(null);
+  const [availableRates, setAvailableRates] = useState<number[] | null>(null);
+  const [abLoop, setAbLoop] = useState(false);
+  // Pool/LLM-generated sentence set (text mode only). Video mode derives
+  // `data` directly from `material` below instead of going through state —
+  // materialToShadowingData is a pure sync function of `material`, so there's
+  // nothing to synchronize via an effect (React 19 flags setState-in-effect).
+  const [genData, setGenData] = useState<ShadowingData | null>(null);
+  const data = useMemo(
+    () => (isVideo && material ? materialToShadowingData(material) : genData),
+    [isVideo, material, genData]
+  );
   const [index, setIndex] = useState(0);
   const [stage, setStage] = useState<Stage>("imagine");
   const [subtitleMode, setSubtitleMode] = useState<SubtitleMode>("english");
@@ -210,10 +243,42 @@ export const ShadowingTab = ({ cefrLevel }: { cefrLevel: string }) => {
     return () => clearInterval(timer);
   }, [stage]);
 
+  // Video mode: construct the YouTube player once. The effect body only
+  // builds the player, refs it, and registers callbacks — setState happens
+  // inside those callbacks only (React 19 rule, see the focus-watchdog effect
+  // above for the same pattern). `data` itself is derived from `material`
+  // above (no state needed — see the `data` derivation comment).
+  useEffect(() => {
+    if (!isVideo || !material || !videoId) return;
+    const source = createYouTubePlayer({ videoId, containerId: "yt-player" });
+    ytSourceRef.current = source;
+    let ratesCaptured = false;
+    const unsubscribe = source.onStateChange((state) => {
+      // The player becomes ready asynchronously (media-source.ts loads the
+      // IFrame API before constructing YT.Player); the first state change
+      // callback is the earliest point getAvailableRates() reflects the
+      // actual video rather than the pre-ready fallback default.
+      if (!ratesCaptured) {
+        ratesCaptured = true;
+        setAvailableRates(source.getAvailableRates());
+      }
+      // Video playback is a legitimately still, sustained-attention activity —
+      // register with the focus watchdog so continuous PLAYING doesn't get
+      // mistaken for going idle.
+      if (state === "playing") markActive();
+    });
+    return () => {
+      unsubscribe();
+      source.destroy();
+      ytSourceRef.current = null;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isVideo, material, videoId]);
+
   const generateSentences = async (): Promise<void> => {
     setIsLoading(true);
     setError(null);
-    setData(null);
+    setGenData(null);
     setIndex(0);
     setStage("imagine");
     setListensCount(0);
@@ -238,7 +303,7 @@ export const ShadowingTab = ({ cefrLevel }: { cefrLevel: string }) => {
         // Shadowing pool content now matches listeningShadowingSchema (object
         // shape: topic/context/sentences). Guard at runtime before adopting.
         if (isShadowingData(poolTask.content)) {
-          setData(poolTask.content);
+          setGenData(poolTask.content);
           await completeTask(poolTask.id, "listening-shadowing");
           setIsLoading(false);
           return;
@@ -258,7 +323,7 @@ export const ShadowingTab = ({ cefrLevel }: { cefrLevel: string }) => {
     try {
       const reusable = await getReusableTask("listening-shadowing");
       if (reusable && isShadowingData(reusable.content)) {
-        setData(reusable.content);
+        setGenData(reusable.content);
         await completeTask(reusable.id, "listening-shadowing");
         setIsLoading(false);
         return;
@@ -287,7 +352,7 @@ export const ShadowingTab = ({ cefrLevel }: { cefrLevel: string }) => {
       if (!isShadowingData(payload.object)) {
         throw new Error("Could not parse the sentences. Please try again.");
       }
-      setData(payload.object);
+      setGenData(payload.object);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to generate sentences");
     } finally {
@@ -296,6 +361,9 @@ export const ShadowingTab = ({ cefrLevel }: { cefrLevel: string }) => {
   };
 
   useEffect(() => {
+    // Video mode feeds data directly from `material` (effect above) — skip
+    // LLM/pool sentence generation entirely.
+    if (isVideo) return;
     const timer = setTimeout(() => void generateSentences(), 0);
     return () => clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -368,8 +436,12 @@ export const ShadowingTab = ({ cefrLevel }: { cefrLevel: string }) => {
             subjectiveComprehension: subjectiveComprehension ?? undefined,
             listensCount,
             focusResets,
+            materialId: material?.id,
           }
         );
+        if (material?.id) {
+          await dbHelpers.bumpMaterialExposure(material.id);
+        }
       } catch {
         // Stats are non-critical; keep the result visible.
       }
@@ -429,8 +501,19 @@ export const ShadowingTab = ({ cefrLevel }: { cefrLevel: string }) => {
     chunkTokenRef.current++;
     setIsChunking(false);
     if (data && index + 1 < data.sentences.length) {
-      setIndex(index + 1);
-    } else {
+      const nextIndex = index + 1;
+      setIndex(nextIndex);
+      // Video mode: pause and seek to the next sentence's start, but don't
+      // auto-play — the learner presses play in the listen stage, same as
+      // the TTS path never auto-speaks on advance.
+      if (isVideo && material?.sentences) {
+        const next = material.sentences[nextIndex];
+        ytSourceRef.current?.pause();
+        if (next?.audioStartMs != null) {
+          ytSourceRef.current?.seekTo(next.audioStartMs);
+        }
+      }
+    } else if (!isVideo) {
       await generateSentences();
     }
   };
@@ -506,6 +589,23 @@ export const ShadowingTab = ({ cefrLevel }: { cefrLevel: string }) => {
                 </Alert>
               )}
 
+              {isVideo && (
+                // Always mounted (not just during "listen") so the div exists
+                // in the DOM before the player-construction effect (which
+                // runs once on mount, independent of `stage`) looks it up by
+                // id — YT.Player throws if the container isn't there yet.
+                // Hidden outside the listen stage since there's nothing
+                // useful to show while imagining/recalling.
+                <div
+                  id="yt-player"
+                  className={
+                    stage === "listen"
+                      ? "aspect-video w-full rounded-md overflow-hidden"
+                      : "hidden"
+                  }
+                />
+              )}
+
               {stage === "imagine" && (
                 <div className="space-y-3 py-1">
                   <p className="text-xs uppercase tracking-wide text-muted-foreground text-center">
@@ -514,9 +614,25 @@ export const ShadowingTab = ({ cefrLevel }: { cefrLevel: string }) => {
                   <p className="text-sm text-muted-foreground text-center italic">
                     {data?.context}
                   </p>
-                  <p className="text-sm text-center py-2 border-l-2 border-primary/40 pl-3 ml-3 mr-3">
-                    {currentImageryHint}
-                  </p>
+                  {isVideo && currentImageryHint === "" ? (
+                    <div className="space-y-2 text-center">
+                      {videoId && (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img
+                          src={`https://img.youtube.com/vi/${videoId}/hqdefault.jpg`}
+                          alt={data?.context ?? "video thumbnail"}
+                          className="mx-auto rounded-md max-w-full"
+                        />
+                      )}
+                      <p className="text-sm py-2 border-l-2 border-primary/40 pl-3 ml-3 mr-3 text-left">
+                        先看视频标题和封面，想象这个视频会讲什么，不要急着播放。
+                      </p>
+                    </div>
+                  ) : (
+                    <p className="text-sm text-center py-2 border-l-2 border-primary/40 pl-3 ml-3 mr-3">
+                      {currentImageryHint}
+                    </p>
+                  )}
                   <p className="text-xs text-muted-foreground text-center">
                     {granularity === "coarse"
                       ? "高阶段：可略过画面引导，直接进入听力。"
@@ -536,6 +652,7 @@ export const ShadowingTab = ({ cefrLevel }: { cefrLevel: string }) => {
                 </div>
               )}
 
+
               {stage === "listen" && (
                 <div className="space-y-3">
                   <Button
@@ -544,12 +661,37 @@ export const ShadowingTab = ({ cefrLevel }: { cefrLevel: string }) => {
                     onClick={() => {
                       markActive();
                       setListensCount((c) => c + 1);
-                      void speak(currentSentence, undefined, playbackRate, voice);
+                      if (isVideo) {
+                        const s = material?.sentences?.[index];
+                        if (s?.audioStartMs != null && s?.audioEndMs != null) {
+                          ytSourceRef.current?.play(s.audioStartMs, s.audioEndMs);
+                        }
+                      } else {
+                        void speak(currentSentence, undefined, playbackRate, voice);
+                      }
                     }}
                   >
                     <Play className="h-4 w-4" />
                     播放（{playbackRate}x）
                   </Button>
+
+                  {isVideo && (
+                    <div className="flex justify-center">
+                      <Button
+                        size="sm"
+                        variant={abLoop ? "default" : "outline"}
+                        className="min-h-[36px]"
+                        onClick={() => {
+                          markActive();
+                          const next = !abLoop;
+                          setAbLoop(next);
+                          ytSourceRef.current?.setAbLoop(next);
+                        }}
+                      >
+                        {abLoop ? "AB 循环开" : "AB 循环关"}
+                      </Button>
+                    </div>
+                  )}
 
                   {/* Variable speed: slow down to catch the sound, then ramp up
                       for overload training (methodology). Client-side playbackRate
@@ -561,9 +703,14 @@ export const ShadowingTab = ({ cefrLevel }: { cefrLevel: string }) => {
                         size="sm"
                         variant={playbackRate === r ? "default" : "outline"}
                         className="min-h-[36px]"
+                        disabled={isVideo && availableRates !== null && !availableRates.includes(r)}
                         onClick={() => {
                           markActive();
                           setUserRateOverride(r);
+                          if (isVideo) {
+                            const applied = ytSourceRef.current?.setRate(r);
+                            if (applied != null) setUserRateOverride(applied);
+                          }
                         }}
                       >
                         {r}x
@@ -574,24 +721,28 @@ export const ShadowingTab = ({ cefrLevel }: { cefrLevel: string }) => {
                     听不清就减速反复听；听清后可加速到 1.5x/2x 增加强度。
                   </p>
 
-                  {/* Accent selection (methodology: accent training). */}
-                  <div className="flex flex-wrap gap-2 justify-center items-center">
-                    <span className="text-xs text-muted-foreground">口音：</span>
-                    {VOICE_OPTIONS.map((v) => (
-                      <Button
-                        key={v.id}
-                        size="sm"
-                        variant={voice === v.id ? "default" : "outline"}
-                        className="min-h-[32px]"
-                        onClick={() => {
-                          markActive();
-                          setVoice(v.id);
-                        }}
-                      >
-                        {v.label}
-                      </Button>
-                    ))}
-                  </div>
+                  {/* Accent selection (methodology: accent training) — video
+                      mode has one fixed voice (the speaker in the video), so
+                      the accent picker doesn't apply. */}
+                  {!isVideo && (
+                    <div className="flex flex-wrap gap-2 justify-center items-center">
+                      <span className="text-xs text-muted-foreground">口音：</span>
+                      {VOICE_OPTIONS.map((v) => (
+                        <Button
+                          key={v.id}
+                          size="sm"
+                          variant={voice === v.id ? "default" : "outline"}
+                          className="min-h-[32px]"
+                          onClick={() => {
+                            markActive();
+                            setVoice(v.id);
+                          }}
+                        >
+                          {v.label}
+                        </Button>
+                      ))}
+                    </div>
+                  )}
 
                   <Button
                     size="lg"
@@ -608,6 +759,7 @@ export const ShadowingTab = ({ cefrLevel }: { cefrLevel: string }) => {
                   </Button>
                 </div>
               )}
+
 
               {stage === "recall" && (
                 <div className="space-y-3">
@@ -626,10 +778,20 @@ export const ShadowingTab = ({ cefrLevel }: { cefrLevel: string }) => {
                       字幕已隐藏——纯靠声音跟读。
                     </p>
                   )}
+                  {currentTranslation === "" && (
+                    <p className="text-xs text-muted-foreground text-center">
+                      该视频素材无中文译文。
+                    </p>
+                  )}
 
-                  {/* Subtitle mode switcher */}
+                  {/* Subtitle mode switcher. Video materials have no
+                      translation (only real captions), so "bilingual" is
+                      dropped — only english/hidden remain. */}
                   <div className="flex flex-wrap gap-2 justify-center">
-                    {(["english", "bilingual", "hidden"] as const).map((m) => (
+                    {(currentTranslation === ""
+                      ? (["english", "hidden"] as const)
+                      : (["english", "bilingual", "hidden"] as const)
+                    ).map((m) => (
                       <Button
                         key={m}
                         size="sm"
@@ -644,6 +806,7 @@ export const ShadowingTab = ({ cefrLevel }: { cefrLevel: string }) => {
                       </Button>
                     ))}
                   </div>
+
 
                   {/* Self-rated direct comprehension: did the picture fire from
                       the sound alone? 1=没画面 2=模糊 3=清晰。Methodology signal. */}
@@ -751,7 +914,14 @@ export const ShadowingTab = ({ cefrLevel }: { cefrLevel: string }) => {
                 className="min-h-[36px]"
                 onClick={() => {
                   markActive();
-                  void speak(currentSentence, undefined, undefined, voice);
+                  if (isVideo) {
+                    const s = material?.sentences?.[index];
+                    if (s?.audioStartMs != null && s?.audioEndMs != null) {
+                      ytSourceRef.current?.play(s.audioStartMs, s.audioEndMs);
+                    }
+                  } else {
+                    void speak(currentSentence, undefined, undefined, voice);
+                  }
                 }}
               >
                 <Play className="h-4 w-4" />
