@@ -14,6 +14,13 @@ type WordCardProps = Omit<React.ComponentProps<"div">, "onClick"> & {
   level?: string
   definition: string
   example: string
+  /** The real sentence where the word was encountered (methodology: lived
+   *  context). Shown as "真实语境" above the fresh `example` when present. */
+  sourceSentence?: string
+  /** Cue to form the mental picture for abstract words (methodology). */
+  imageryHint?: string
+  /** Audio source URL for pronunciation playback (future: W4 audio materials). */
+  audioSrc?: string
   onAdd?: () => void
   added?: boolean
   /** Disables the Add button (e.g. while the add request is in flight) without
@@ -29,6 +36,9 @@ function WordCard({
   level,
   definition,
   example,
+  sourceSentence,
+  imageryHint,
+  audioSrc,
   onAdd,
   added = false,
   addDisabled = false,
@@ -65,7 +75,15 @@ function WordCard({
 
       <p className="mt-2 text-sm leading-relaxed">{definition}</p>
 
+      {sourceSentence ? (
+        <p className="mt-3 border-l-2 border-primary/40 pl-[11px] text-sm italic">
+          <span className="not-italic text-[10px] uppercase tracking-wide text-primary/70 mr-1">真实语境</span>
+          {sourceSentence}
+        </p>
+      ) : null}
+
       <p className="mt-3 border-l-2 border-border pl-[11px] text-sm text-muted-foreground italic">
+        <span className="not-italic text-[10px] uppercase tracking-wide text-muted-foreground/70 mr-1">例句</span>
         {example}
       </p>
 

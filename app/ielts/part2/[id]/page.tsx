@@ -947,6 +947,7 @@ const Part2SessionPage = () => {
                       word={vocab.word}
                       definition={vocab.definition}
                       example={vocab.example}
+                      sourceSentence={vocab.sourceSentence}
                       added={isAdded}
                       addDisabled={addingVocab === i}
                       onAdd={() => void handleAddVocab(i)}

@@ -463,6 +463,7 @@ const ReviewPage = () => {
                         word={vocab.word}
                         definition={vocab.definition}
                         example={vocab.example}
+                        sourceSentence={vocab.sourceSentence}
                         added={isAdded}
                         addDisabled={addingKey === key}
                         onAdd={() =>
