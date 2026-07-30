@@ -225,6 +225,29 @@ const DashboardPage = () => {
       }
 
       if (serverData?.tasks?.length) {
+        // cron now pre-generates a CEFR band (A2/B1/B2) per type; keep only the
+        // level closest to the learner's studyLevel so pool hits match their
+        // level instead of always being B1 (plan blocker A).
+        const profileData = await dbHelpers.getProfile();
+        const studyLevel = profileData.studyLevel || "B1";
+        const levelRank: Record<string, number> = {
+          A1: 0, A2: 1, B1: 2, B2: 3, C1: 4, C2: 5,
+        };
+        const targetRank = levelRank[studyLevel] ?? 2;
+        const byType = new Map<string, PoolTask>();
+        for (const t of serverData.tasks) {
+          const cur = byType.get(t.type);
+          if (!cur) {
+            byType.set(t.type, t);
+            continue;
+          }
+          // Keep the task whose difficulty rank is closest to the target.
+          const dCur = Math.abs((levelRank[cur.difficulty] ?? 2) - targetRank);
+          const dNew = Math.abs((levelRank[t.difficulty] ?? 2) - targetRank);
+          if (dNew < dCur) byType.set(t.type, t);
+        }
+        const scoped = Array.from(byType.values());
+
         // bulkPut is idempotent (server task ids are stable per day), so
         // concurrent mounts (StrictMode double-mount / multiple tabs) converge
         // instead of throwing a ConstraintError that falsely triggers local
@@ -233,13 +256,13 @@ const DashboardPage = () => {
         // completed/createdAt — otherwise a later reload (e.g. the server
         // still serving yesterday's overdue tasks) would resurrect a task the
         // user already completed and double-count stats/streak.
-        const existing = await db.poolTasks.bulkGet(serverData.tasks.map((t) => t.id));
+        const existing = await db.poolTasks.bulkGet(scoped.map((t) => t.id));
         const existingById = new Map(
           existing.filter((t): t is PoolTask => t !== undefined).map((t) => [t.id, t])
         );
 
         await db.poolTasks.bulkPut(
-          serverData.tasks.map((task) => ({
+          scoped.map((task) => ({
             id: task.id,
             type: task.type,
             difficulty: task.difficulty,

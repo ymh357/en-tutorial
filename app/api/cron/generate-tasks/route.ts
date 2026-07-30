@@ -7,46 +7,58 @@ import type { PoolTaskType } from "@/lib/types";
 
 export const maxDuration = 300; // 5 min for batch generation
 
-const DEFAULT_LEVEL = "B1"; // default level, can be made configurable later
+// CEFR levels the cron pre-generates for each task type. Covers the majority of
+// learners; C1/C2 fall back to real-time generation with the user's studyLevel.
+// Pre-generating a band (rather than a single hardcoded B1) fixes the level
+// desync where any pool hit fed B1 content regardless of the learner's level.
+const CRON_LEVELS = ["A2", "B1", "B2"] as const;
 
-const TASK_PROMPTS: Record<PoolTaskType, { system: string; prompt: string }> = {
+// Prompt builder per task type, parameterized by level (mirrors the client-side
+// buildPrompt in lib/task-pool-generate.ts — kept in sync manually, plan risk C).
+const buildCronPrompt = (
+  type: PoolTaskType,
+  level: string
+): { system: string; prompt: string } => {
+  const prompts: Record<PoolTaskType, { system: string; prompt: string }> = {
   "listening-dictation": {
     system: "You are an English teacher. Return ONLY valid JSON.",
-    prompt: `Generate 5 English sentences at ${DEFAULT_LEVEL} level for dictation practice. Return JSON: { "sentences": ["sentence1", "sentence2", ...] }`,
+    prompt: `Generate 5 English sentences at ${level} level for dictation practice. Return JSON: { "sentences": ["sentence1", "sentence2", ...] }`,
   },
   "listening-comprehension": {
     system: "You are an English teacher. Return ONLY valid JSON.",
-    prompt: `Generate a 100-150 word English passage at ${DEFAULT_LEVEL} level with 3 multiple-choice comprehension questions. Return JSON: { "passage": "...", "topic": "brief topic description", "questions": [{ "question": "...", "options": ["A","B","C","D"], "correctIndex": 0 }] }`,
+    prompt: `Generate a 100-150 word English passage at ${level} level with 3 multiple-choice comprehension questions. Return JSON: { "passage": "...", "topic": "brief topic description", "questions": [{ "question": "...", "options": ["A","B","C","D"], "correctIndex": 0 }] }`,
   },
   "listening-prediction": {
     system: "You are an English teacher. Return ONLY valid JSON.",
-    prompt: `Generate a short English passage (3-4 sentences) at ${DEFAULT_LEVEL} level with a clear logical progression. Return JSON: { "firstHalf": "first 1-2 sentences", "secondHalf": "remaining", "topic": "brief topic" }`,
+    prompt: `Generate a short English passage (3-4 sentences) at ${level} level with a clear logical progression. Return JSON: { "firstHalf": "first 1-2 sentences", "secondHalf": "remaining", "topic": "brief topic" }`,
   },
   "listening-shadowing": {
     system:
       "You are an English pronunciation coach. Return ONLY valid JSON (no markdown fences, no explanation).",
-    prompt: `Generate 5 short English sentences (5-10 words each) at ${DEFAULT_LEVEL} level for shadowing practice. Pick a single concrete everyday topic. Return JSON: { "topic": "short topic", "context": "one sentence of scene/background a learner pictures before listening", "sentences": [{ "text": "English sentence", "translation": "Chinese translation", "imageryHint": "a brief cue to form the mental picture for this sentence, in Chinese" }] }`,
+    prompt: `Generate 5 short English sentences (5-10 words each) at ${level} level for shadowing practice. Pick a single concrete everyday topic. Return JSON: { "topic": "short topic", "context": "one sentence of scene/background a learner pictures before listening", "sentences": [{ "text": "English sentence", "translation": "Chinese translation", "imageryHint": "a brief cue to form the mental picture for this sentence, in Chinese" }] }`,
   },
   "translation-sentence": {
     system: "You are a Chinese-English translation teacher. Return ONLY valid JSON.",
-    prompt: `Generate 5 Chinese sentences at ${DEFAULT_LEVEL} English level for translation practice. Return JSON: { "items": [{ "chinese": "...", "referenceTranslation": "...", "keyPoints": ["..."] }] }`,
+    prompt: `Generate 5 Chinese sentences at ${level} English level for translation practice. Return JSON: { "items": [{ "chinese": "...", "referenceTranslation": "...", "keyPoints": ["..."] }] }`,
   },
   "translation-paragraph": {
     system: "You are a Chinese-English translation teacher. Return ONLY valid JSON.",
-    prompt: `Generate a 3-5 sentence Chinese paragraph for translation practice at ${DEFAULT_LEVEL} level. Return JSON: { "chinese": "...", "referenceTranslation": "...", "keyPoints": ["..."] }`,
+    prompt: `Generate a 3-5 sentence Chinese paragraph for translation practice at ${level} level. Return JSON: { "chinese": "...", "referenceTranslation": "...", "keyPoints": ["..."] }`,
   },
   "translation-situational": {
     system: "You are a Chinese-English translation teacher. Return ONLY valid JSON.",
-    prompt: `Generate a situational Chinese-English translation task at ${DEFAULT_LEVEL} level (e.g. a short dialogue or real-world scenario). Return JSON: { "chinese": "...", "referenceTranslation": "...", "keyPoints": ["..."] }`,
+    prompt: `Generate a situational Chinese-English translation task at ${level} level (e.g. a short dialogue or real-world scenario). Return JSON: { "chinese": "...", "referenceTranslation": "...", "keyPoints": ["..."] }`,
   },
   "reading-article": {
     system: "You are an English teacher creating reading material. Return ONLY valid JSON.",
-    prompt: `Generate a 300-500 word English article at ${DEFAULT_LEVEL} level on a random topic. Include a title. Return JSON: { "title": "...", "content": "...", "comprehensionQuestions": [{ "question": "...", "type": "main-idea" }] }`,
+    prompt: `Generate a 300-500 word English article at ${level} level on a random topic. Include a title. Return JSON: { "title": "...", "content": "...", "comprehensionQuestions": [{ "question": "...", "type": "main-idea" }] }`,
   },
   "writing-prompt": {
     system: "You are an English writing teacher. Return ONLY valid JSON.",
-    prompt: `Generate a writing task at ${DEFAULT_LEVEL} level. Include the task type, prompt, target word count, and key phrases to practice. Return JSON: { "taskType": "email|essay|social|report", "prompt": "...", "targetWords": 150, "keyPhrases": ["..."], "scaffolding": "brief structure hint" }`,
+    prompt: `Generate a writing task at ${level} level. Include the task type, prompt, target word count, and key phrases to practice. Return JSON: { "taskType": "email|essay|social|report", "prompt": "...", "targetWords": 150, "keyPhrases": ["..."], "scaffolding": "brief structure hint" }`,
   },
+  };
+  return prompts[type];
 };
 
 interface GeneratedTask {
@@ -70,28 +82,16 @@ export const GET = async (req: Request): Promise<Response> => {
   }
 
   const today = new Date().toISOString().split("T")[0]; // YYYY-MM-DD
-  const level = DEFAULT_LEVEL;
 
-  const tasks: GeneratedTask[] = [];
-
-  for (const [type, { system, prompt }] of Object.entries(TASK_PROMPTS) as [
-    PoolTaskType,
-    { system: string; prompt: string },
-  ][]) {
+  // Server-side callers pass the zod schema straight to generateObject
+  // (Standard Schema interface) — no JSON Schema transport step needed here,
+  // unlike the client. recordCost() is client-only so isn't invoked.
+  const generateOne = async (
+    type: PoolTaskType,
+    level: string
+  ): Promise<GeneratedTask | null> => {
     try {
-      // Server-side callers pass the zod schema straight to generateObject
-      // (Standard Schema interface) — no JSON Schema transport step needed
-      // here, unlike the client (lib/task-pool-generate.ts), which must
-      // serialize the schema over `fetch` via toJsonSchema(). Sharing this
-      // exact schema with the live consumers (wired up in B2) is what makes
-      // cron-generated content match the shape the client actually expects —
-      // e.g. listening-comprehension now always includes `topic`, closing
-      // the drift where pool content silently failed client-side validation.
-      //
-      // This call is entirely server-side with no client involved, so
-      // recordCost() (localStorage-backed, client-only — see
-      // lib/cost-tracker.ts) cannot be invoked here: cron-generated content
-      // cost is not counted in the client cost dashboard.
+      const { system, prompt } = buildCronPrompt(type, level);
       const { object } = await generateObject({
         model: qualityModel,
         schema: poolTaskSchemas[type],
@@ -104,17 +104,34 @@ export const GET = async (req: Request): Promise<Response> => {
           ? { maxOutputTokens: MAX_OUTPUT_TOKENS[type] }
           : {}),
       });
-
-      tasks.push({
+      return {
         id: crypto.randomUUID(),
         type,
         difficulty: level,
         content: object as Record<string, unknown>,
-      });
+      };
     } catch (err) {
-      console.warn(`[cron] failed to generate ${type}`, err);
-      continue;
+      console.warn(`[cron] failed to generate ${type} @ ${level}`, err);
+      return null;
     }
+  };
+
+  // Build the type×level work list and run it in bounded-concurrency batches so
+  // 27 generations finish within maxDuration without bursting the provider.
+  const work: Array<[PoolTaskType, string]> = [];
+  for (const type of Object.keys(poolTaskSchemas) as PoolTaskType[]) {
+    for (const level of CRON_LEVELS) {
+      work.push([type, level]);
+    }
+  }
+  const BATCH = 9;
+  const tasks: GeneratedTask[] = [];
+  for (let i = 0; i < work.length; i += BATCH) {
+    const slice = work.slice(i, i + BATCH);
+    const results = await Promise.all(
+      slice.map(([type, level]) => generateOne(type, level))
+    );
+    for (const r of results) if (r) tasks.push(r);
   }
 
   const blob = await put(`tasks/${today}.json`, JSON.stringify(tasks), {
