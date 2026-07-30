@@ -179,6 +179,10 @@ export const createYouTubePlayer = (
       playInternal(startMs, endMs);
     },
     pause() {
+      // Drop any queued play() that hasn't been flushed by onReady yet —
+      // otherwise the player becoming ready later would auto-play, silently
+      // overriding this pause() call.
+      pendingPlay = null;
       player?.pauseVideo?.();
       clearPoll();
     },
@@ -207,6 +211,7 @@ export const createYouTubePlayer = (
       return () => stateCbs.delete(cb);
     },
     destroy() {
+      pendingPlay = null;
       clearPoll();
       stateCbs.clear();
       player?.destroy?.();
