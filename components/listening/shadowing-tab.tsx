@@ -20,7 +20,7 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 import { ErrorState } from "@/components/states/error-state";
 import { db } from "@/lib/db";
 import { dbHelpers } from "@/lib/db-helpers";
-import { completeTask } from "@/lib/task-pool";
+import { completeTask, getReusableTask } from "@/lib/task-pool";
 import { speak } from "@/lib/tts";
 import {
   startRecording,
@@ -239,7 +239,7 @@ export const ShadowingTab = ({ cefrLevel }: { cefrLevel: string }) => {
         // shape: topic/context/sentences). Guard at runtime before adopting.
         if (isShadowingData(poolTask.content)) {
           setData(poolTask.content);
-          await completeTask(poolTask.id);
+          await completeTask(poolTask.id, "listening-shadowing");
           setIsLoading(false);
           return;
         }
@@ -247,6 +247,21 @@ export const ShadowingTab = ({ cefrLevel }: { cefrLevel: string }) => {
         // row isn't re-fetched and rejected every visit, then fall through to
         // real-time generation.
         await completeTask(poolTask.id);
+      }
+    } catch {
+      // Fall through to real-time generation
+    }
+
+    // Alternating repetition (W3): no fresh pool item, so revive a previously-
+    // seen one rather than discarding it — same material resurfaces across
+    // sessions. Still falls through to real-time generation if none eligible.
+    try {
+      const reusable = await getReusableTask("listening-shadowing");
+      if (reusable && isShadowingData(reusable.content)) {
+        setData(reusable.content);
+        await completeTask(reusable.id, "listening-shadowing");
+        setIsLoading(false);
+        return;
       }
     } catch {
       // Fall through to real-time generation

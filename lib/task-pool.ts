@@ -1,5 +1,5 @@
 import { db } from "./db";
-import type { PoolTask } from "./types";
+import type { PoolTask, PoolTaskType } from "./types";
 import { formatDate, today } from "./date";
 
 const TASKS_PER_DAY = 6; // how many tasks per day
@@ -72,7 +72,50 @@ export const getPoolStatus = async (): Promise<{
   };
 };
 
-// Mark a task as completed
-export const completeTask = async (taskId: string): Promise<void> => {
-  await db.poolTasks.update(taskId, { completed: true });
+// Mark a task as consumed. Methodology (W3): a consumed task isn't discarded
+// — it records exposure so the same material can resurface across scenes
+// (alternating repetition) rather than being a one-shot. `completed` stays
+// true for compatibility with existing queries, but exposureCount/lastSeen*
+// let a reactivation pass revive low-exposure items when the pool runs dry.
+export const completeTask = async (
+  taskId: string,
+  seenIn?: string
+): Promise<void> => {
+  const task = await db.poolTasks.get(taskId);
+  if (!task) return;
+  await db.poolTasks.update(taskId, {
+    completed: true,
+    exposureCount: (task.exposureCount ?? 0) + 1,
+    lastSeenAt: new Date(),
+    lastSeenIn: seenIn ?? task.lastSeenIn,
+  });
+};
+
+// Alternating-repetition (methodology W3): when a task type has no fresh
+// incomplete items, revive a previously-seen one so the same material resurfaces
+// in a new session instead of being discarded. Picks the completed item with
+// the lowest exposureCount that hasn't been seen within `minIntervalMs`, and
+// reactivates it (completed=false). Returns the reactivated task or null when
+// nothing is eligible. Callers fall back to real-time generation on null.
+export const getReusableTask = async (
+  type: PoolTaskType,
+  minIntervalMs = 6 * 60 * 60 * 1000 // 6h: don't immediately redo what was just done
+): Promise<PoolTask | null> => {
+  const cutoff = new Date(Date.now() - minIntervalMs);
+  const candidates = await db.poolTasks
+    .where("type")
+    .equals(type)
+    .and((t) => t.completed && (!t.lastSeenAt || t.lastSeenAt < cutoff))
+    .toArray();
+  if (candidates.length === 0) return null;
+  // Lowest exposure first — spread repetitions across the corpus.
+  candidates.sort(
+    (a, b) => (a.exposureCount ?? 0) - (b.exposureCount ?? 0)
+  );
+  const chosen = candidates[0];
+  await db.poolTasks.update(chosen.id, {
+    completed: false,
+    assignedDate: today(),
+  });
+  return { ...chosen, completed: false, assignedDate: today() };
 };
