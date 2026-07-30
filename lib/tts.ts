@@ -16,11 +16,15 @@ let playbackToken = 0;
 // Fetches one chunk's audio from /api/tts. Returns null on any non-OK
 // response so the caller can decide whether to fall back (single speak) or
 // skip the chunk (streaming, where one bad sentence shouldn't abort the rest).
-const fetchTtsBlob = async (text: string, rate?: string): Promise<Blob | null> => {
+const fetchTtsBlob = async (
+  text: string,
+  rate?: string,
+  voice?: string
+): Promise<Blob | null> => {
   const res = await fetch("/api/tts", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ text, rate }),
+    body: JSON.stringify({ text, rate, voice }),
   });
   if (!res.ok) return null;
   return res.blob();
@@ -66,7 +70,8 @@ const playBlob = (blob: Blob, playbackRate?: number): Promise<void> => {
 export const speak = async (
   text: string,
   rate?: string,
-  playbackRate?: number
+  playbackRate?: number,
+  voice?: string
 ): Promise<void> => {
   // A fresh speak() interrupts any prior one; reuse stopSpeaking() (rather
   // than duplicating the pause + resolveCurrent settle logic here) so the
@@ -74,7 +79,7 @@ export const speak = async (
   stopSpeaking();
 
   try {
-    const blob = await fetchTtsBlob(text, rate);
+    const blob = await fetchTtsBlob(text, rate, voice);
     if (!blob) {
       await fallbackSpeak(text, rate);
       return;

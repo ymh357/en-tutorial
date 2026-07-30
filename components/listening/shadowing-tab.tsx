@@ -60,6 +60,14 @@ type SubtitleMode = "hidden" | "english" | "bilingual";
 // checked during active stages (listen/recall); imagine is the guided setup.
 const FOCUS_IDLE_MS = 20_000;
 
+// Edge-TTS voice options across accents (methodology mentions accent training).
+const VOICE_OPTIONS: ReadonlyArray<{ id: string; label: string }> = [
+  { id: "en-US-AriaNeural", label: "美式" },
+  { id: "en-GB-LibbyNeural", label: "英式" },
+  { id: "en-AU-NatashaNeural", label: "澳式" },
+  { id: "en-IN-NeerjaNeural", label: "印度" },
+];
+
 // Runtime shape of a shadowing set (mirrors listeningShadowingSchema).
 export interface ShadowingSentence {
   text: string;
@@ -118,6 +126,7 @@ export const ShadowingTab = ({ cefrLevel }: { cefrLevel: string }) => {
   const [stage, setStage] = useState<Stage>("imagine");
   const [subtitleMode, setSubtitleMode] = useState<SubtitleMode>("english");
   const [playbackRate, setPlaybackRate] = useState<number>(1);
+  const [voice, setVoice] = useState<string>("en-US-AriaNeural");
   const [listensCount, setListensCount] = useState<number>(0);
   const [subjectiveComprehension, setSubjectiveComprehension] = useState<number | null>(null);
   const [chunks, setChunks] = useState<SentenceChunk[] | null>(null);
@@ -491,7 +500,7 @@ export const ShadowingTab = ({ cefrLevel }: { cefrLevel: string }) => {
                     onClick={() => {
                       markActive();
                       setListensCount((c) => c + 1);
-                      void speak(currentSentence, undefined, playbackRate);
+                      void speak(currentSentence, undefined, playbackRate, voice);
                     }}
                   >
                     <Play className="h-4 w-4" />
@@ -517,6 +526,25 @@ export const ShadowingTab = ({ cefrLevel }: { cefrLevel: string }) => {
                   <p className="text-xs text-muted-foreground text-center">
                     听不清就减速反复听；听清后可加速到 1.5x/2x 增加强度。
                   </p>
+
+                  {/* Accent selection (methodology: accent training). */}
+                  <div className="flex flex-wrap gap-2 justify-center items-center">
+                    <span className="text-xs text-muted-foreground">口音：</span>
+                    {VOICE_OPTIONS.map((v) => (
+                      <Button
+                        key={v.id}
+                        size="sm"
+                        variant={voice === v.id ? "default" : "outline"}
+                        className="min-h-[32px]"
+                        onClick={() => {
+                          markActive();
+                          setVoice(v.id);
+                        }}
+                      >
+                        {v.label}
+                      </Button>
+                    ))}
+                  </div>
 
                   {/* Didn't catch it? Break the sentence into phrases
                       (methodology: divide-and-conquer for long sentences). */}
