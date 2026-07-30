@@ -98,8 +98,7 @@ W4-T1b：reader ImportUrlTab 加 Topic 选择，URL 抓取的真实文章同步�
 
 **计划文件**：`docs/superpowers/plans/2026-07-30-direct-listening-methodology.md` 的 W4-T2 节。
 
-**外部依赖需先确认**（新 session 第一件事）：
-- `@vercel/blob@2` 当前仅服务端 `put`（cron 用）。**客户端直传**音频需 `handleUpload` 路由或公开 upload token——这是新配置点。**先验证可行性**：查 `@vercel/blob` 文档/client upload 方式，确认 Vercel plan 允许音频体积。Vercel function 请求体 **4.5MB 上限**，所以音频**不经 function body**，必须客户端直传 blob。
+**外部依赖确认（已完成，2026-07-30）**：`@vercel/blob@2` 客户端直传**可行**。官方原生支持：服务端 `handleUpload({onBeforeGenerateToken})` 生成 token + 客户端 `upload(pathname, file, {access:"public", handleUploadUrl, multipart:true})`。音频走 `multipart:true` 最高 5TB、绕过 Vercel 4.5MB body 限制（不走 function body）。需新增一个 `handleUpload` 路由 + Vercel 项目配 `BLOB_READ_WRITE_TOKEN`（cron `put` 已用，应已配；`.env.local` 无此键，本地不跑 blob）。未验证项：multipart 大文件生产连通性需部署后实测，风险低。**W4-T2 可按此路线实现。**
 
 **实现要点**：
 - 客户端直传音频到 blob，存 url 到 `Material.sourceUrl`，`mediaType:"audio"`。
@@ -111,16 +110,27 @@ W4-T1b：reader ImportUrlTab 加 Topic 选择，URL 抓取的真实文章同步�
 
 **计划文件**：W4-T3 节。
 
-**外部依赖需先确认**（真实风险点）：
-- 抓取路线：**服务端纯 HTTP 抓字幕文本，不下载视频**。流程：解析 watch HTML 拿 `captionTracks` baseUrl → fetch `timedtext?fmt=json3` → 落 `Material.sentences`。前端 YouTube iframe 嵌入播放。
-- **风险**：本会话开头用 **curl 本机验证过**可从 watch HTML 拿带签名字幕 baseUrl。但 **curl 能过 ≠ Vercel serverless `fetch` 能过**——YouTube 可能反爬服务端 fetch（403/验证）。**新 session 第一件事：写一个最小 `app/api/youtube-captions/route.ts` 实测在 Vercel 环境能否抓到**，再决定路线（若被拦，退而用 YouTube Data API 或 oEmbed，或客户端抓）。字幕 baseUrl 带 `expire` 字段（签名时效），不能缓存签名、要实时解析。
-- Vercel serverless 限制（已查清）：标准包 250MB、Large Functions beta 5GB（可带二进制但别扭）、Hobby 超时 300s、请求体 4.5MB、可 spawn child process。**结论：yt-dlp/ffmpeg 在 serverless 不可行**，纯 HTTP 抓字幕是正确路线。
+**外部依赖确认（已完成，2026-07-30，路线推翻重定）**：
+- 旧假设"服务端纯 HTTP 抓字幕 / curl 本机能过"**已被实测推翻**。本会话写了最小 `app/api/youtube-captions/route.ts`（裸 fetch watch HTML → captionTracks baseUrl → timedtext json3）并坐实**走不通**：
+  - **同进程同 IP 对照**：Route A（裸 fetch = serverless route 方法）timedtext 返回 `status:200, content-length:0` **空 body**；Route B（本地 yt-dlp 子进程）拿到 `dQw4w9WgXcQ` 真实非空字幕（104 events / 32 KiB）。**根因是 fetch 方法缺 POT (proof-of-origin token)，不是部署 IP**——换 IP/部署 Vercel 不会更好。
+  - 其它自动路线逐条实测全死：youtubei player API（ANDROID）400；youtubei.js `getTranscript`（WEB/ANDROID/IOS/TV_EMBEDDED）全 400；公共 Invidious/Piped 实例 HTML 错误页/502。
+  - **唯一拿到真实字幕的是本地 yt-dlp**（`--skip-download --sub-format json3`，<1s，不需 ffmpeg/impersonate）。
+- **新路线 A（已与用户确认）**：独立 **Vercel Python serverless function** 跑 yt-dlp 抓字幕。yt-dlp 最小 pip 安装仅 25MB（纯 Python，brotli/websockets/mutagen 非硬依赖、未装；import 不需），远低于 250MB；`--skip-download` 不需 ffmpeg、不下载视频，超时/体积/下载大小的担忧均不适用。
+- **Vercel Python+Next 同项目**：经 [Services](https://vercel.com/docs/services) 机制共存。**裸 `api/*.py` 不生效**（被 Next 框架吞，不进路由表）；`vercel.json` 的 `functions.runtime:"@vercel/python"` 已弃用（报错）。正确形态：`vercel.json` 用 `services` key 声明 `web`(nextjs, root `.`)+`captions`(python, root `api/`, entrypoint `youtube_captions:app`)，配 top-level `rewrites` 把 `/api/youtube_captions` → captions service、`/(.*)` → web。Python service 须用 **ASGI app**（`async def app(scope,receive,send)`），非 `BaseHTTPRequestHandler`。
+- **命门 ①（runtime/Services 可用性 + 经济成本）已验证通过**：Services 在当前 plan 可用（无 plan/permission 报错）；compute 按 Vercel Functions 标准计费（Hobby 免费额度：Active CPU 4h / mem 360GB-hr / invocation 1M 含，无 baseline/per-service 费）；service-to-service binding 才计 service request，本场景单 service 接公网不触发。Python 3.12 venv + yt-dlp(25MB)+certifi 构建成功，build cache 137MB < 250MB。
+- **命门 ②（Vercel 出口 IP 429 死结）已验证通过**（2026-07-30 实部署实测）：preview 部署（iad1 华盛顿出口 IP）实调 `/api/youtube_captions?v=dQw4w9WgXcQ` 返回非空字幕——`languageCode:en, sentenceCount:60`，首句 `♪ We're no strangers to love ♪`@18640ms。**Vercel 共享 IP 未被 YouTube 429 拦截**。yt-dlp 内嵌 POT 处理是关键。
+- **部署适配坑（已修）**：Vercel serverless cwd 只读，yt-dlp `outtmpl` 必须指向 `/tmp`（`/tmp/yt-caption-%(title)s.%(ext)s`），否则 `[Errno 30] Read-only file system`。
+- **Deployment Protection 注意**：本项目开了 SSO Protection `all_except_custom_domains`，preview URL 需 SSO 登录才能访问 → 纯客户端前端在 preview 环境调不到 function（302 到 SSO）。**生产 custom domain 豁免**，故 W4-T3 字幕抓取仅在生产域名工作；preview 验证须临时关 protection（vercel API `PATCH /v9/projects/{id}` `{"ssoProtection":null}`，验完恢复）。原值已备份。
+- 字幕 baseUrl 带 `expire`，但 yt-dlp 内嵌 POT 处理，**实时解析**即可，不缓存签名。
 
 **实现要点**：
-- 新建 `app/api/youtube-captions/route.ts`：接受 videoId，返回字幕数组。注意签名 expire + 反爬。
+- 新建 **Python** function `api/youtube_captions.py`（ASGI app，非 TS route）：`?v=VIDEOID` → `yt_dlp.YoutubeDL` Python API（`--write-auto-subs --sub-langs en --skip-download --sub-format json3`，outtmpl `/tmp/...`）→ 解析 json3 → 返回 `{videoId, languageCode, sentences:[{text,startMs,endMs}]}`。配 `requirements.txt`（`yt-dlp`+`certifi`，后者 macOS python.org Python 缺 root cert 必需）。经 Vercel Services 机制与 Next 同项目部署。**Step 0 spike 已完成并验证通过（命门 ①② 均过）。**
+- 统一字幕解析库 `lib/subtitle-parse.ts`：`parseJson3/parseSrt/parseVtt → MaterialSentence[]`。Python function 返原始 json3，TS 库归一化；**W4-T2 音频上传的 srt/vtt 也复用此库**（两任务共享）。
+- 旧 `app/api/youtube-captions/route.ts`（TS 裸 fetch，已证死）→ **删除**，json3 解析逻辑迁入 `lib/subtitle-parse.ts`。
 - 前端 YouTube iframe（`<iframe src="https://www.youtube.com/embed/VIDEOID">`）按主题（房车旅行/隐士生活等，方法论原话）。
 - 字幕即 listening 素材：复用 W1 三招流程（imagine/listen/recall）。但 video Material 的"声音"来自 iframe 视频，非 Edge-TTS——`speak` 不适用，需视频播放控制。
 - `mediaType:"video"`，`sourceUrl=watch URL`。
+- **分阶段**：Step 0 spike（最小 Python function 部署验证命门）✅ 完成；Step 1（`lib/subtitle-parse.ts` + 删旧 route）✅ 完成；Step 2（前端 YouTube 导入 UI + iframe 播放，复用 W4-T2 媒体播放器）⏳ 待做。
 
 ## 其它遗留（非阻塞，可顺手）
 
@@ -134,5 +144,5 @@ W4-T1b：reader ImportUrlTab 加 Topic 选择，URL 抓取的真实文章同步�
 1. 读本文件 + 计划文件。
 2. `git log --oneline -30` 确认状态。
 3. **W4-T2**：先验证 `@vercel/blob` 客户端直传可行性（查文档/写最小实测）→ 实现 → `tsc`+`eslint` → commit → 派 Code Reviewer 审查 → 修复全部。
-4. **W4-T3**：先写最小 `youtube-captions` route 实测 Vercel fetch 能否抓字幕 → 据结果定路线 → 实现 → 审查 → 修复。
+4. **W4-T3**：路线已重定为 Python yt-dlp function（纯 HTTP 实测全死，见上）。**第一件事 spike**：写最小 `api/youtube_captions.py`+`requirements.txt`，`vercel` CLI preview 部署，实调 `?v=` 验证 Vercel IP 下非空（命门：429/runtime 权限）。非空→进 Step 1/2；被拦→回退取舍（粘贴/缩水），不沉没成本。
 5. 全部完成后，可对 W4 整体跑一轮审查。

@@ -4,5 +4,21 @@
       "path": "/api/cron/generate-tasks",
       "schedule": "0 5 * * *"
     }
+  ],
+  "services": {
+    "web": {
+      "root": ".",
+      "framework": "nextjs"
+    },
+    "captions": {
+      "root": "api/",
+      "runtime": "python",
+      "entrypoint": "youtube_captions:app"
+    }
+  },
+  "rewrites": [
+    { "source": "/api/youtube_captions", "destination": { "service": "captions" } },
+    { "source": "/api/(.*)", "destination": { "service": "web" } },
+    { "source": "/(.*)", "destination": { "service": "web" } }
   ]
 }

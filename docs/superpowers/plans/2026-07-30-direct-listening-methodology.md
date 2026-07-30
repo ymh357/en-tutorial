@@ -223,11 +223,12 @@ Step 0: `app/listening/page.tsx` 1400 行,先把 `ShadowingTab`(`:693-1026`,334 
 - [ ] 素材标 `mediaType:"audio"`。
 
 ### W4-T3 视频原版(4c)
-- [ ] 服务端纯 HTTP 抓 YouTube 字幕文本:解析 watch HTML 拿 `captionTracks` baseUrl(本会话已 curl 验证可行)→ fetch `timedtext` json3 → 落 `Material.sentences`。**不下载视频文件**(Vercel serverless 部署约束:大文件/超时风险)。
+- [ ] **路线 A（2026-07-30 重定）**：独立 **Vercel Python function** `api/youtube_captions.py` 跑 yt-dlp 抓字幕（`--write-auto-subs --sub-langs en --skip-download --sub-format json3`）。配 `requirements.txt`（仅 `yt-dlp`，25MB）。经 Vercel Services 与 Next 同项目部署。**纯 HTTP 抓字幕已实测全死**（POT：同 IP 下裸 fetch 空 body、yt-dlp 非空，根因是方法非 IP），见 handoff。
+- [ ] **Step 0 spike**：最小 Python function + vercel CLI preview 部署，实调 `?v=dQw4w9WgXcQ` 验证命门（Vercel IP 429 + Python runtime 权限）。非空才进后续。
+- [ ] 统一字幕解析库 `lib/subtitle-parse.ts`（`parseJson3/parseSrt/parseVtt→MaterialSentence[]`）；Python function 返 json3，TS 库归一化；W4-T2 音频字幕也复用。旧 `app/api/youtube-captions/route.ts`（TS 裸 fetch，已死）删除，解析逻辑迁入此库。
 - [ ] 前端 YouTube iframe 嵌入播放(按主题:房车旅行/隐士生活等,方法论原话)。
-- [ ] 字幕即 listening 素材:边看视频边按句精听(W1 三招流程复用)。
+- [ ] 字幕即 listening 素材:边看视频边按句精听(W1 三招流程复用)。视频声音来自 iframe,非 Edge-TTS,`speak` 不适用。
 - [ ] 素材标 `mediaType:"video"`、`sourceUrl=watch URL`。
-- [ ] 服务端 `app/api/youtube-captions/route.ts`(新):接受 videoId,返回字幕数组。注意 YouTube 反爬/签名时效(本会话验证签名 URL 有 `expire` 字段)。
 
 **W4 验证:** 文本真实素材可朗读精听;音频上传+字幕对齐播放;YouTube 字幕可服务端抓取并配 iframe 播放;主题兴趣选择+98% 门槛进度可见。
 
@@ -239,7 +240,7 @@ Step 0: `app/listening/page.tsx` 1400 行,先把 `ShadowingTab`(`:693-1026`,334 
 2. **prompt 三处硬编码**:每个 schema 改动同步 client(`task-pool-generate.ts`)/cron(`generate-tasks/route.ts`)/`poolTaskSchemas`。
 3. **顶层数组 schema**:W1-T2 改 object 形态后消解;勿再新增裸 `z.array(z.string())`。
 4. **Dexie 索引只能标量**:W0-T3 `topic` 入索引串,`exposureCount` 等非索引;`content:Record<string,unknown>` 不可索引。
-5. **cron 签名时效**:W4-T3 YouTube 字幕 baseUrl 带 `expire`,服务端抓取要实时解析而非缓存签名。
+5. **W4-T3 YouTube 字幕 POT**:裸 fetch timedtext 因缺 POT 返回空 body(同 IP 对照坐实);路线改 Python yt-dlp Vercel Service,yt-dlp 内嵌 POT 处理。**命门 ①(runtime/Services/经济成本)②(Vercel IP 429)均已部署实测通过**(2026-07-30:实调返 60 real sentences)。坑:serverless cwd 只读→outtmpl 指 `/tmp`;preview 受 SSO Protection→仅生产域名可调。
 6. **Vercel 4.5MB body 限**:W4-T2 音频直传 blob,不经 function。
 
 ## 执行顺序
@@ -250,6 +251,6 @@ W0 → W1(主战场) ‖ W2(可与 W1 并行) → W3 → W4(4a→4b→4c)。每�
 
 - **W0–W3 全部完成**（含三轮 Code Reviewer 审查 + 全部发现修复），提交见上方"已完成提交序列"。
 - **W4-T1（4a 文本原版）完成**：onboarding 兴趣选择 + Material helpers + reader URL 导入入 Material 表。
-- **W4-T2（音频）/ W4-T3（YouTube）待续**：见 `docs/handoff-w4-continuation.md`（新 session 交接文档，含外部依赖预确认清单）。
+- **W4-T2（音频）/ W4-T3（YouTube）待续**：W4-T2 已确认 `@vercel/blob` 客户端直传可行（multipart 绕 4.5MB）。W4-T3 纯 HTTP 抓字幕实测全死（POT），路线重定为 Python yt-dlp function，首步 spike 验证命门。详见 `docs/handoff-w4-continuation.md`。
 
 三轮审查的 BLOCKER 教训已记入 handoff 文档：W1 chunk race（异步结果需 token 守卫）、W2 schema/类型/prompt 四处不同步（zod additionalProperties 静默禁字段）、W3 mastery 无写入入口 + UTC/local 日期错位。**后续每个 phase 仍走"实现→审查→修复全部"闭环。**
