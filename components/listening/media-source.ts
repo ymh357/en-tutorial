@@ -17,6 +17,8 @@ interface YTPlayerEvents {
 
 interface YTPlayerOptions {
   videoId: string;
+  width?: string | number;
+  height?: string | number;
   events?: YTPlayerEvents;
 }
 
@@ -144,10 +146,18 @@ export const createYouTubePlayer = (
 
   // Player is constructed async after the API loads. Calls before ready are
   // queued by YT.Player itself; we guard play/seek with a ready check.
+  // `destroyed` guards against the React StrictMode double-invoke case: if
+  // destroy() runs before this .then() resolves (mount→unmount within the
+  // API-load window), we must not construct a player nobody will ever clean
+  // up — it would find the *next* mount's "yt-player" element (or a stale
+  // leftover iframe) and hold onto it forever.
+  let destroyed = false;
   void loadIframeApi().then(() => {
-    if (!window.YT) return;
+    if (!window.YT || destroyed) return;
     player = new window.YT.Player(opts.containerId, {
       videoId: opts.videoId,
+      width: "100%",
+      height: "100%",
       events: {
         onStateChange: (e) => {
           const mapped = mapState(e.data);
@@ -211,6 +221,7 @@ export const createYouTubePlayer = (
       return () => stateCbs.delete(cb);
     },
     destroy() {
+      destroyed = true;
       pendingPlay = null;
       clearPoll();
       stateCbs.clear();

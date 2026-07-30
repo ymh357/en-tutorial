@@ -373,6 +373,23 @@ export const ShadowingTab = ({
   const currentTranslation = data?.sentences[index]?.translation ?? "";
   const currentImageryHint = data?.sentences[index]?.imageryHint ?? "";
 
+  // Video mode: play sentence `i`'s audio range. parseJson3 emits
+  // audioEndMs: undefined whenever a json3 event is missing dDurationMs or
+  // carries dDurationMs: 0 (both occur in real auto-caption tracks) — so we
+  // can't just no-op when it's absent, or the learner hits a silent dead end.
+  // Fall back to the next sentence's start (capped at 5s ahead) so the clip
+  // always has a bounded end.
+  const playSentence = (i: number): void => {
+    const s = material?.sentences?.[i];
+    if (s?.audioStartMs == null) return;
+    const nextStart = material?.sentences?.[i + 1]?.audioStartMs;
+    const endMs =
+      s.audioEndMs ??
+      Math.min(nextStart ?? s.audioStartMs + 5000, s.audioStartMs + 15000);
+    setListensCount((c) => c + 1);
+    ytSourceRef.current?.play(s.audioStartMs, endMs);
+  };
+
   const startAttempt = async (): Promise<void> => {
     if (startingRef.current || recStatus !== "idle") return;
     startingRef.current = true;
@@ -594,20 +611,24 @@ export const ShadowingTab = ({
               )}
 
               {isVideo && (
-                // Always mounted (not just during "listen") so the div exists
-                // in the DOM before the player-construction effect (which
-                // runs once on mount, independent of `stage`) looks it up by
-                // id — YT.Player throws if the container isn't there yet.
-                // Hidden outside the listen stage since there's nothing
-                // useful to show while imagining/recalling.
+                // Always mounted (not just during "listen") so the inner div
+                // exists in the DOM before the player-construction effect
+                // (which runs once on mount, independent of `stage`) looks it
+                // up by id — YT.Player throws if the container isn't there
+                // yet. YT.Player REPLACES the element it's given (does not
+                // append into it), so the stage-driven className/visibility
+                // must live on this outer wrapper, which React keeps — never
+                // on #yt-player itself, which becomes a detached node the
+                // moment the player constructs.
                 <div
-                  id="yt-player"
                   className={
                     stage === "listen"
                       ? "aspect-video w-full rounded-md overflow-hidden"
                       : "hidden"
                   }
-                />
+                >
+                  <div id="yt-player" />
+                </div>
               )}
 
               {stage === "imagine" && (
@@ -664,13 +685,10 @@ export const ShadowingTab = ({
                     className="w-full min-h-[44px]"
                     onClick={() => {
                       markActive();
-                      setListensCount((c) => c + 1);
                       if (isVideo) {
-                        const s = material?.sentences?.[index];
-                        if (s?.audioStartMs != null && s?.audioEndMs != null) {
-                          ytSourceRef.current?.play(s.audioStartMs, s.audioEndMs);
-                        }
+                        playSentence(index);
                       } else {
+                        setListensCount((c) => c + 1);
                         void speak(currentSentence, undefined, playbackRate, voice);
                       }
                     }}
@@ -782,7 +800,7 @@ export const ShadowingTab = ({
                       字幕已隐藏——纯靠声音跟读。
                     </p>
                   )}
-                  {currentTranslation === "" && (
+                  {isVideo && currentTranslation === "" && (
                     <p className="text-xs text-muted-foreground text-center">
                       该视频素材无中文译文。
                     </p>
@@ -790,9 +808,11 @@ export const ShadowingTab = ({
 
                   {/* Subtitle mode switcher. Video materials have no
                       translation (only real captions), so "bilingual" is
-                      dropped — only english/hidden remain. */}
+                      dropped — only english/hidden remain. Text mode always
+                      keeps "bilingual" even if the LLM happens to return an
+                      empty translation (pre-existing behavior, out of scope). */}
                   <div className="flex flex-wrap gap-2 justify-center">
-                    {(currentTranslation === ""
+                    {(isVideo && currentTranslation === ""
                       ? (["english", "hidden"] as const)
                       : (["english", "bilingual", "hidden"] as const)
                     ).map((m) => (
@@ -919,10 +939,7 @@ export const ShadowingTab = ({
                 onClick={() => {
                   markActive();
                   if (isVideo) {
-                    const s = material?.sentences?.[index];
-                    if (s?.audioStartMs != null && s?.audioEndMs != null) {
-                      ytSourceRef.current?.play(s.audioStartMs, s.audioEndMs);
-                    }
+                    playSentence(index);
                   } else {
                     void speak(currentSentence, undefined, undefined, voice);
                   }
