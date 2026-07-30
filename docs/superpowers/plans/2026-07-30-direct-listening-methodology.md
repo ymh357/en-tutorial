@@ -245,3 +245,11 @@ Step 0: `app/listening/page.tsx` 1400 行,先把 `ShadowingTab`(`:693-1026`,334 
 ## 执行顺序
 
 W0 → W1(主战场) ‖ W2(可与 W1 并行) → W3 → W4(4a→4b→4c)。每阶段独立可交付、独立验证、独立提交。
+
+## 进度（截至 2026-07-30）
+
+- **W0–W3 全部完成**（含三轮 Code Reviewer 审查 + 全部发现修复），提交见上方"已完成提交序列"。
+- **W4-T1（4a 文本原版）完成**：onboarding 兴趣选择 + Material helpers + reader URL 导入入 Material 表。
+- **W4-T2（音频）/ W4-T3（YouTube）待续**：见 `docs/handoff-w4-continuation.md`（新 session 交接文档，含外部依赖预确认清单）。
+
+三轮审查的 BLOCKER 教训已记入 handoff 文档：W1 chunk race（异步结果需 token 守卫）、W2 schema/类型/prompt 四处不同步（zod additionalProperties 静默禁字段）、W3 mastery 无写入入口 + UTC/local 日期错位。**后续每个 phase 仍走"实现→审查→修复全部"闭环。**
