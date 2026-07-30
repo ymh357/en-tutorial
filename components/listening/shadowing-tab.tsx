@@ -56,6 +56,10 @@ const STAGE_ORDER: readonly Stage[] = ["imagine", "listen", "recall"];
 // from sound alone.
 type SubtitleMode = "hidden" | "english" | "bilingual";
 
+// Idle window before a focus nudge fires (methodology: 100% attention). Only
+// checked during active stages (listen/recall); imagine is the guided setup.
+const FOCUS_IDLE_MS = 20_000;
+
 // Runtime shape of a shadowing set (mirrors listeningShadowingSchema).
 export interface ShadowingSentence {
   text: string;
@@ -118,6 +122,17 @@ export const ShadowingTab = ({ cefrLevel }: { cefrLevel: string }) => {
   const [subjectiveComprehension, setSubjectiveComprehension] = useState<number | null>(null);
   const [chunks, setChunks] = useState<SentenceChunk[] | null>(null);
   const [isChunking, setIsChunking] = useState(false);
+  // Focus/attention: methodology demands 100% focus. Track the last meaningful
+  // interaction; if the learner goes idle past FOCUS_IDLE_MS during an active
+  // stage, show a nudge to pull attention back. Counting resets (re-engagements
+  // after a nudge) is an observable focus signal.
+  const [showFocusNudge, setShowFocusNudge] = useState(false);
+  const [focusResets, setFocusResets] = useState(0);
+  const lastActiveRef = useRef<number>(0);
+  const markActive = (): void => {
+    lastActiveRef.current = Date.now();
+    setShowFocusNudge(false);
+  };
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [recStatus, setRecStatus] = useState<RecStatus>("idle");
@@ -155,6 +170,24 @@ export const ShadowingTab = ({ cefrLevel }: { cefrLevel: string }) => {
     };
   }, []);
 
+  // Focus watchdog: during listen/recall, if no meaningful interaction happens
+  // for FOCUS_IDLE_MS, surface a nudge. markActive() (wired to play / stage
+  // advance / record) resets the window and clears the nudge. imagine is
+  // excluded — it's the guided picture-forming step, not a sustained-attention
+  // task. The effect only starts/stops a timer and writes a ref (no synchronous
+  // setState in the effect body); setState happens in the interval callback
+  // (conditional, true-direction only).
+  useEffect(() => {
+    if (stage === "imagine") return;
+    lastActiveRef.current = Date.now();
+    const timer = setInterval(() => {
+      if (Date.now() - lastActiveRef.current >= FOCUS_IDLE_MS) {
+        setShowFocusNudge(true);
+      }
+    }, 2000);
+    return () => clearInterval(timer);
+  }, [stage, index]);
+
   const generateSentences = async (): Promise<void> => {
     setIsLoading(true);
     setError(null);
@@ -167,6 +200,7 @@ export const ShadowingTab = ({ cefrLevel }: { cefrLevel: string }) => {
     setTranscript(null);
     setResult(null);
     setApproximate(false);
+    setShowFocusNudge(false);
 
     // Try the pre-generated pool first (cron/Blob-backed), matching the other
     // listening tabs — a pool hit means no live LLM wait.
@@ -342,6 +376,7 @@ export const ShadowingTab = ({ cefrLevel }: { cefrLevel: string }) => {
     setListensCount(0);
     setSubjectiveComprehension(null);
     setChunks(null);
+    setShowFocusNudge(false);
     if (data && index + 1 < data.sentences.length) {
       setIndex(index + 1);
     } else {
@@ -402,6 +437,24 @@ export const ShadowingTab = ({ cefrLevel }: { cefrLevel: string }) => {
                 ))}
               </div>
 
+              {showFocusNudge && (
+                <Alert>
+                  <AlertDescription className="flex items-center justify-between gap-2">
+                    <span>走神了？把注意力拉回到声音上——练习需要 100% 专注。</span>
+                    <Button
+                      size="sm"
+                      className="min-h-[32px] shrink-0"
+                      onClick={() => {
+                        setFocusResets((n) => n + 1);
+                        markActive();
+                      }}
+                    >
+                      我回来了
+                    </Button>
+                  </AlertDescription>
+                </Alert>
+              )}
+
               {stage === "imagine" && (
                 <div className="space-y-3 py-1">
                   <p className="text-xs uppercase tracking-wide text-muted-foreground text-center">
@@ -419,7 +472,10 @@ export const ShadowingTab = ({ cefrLevel }: { cefrLevel: string }) => {
                   <Button
                     size="lg"
                     className="w-full min-h-[44px]"
-                    onClick={() => setStage("listen")}
+                    onClick={() => {
+                      markActive();
+                      setStage("listen");
+                    }}
                   >
                     我已想好画面
                     <ArrowRight className="h-4 w-4 ml-2" />
@@ -433,6 +489,7 @@ export const ShadowingTab = ({ cefrLevel }: { cefrLevel: string }) => {
                     size="lg"
                     className="w-full min-h-[44px]"
                     onClick={() => {
+                      markActive();
                       setListensCount((c) => c + 1);
                       void speak(currentSentence, undefined, playbackRate);
                     }}
@@ -492,6 +549,7 @@ export const ShadowingTab = ({ cefrLevel }: { cefrLevel: string }) => {
                     variant="outline"
                     className="w-full min-h-[44px]"
                     onClick={() => {
+                      markActive();
                       setSubtitleMode("english");
                       setStage("recall");
                     }}
@@ -560,9 +618,10 @@ export const ShadowingTab = ({ cefrLevel }: { cefrLevel: string }) => {
                     size="lg"
                     variant={recStatus === "recording" ? "destructive" : "default"}
                     className="w-full min-h-[44px]"
-                    onClick={() =>
-                      recStatus === "recording" ? void stopAttempt() : void startAttempt()
-                    }
+                    onClick={() => {
+                      markActive();
+                      recStatus === "recording" ? void stopAttempt() : void startAttempt();
+                    }}
                     disabled={!speechSupported || recStatus === "transcribing"}
                   >
                     {recStatus === "recording" ? (
