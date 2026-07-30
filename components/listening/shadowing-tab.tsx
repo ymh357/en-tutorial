@@ -6,7 +6,7 @@
 // land in later W1 tasks.
 
 import { useEffect, useRef, useState } from "react";
-import { ArrowRight, Loader2, Mic, Play, Square, Turtle } from "lucide-react";
+import { ArrowRight, Loader2, Mic, Play, Square } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -91,6 +91,7 @@ export const ShadowingTab = ({ cefrLevel }: { cefrLevel: string }) => {
   const [index, setIndex] = useState(0);
   const [stage, setStage] = useState<Stage>("imagine");
   const [subtitleMode, setSubtitleMode] = useState<SubtitleMode>("english");
+  const [playbackRate, setPlaybackRate] = useState<number>(1);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [recStatus, setRecStatus] = useState<RecStatus>("idle");
@@ -356,27 +357,33 @@ export const ShadowingTab = ({ cefrLevel }: { cefrLevel: string }) => {
 
               {stage === "listen" && (
                 <div className="space-y-3">
+                  <Button
+                    size="lg"
+                    className="w-full min-h-[44px]"
+                    onClick={() => void speak(currentSentence, undefined, playbackRate)}
+                  >
+                    <Play className="h-4 w-4" />
+                    播放（{playbackRate}x）
+                  </Button>
+
+                  {/* Variable speed: slow down to catch the sound, then ramp up
+                      for overload training (methodology). Client-side playbackRate
+                      reuses the cached blob — no extra network round-trip. */}
                   <div className="flex flex-wrap gap-2 justify-center">
-                    <Button
-                      size="lg"
-                      className="min-h-[44px] flex-1 sm:flex-none"
-                      onClick={() => void speak(currentSentence)}
-                    >
-                      <Play className="h-4 w-4" />
-                      Normal Speed
-                    </Button>
-                    <Button
-                      size="lg"
-                      variant="secondary"
-                      className="min-h-[44px] flex-1 sm:flex-none"
-                      onClick={() => void speak(currentSentence, "-40%")}
-                    >
-                      <Turtle className="h-4 w-4" />
-                      Slow Speed
-                    </Button>
+                    {[0.5, 0.75, 1, 1.25, 1.5, 2].map((r) => (
+                      <Button
+                        key={r}
+                        size="sm"
+                        variant={playbackRate === r ? "default" : "outline"}
+                        className="min-h-[36px]"
+                        onClick={() => setPlaybackRate(r)}
+                      >
+                        {r}x
+                      </Button>
+                    ))}
                   </div>
                   <p className="text-xs text-muted-foreground text-center">
-                    反复听，直到声音清晰——英文文本先不揭示。
+                    听不清就减速反复听；听清后可加速到 1.5x/2x 增加强度。
                   </p>
                   <Button
                     size="lg"

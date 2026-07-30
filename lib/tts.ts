@@ -34,9 +34,16 @@ const fetchTtsBlob = async (text: string, rate?: string): Promise<Blob | null> =
 // Sets module-level currentAudio/resolveCurrent, so streaming callers MUST
 // verify token ownership (token === playbackToken) immediately before each
 // call -- otherwise a stale loop could clobber a newer one's currentAudio.
-const playBlob = (blob: Blob): Promise<void> => {
+const playBlob = (blob: Blob, playbackRate?: number): Promise<void> => {
   const url = URL.createObjectURL(blob);
   const audio = new Audio(url);
+  // Client-side speed control (0.5–2x). Independent of the server-side Edge-TTS
+  // `rate` param: the same fetched blob is reused across speed changes, so this
+  // costs no extra network round-trip (methodology: slow down to catch the
+  // sound, then ramp to 1.5x/2x for overload training).
+  if (playbackRate !== undefined) {
+    audio.playbackRate = Math.min(2, Math.max(0.5, playbackRate));
+  }
   currentAudio = audio;
   return new Promise<void>((resolve, reject) => {
     resolveCurrent = () => {
@@ -56,7 +63,11 @@ const playBlob = (blob: Blob): Promise<void> => {
   });
 };
 
-export const speak = async (text: string, rate?: string): Promise<void> => {
+export const speak = async (
+  text: string,
+  rate?: string,
+  playbackRate?: number
+): Promise<void> => {
   // A fresh speak() interrupts any prior one; reuse stopSpeaking() (rather
   // than duplicating the pause + resolveCurrent settle logic here) so the
   // interrupted call settles exactly the same way an explicit stop would.
@@ -68,7 +79,7 @@ export const speak = async (text: string, rate?: string): Promise<void> => {
       await fallbackSpeak(text, rate);
       return;
     }
-    await playBlob(blob);
+    await playBlob(blob, playbackRate);
   } catch {
     await fallbackSpeak(text, rate);
   }
