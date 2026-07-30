@@ -78,6 +78,21 @@ export const conversationReviewSchema = z.object({
 // `generateText` path (no `schema` in the /api/review request body).
 export const readerSentenceAnalysisSchema = z.string();
 
+// Progressive phrase chunking for a long sentence the learner can't parse at
+// once (methodology: divide-and-conquer). Each chunk is a short phrase with its
+// meaning and grammatical role, so the sentence can be understood piece by
+// piece rather than as one opaque blob. Used by the listening "didn't catch it"
+// branch (W1-T7); reader may adopt it later (W2).
+export const sentenceChunkSchema = z.object({
+  chunks: z.array(
+    z.object({
+      phrase: z.string(),
+      meaning: z.string(),
+      role: z.string(),
+    })
+  ),
+});
+
 export const readerComprehensionEvalSchema = z.object({
   evaluations: z.array(
     z.object({

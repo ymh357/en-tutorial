@@ -30,6 +30,7 @@ import {
 import { alignWords, type AlignResult } from "@/lib/word-align";
 import {
   listeningShadowingSchema,
+  sentenceChunkSchema,
   toJsonSchema,
 } from "@/lib/ai-schemas";
 import {
@@ -85,6 +86,27 @@ const isShadowingData = (value: unknown): value is ShadowingData => {
   });
 };
 
+// Runtime shape of a progressive phrase chunking (mirrors sentenceChunkSchema).
+export interface SentenceChunk {
+  phrase: string;
+  meaning: string;
+  role: string;
+}
+const isSentenceChunks = (value: unknown): value is { chunks: SentenceChunk[] } => {
+  if (typeof value !== "object" || value === null) return false;
+  const v = value as Record<string, unknown>;
+  if (!Array.isArray(v.chunks) || v.chunks.length === 0) return false;
+  return v.chunks.every((c) => {
+    if (typeof c !== "object" || c === null) return false;
+    const cn = c as Record<string, unknown>;
+    return (
+      typeof cn.phrase === "string" &&
+      typeof cn.meaning === "string" &&
+      typeof cn.role === "string"
+    );
+  });
+};
+
 
 export const ShadowingTab = ({ cefrLevel }: { cefrLevel: string }) => {
   const [data, setData] = useState<ShadowingData | null>(null);
@@ -94,6 +116,8 @@ export const ShadowingTab = ({ cefrLevel }: { cefrLevel: string }) => {
   const [playbackRate, setPlaybackRate] = useState<number>(1);
   const [listensCount, setListensCount] = useState<number>(0);
   const [subjectiveComprehension, setSubjectiveComprehension] = useState<number | null>(null);
+  const [chunks, setChunks] = useState<SentenceChunk[] | null>(null);
+  const [isChunking, setIsChunking] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [recStatus, setRecStatus] = useState<RecStatus>("idle");
@@ -139,6 +163,7 @@ export const ShadowingTab = ({ cefrLevel }: { cefrLevel: string }) => {
     setStage("imagine");
     setListensCount(0);
     setSubjectiveComprehension(null);
+    setChunks(null);
     setTranscript(null);
     setResult(null);
     setApproximate(false);
@@ -277,6 +302,38 @@ export const ShadowingTab = ({ cefrLevel }: { cefrLevel: string }) => {
     }
   };
 
+  // Progressive phrase chunking for a sentence the learner can't parse at once
+  // (methodology: divide-and-conquer). Splits the long sentence into short
+  // phrases, each with meaning + grammatical role, via the structured /api/review
+  // path (sentenceChunkSchema).
+  const chunkSentence = async (): Promise<void> => {
+    if (!currentSentence || isChunking) return;
+    setIsChunking(true);
+    setChunks(null);
+    try {
+      const res = await fetch("/api/review", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          system:
+            "You are an English teacher. Break the sentence into short meaningful phrases. Return ONLY valid JSON.",
+          prompt: `Break this English sentence into short phrases in order. For each phrase give its meaning (Chinese) and grammatical role (English). Sentence: "${currentSentence}" Return JSON: { "chunks": [{ "phrase": "...", "meaning": "...", "role": "..." }] }`,
+          schema: toJsonSchema(sentenceChunkSchema),
+        }),
+      });
+      if (!res.ok) throw new Error(`Request failed: ${res.status}`);
+      const payload = (await res.json()) as { object?: unknown };
+      if (!isSentenceChunks(payload.object)) {
+        throw new Error("Could not chunk the sentence.");
+      }
+      setChunks(payload.object.chunks);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to chunk the sentence");
+    } finally {
+      setIsChunking(false);
+    }
+  };
+
   const nextSentence = async (): Promise<void> => {
     setTranscript(null);
     setResult(null);
@@ -284,6 +341,7 @@ export const ShadowingTab = ({ cefrLevel }: { cefrLevel: string }) => {
     setStage("imagine");
     setListensCount(0);
     setSubjectiveComprehension(null);
+    setChunks(null);
     if (data && index + 1 < data.sentences.length) {
       setIndex(index + 1);
     } else {
@@ -402,6 +460,33 @@ export const ShadowingTab = ({ cefrLevel }: { cefrLevel: string }) => {
                   <p className="text-xs text-muted-foreground text-center">
                     听不清就减速反复听；听清后可加速到 1.5x/2x 增加强度。
                   </p>
+
+                  {/* Didn't catch it? Break the sentence into phrases
+                      (methodology: divide-and-conquer for long sentences). */}
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    className="w-full min-h-[36px]"
+                    onClick={() => void chunkSentence()}
+                    disabled={isChunking || !currentSentence}
+                  >
+                    {isChunking ? (
+                      <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                    ) : null}
+                    {isChunking ? "拆解中..." : "听不懂？拆解成短语"}
+                  </Button>
+                  {chunks && (
+                    <div className="space-y-1 text-sm border-l-2 border-primary/40 pl-3">
+                      {chunks.map((c, i) => (
+                        <div key={i} className="leading-snug">
+                          <span className="font-medium">{c.phrase}</span>
+                          <span className="text-xs text-muted-foreground ml-2">{c.role}</span>
+                          <div className="text-xs text-muted-foreground">{c.meaning}</div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
                   <Button
                     size="lg"
                     variant="outline"
