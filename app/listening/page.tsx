@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import Link from "next/link";
 import {
   Ear,
   Headphones,
@@ -903,10 +904,18 @@ const ListeningPage = () => {
   return (
     <div className="max-w-3xl space-y-6 p-4 md:space-y-8 md:p-6">
       <div>
-        <h1 className="text-xl font-bold mb-2 md:text-2xl flex items-center gap-2">
-          <Headphones className="h-5 w-5" />
-          Listening Practice
-        </h1>
+        <div className="flex items-start justify-between gap-2">
+          <h1 className="text-xl font-bold mb-2 md:text-2xl flex items-center gap-2">
+            <Headphones className="h-5 w-5" />
+            Listening Practice
+          </h1>
+          <Link
+            href="/listening/import"
+            className="shrink-0 whitespace-nowrap text-sm text-primary underline-offset-4 hover:underline"
+          >
+            导入 YouTube 视频
+          </Link>
+        </div>
         <p className="text-muted-foreground text-sm">
           Practice dictation, comprehension, shadowing, and prediction at
           your {cefrLevel} level.
