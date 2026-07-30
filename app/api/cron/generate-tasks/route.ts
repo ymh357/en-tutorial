@@ -2,7 +2,8 @@ import { put } from "@vercel/blob";
 import { generateObject } from "ai";
 import { qualityModel } from "@/lib/ai";
 import { poolTaskSchemas } from "@/lib/ai-schemas";
-import { CREATIVE_TASK_TYPES, CREATIVE_TEMPERATURE, MAX_OUTPUT_TOKENS } from "@/lib/task-pool-generate";
+import { CREATIVE_TASK_TYPES, CREATIVE_TEMPERATURE, MAX_OUTPUT_TOKENS, buildPrompt } from "@/lib/task-pool-generate";
+import { today as todayDate } from "@/lib/date";
 import type { PoolTaskType } from "@/lib/types";
 
 export const maxDuration = 300; // 5 min for batch generation
@@ -13,53 +14,6 @@ export const maxDuration = 300; // 5 min for batch generation
 // desync where any pool hit fed B1 content regardless of the learner's level.
 const CRON_LEVELS = ["A2", "B1", "B2"] as const;
 
-// Prompt builder per task type, parameterized by level (mirrors the client-side
-// buildPrompt in lib/task-pool-generate.ts — kept in sync manually, plan risk C).
-const buildCronPrompt = (
-  type: PoolTaskType,
-  level: string
-): { system: string; prompt: string } => {
-  const prompts: Record<PoolTaskType, { system: string; prompt: string }> = {
-  "listening-dictation": {
-    system: "You are an English teacher. Return ONLY valid JSON.",
-    prompt: `Generate 5 English sentences at ${level} level for dictation practice. Return JSON: { "sentences": ["sentence1", "sentence2", ...] }`,
-  },
-  "listening-comprehension": {
-    system: "You are an English teacher. Return ONLY valid JSON.",
-    prompt: `Generate a 100-150 word English passage at ${level} level with 3 multiple-choice comprehension questions. Return JSON: { "passage": "...", "topic": "brief topic description", "questions": [{ "question": "...", "options": ["A","B","C","D"], "correctIndex": 0 }] }`,
-  },
-  "listening-prediction": {
-    system: "You are an English teacher. Return ONLY valid JSON.",
-    prompt: `Generate a short English passage (3-4 sentences) at ${level} level with a clear logical progression. Return JSON: { "firstHalf": "first 1-2 sentences", "secondHalf": "remaining", "topic": "brief topic" }`,
-  },
-  "listening-shadowing": {
-    system:
-      "You are an English pronunciation coach. Return ONLY valid JSON (no markdown fences, no explanation).",
-    prompt: `Generate 5 short English sentences (5-10 words each) at ${level} level for shadowing practice. Pick a single concrete everyday topic. Return JSON: { "topic": "short topic", "context": "one sentence of scene/background a learner pictures before listening", "sentences": [{ "text": "English sentence", "translation": "Chinese translation", "imageryHint": "a brief cue to form the mental picture for this sentence, in Chinese" }] }`,
-  },
-  "translation-sentence": {
-    system: "You are a Chinese-English translation teacher. Return ONLY valid JSON.",
-    prompt: `Generate 5 Chinese sentences at ${level} English level for translation practice. Return JSON: { "items": [{ "chinese": "...", "referenceTranslation": "...", "keyPoints": ["..."] }] }`,
-  },
-  "translation-paragraph": {
-    system: "You are a Chinese-English translation teacher. Return ONLY valid JSON.",
-    prompt: `Generate a 3-5 sentence Chinese paragraph for translation practice at ${level} level. Return JSON: { "chinese": "...", "referenceTranslation": "...", "keyPoints": ["..."] }`,
-  },
-  "translation-situational": {
-    system: "You are a Chinese-English translation teacher. Return ONLY valid JSON.",
-    prompt: `Generate a situational Chinese-English translation task at ${level} level (e.g. a short dialogue or real-world scenario). Return JSON: { "chinese": "...", "referenceTranslation": "...", "keyPoints": ["..."] }`,
-  },
-  "reading-article": {
-    system: "You are an English teacher creating reading material. Return ONLY valid JSON.",
-    prompt: `Generate a 300-500 word English article at ${level} level on a random topic. Include a title. Return JSON: { "title": "...", "content": "...", "comprehensionQuestions": [{ "question": "...", "type": "main-idea" }] }`,
-  },
-  "writing-prompt": {
-    system: "You are an English writing teacher. Return ONLY valid JSON.",
-    prompt: `Generate a writing task at ${level} level. Include the task type, prompt, target word count, and key phrases to practice. Return JSON: { "taskType": "email|essay|social|report", "prompt": "...", "targetWords": 150, "keyPhrases": ["..."], "scaffolding": "brief structure hint" }`,
-  },
-  };
-  return prompts[type];
-};
 
 interface GeneratedTask {
   id: string;
@@ -81,7 +35,11 @@ export const GET = async (req: Request): Promise<Response> => {
     return Response.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const today = new Date().toISOString().split("T")[0]; // YYYY-MM-DD
+  // Use the shared local-timezone today() so blob paths match the client's
+  // notion of "today" (server runs with TZ=Asia/Shanghai). The old
+  // toISOString().split("T")[0] used UTC and drifted from the client for non-
+  // UTC users (review W3 #2).
+  const today = todayDate();
 
   // Server-side callers pass the zod schema straight to generateObject
   // (Standard Schema interface) — no JSON Schema transport step needed here,
@@ -91,7 +49,7 @@ export const GET = async (req: Request): Promise<Response> => {
     level: string
   ): Promise<GeneratedTask | null> => {
     try {
-      const { system, prompt } = buildCronPrompt(type, level);
+      const { system, prompt } = buildPrompt(type, level);
       const { object } = await generateObject({
         model: qualityModel,
         schema: poolTaskSchemas[type],
@@ -105,7 +63,10 @@ export const GET = async (req: Request): Promise<Response> => {
           : {}),
       });
       return {
-        id: crypto.randomUUID(),
+        // Deterministic id per type+level+day so a same-day cron re-run
+        // overwrites the blob without spawning duplicate rows on the client
+        // (review W3 #7 — existingById can match and preserve completed/createdAt).
+        id: `${type}-${level}-${today}`,
         type,
         difficulty: level,
         content: object as Record<string, unknown>,
@@ -124,7 +85,10 @@ export const GET = async (req: Request): Promise<Response> => {
       work.push([type, level]);
     }
   }
-  const BATCH = 9;
+  // Bounded concurrency: 4 at a time keeps 0G rate limits happy across the
+  // 27 type×level runs (review W3 #5). 7 batches × slowest-in-batch still
+  // fits maxDuration=300s.
+  const BATCH = 4;
   const tasks: GeneratedTask[] = [];
   for (let i = 0; i < work.length; i += BATCH) {
     const slice = work.slice(i, i + BATCH);

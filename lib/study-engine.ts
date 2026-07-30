@@ -127,7 +127,11 @@ export const generateStudyPlan = (
       description: "Spaced repetition review",
       estimatedMinutes: srsMinutes(dueCards),
       href: "/srs",
-      priority: srsFirst ? 100 : 50,
+      // Fluency: 50.5 (just above the 50 rotation baseline) so on a tie at gap=0
+      // SRS still edges out candidates via the stable sort, but any activity
+      // with gap≥1 (priority 51+) rightfully comes first — SRS is not the gate
+      // on this track (review W3 #10).
+      priority: srsFirst ? 100 : 50.5,
       reason: srsFirst
         ? "You have overdue cards — spaced repetition breaks if reviews are skipped, so this comes first."
         : "You have cards due for review.",

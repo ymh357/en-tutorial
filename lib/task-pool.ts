@@ -97,6 +97,10 @@ export const completeTask = async (
 // the lowest exposureCount that hasn't been seen within `minIntervalMs`, and
 // reactivates it (completed=false). Returns the reactivated task or null when
 // nothing is eligible. Callers fall back to real-time generation on null.
+// Adoption: currently wired into shadowing only; other pool consumers
+// (dictation/comprehension/prediction/reader/translate/writing) still fall
+// through to real-time generation on a miss — adopting getReusableTask there
+// is tracked as W4 follow-up (review W3 #3).
 export const getReusableTask = async (
   type: PoolTaskType,
   minIntervalMs = 6 * 60 * 60 * 1000 // 6h: don't immediately redo what was just done
@@ -117,5 +121,10 @@ export const getReusableTask = async (
     completed: false,
     assignedDate: today(),
   });
+  // NOTE: lastSeenAt is NOT refreshed here (update only flips completed/
+  // assignedDate). The returned object carries the pre-reactivation lastSeenAt.
+  // Consumers should call completeTask(id, seenIn) after presenting the content,
+  // which stamps a fresh lastSeenAt — otherwise the stale value could mislead a
+  // future caller reading reusable.lastSeenAt directly (review W3 #9).
   return { ...chosen, completed: false, assignedDate: today() };
 };

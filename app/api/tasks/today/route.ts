@@ -1,7 +1,10 @@
 import { list } from "@vercel/blob";
+import { today as todayDate, formatDate } from "@/lib/date";
 
 export const GET = async (): Promise<Response> => {
-  const today = new Date().toISOString().split("T")[0];
+  // Shared local-timezone today (server TZ=Asia/Shanghai), matching the cron
+  // blob path and the client's calendar day (review W3 #2).
+  const today = todayDate();
 
   const { blobs } = await list({ prefix: `tasks/${today}` });
 
@@ -9,7 +12,7 @@ export const GET = async (): Promise<Response> => {
     // No pre-generated tasks for today — also check yesterday's
     const yesterday = new Date();
     yesterday.setDate(yesterday.getDate() - 1);
-    const yesterdayStr = yesterday.toISOString().split("T")[0];
+    const yesterdayStr = formatDate(yesterday);
     const { blobs: yBlobs } = await list({ prefix: `tasks/${yesterdayStr}` });
 
     if (yBlobs.length === 0) {

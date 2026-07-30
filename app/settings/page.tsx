@@ -57,6 +57,11 @@ const SettingsPage = () => {
   const [isSavingCefr, setIsSavingCefr] = useState(false);
   const [cefrSaveMessage, setCefrSaveMessage] = useState("");
 
+  const [primaryTrackOverride, setPrimaryTrackOverride] = useState<string | null>(null);
+  const selectedPrimaryTrack = primaryTrackOverride ?? profile?.primaryTrack ?? "fluency";
+  const [isSavingTrack, setIsSavingTrack] = useState(false);
+  const [trackSaveMessage, setTrackSaveMessage] = useState("");
+
   const [dailyGoal, setDailyGoal] = useState<number>(() => loadDailyGoal());
 
   const [dailyNewLimitOverride, setDailyNewLimitOverride] = useState<number | null>(null);
@@ -114,6 +119,30 @@ const SettingsPage = () => {
       );
     } finally {
       setIsSavingCefr(false);
+    }
+  };
+
+  const handleSavePrimaryTrack = async () => {
+    setIsSavingTrack(true);
+    setTrackSaveMessage("");
+    try {
+      const updatedCount = await db.learningProfile.update("singleton", {
+        primaryTrack: selectedPrimaryTrack as "fluency" | "mastery",
+      });
+      if (updatedCount === 0) {
+        const currentProfile = await dbHelpers.getProfile();
+        await db.learningProfile.put({
+          ...currentProfile,
+          primaryTrack: selectedPrimaryTrack as "fluency" | "mastery",
+        });
+      }
+      setTrackSaveMessage("Saved");
+    } catch (e) {
+      setTrackSaveMessage(
+        `Failed to save: ${e instanceof Error ? e.message : "Unknown error"}`
+      );
+    } finally {
+      setIsSavingTrack(false);
     }
   };
 
@@ -312,6 +341,40 @@ const SettingsPage = () => {
                 }
               >
                 {cefrSaveMessage}
+              </span>
+            )}
+          </div>
+          <div className="grid gap-2">
+            <Label>Learning Track</Label>
+            <p className="text-xs text-muted-foreground">
+              流利轨道（fluency，默认）：以直接听懂为目标，SRS 复习与听力/阅读平等轮换，遗忘正常。精通轨道（mastery）：SRS 复习永远优先，适合应试词汇精确识记。
+            </p>
+            <div className="flex items-center gap-2">
+              <Select value={selectedPrimaryTrack} onValueChange={(value) => value && setPrimaryTrackOverride(value)}>
+                <SelectTrigger className="w-full max-w-xs">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="fluency">流利轨道 (fluency)</SelectItem>
+                  <SelectItem value="mastery">精通轨道 (mastery)</SelectItem>
+                </SelectContent>
+              </Select>
+              <Button
+                onClick={handleSavePrimaryTrack}
+                disabled={isSavingTrack}
+              >
+                {isSavingTrack ? "Saving..." : "Save"}
+              </Button>
+            </div>
+            {trackSaveMessage && (
+              <span
+                className={
+                  trackSaveMessage === "Saved"
+                    ? "text-sm text-green-600"
+                    : "text-sm text-red-600"
+                }
+              >
+                {trackSaveMessage}
               </span>
             )}
           </div>

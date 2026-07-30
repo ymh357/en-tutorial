@@ -40,7 +40,7 @@ const TASK_TYPES: PoolTaskType[] = [
   "writing-prompt",
 ];
 
-const buildPrompt = (
+export const buildPrompt = (
   type: PoolTaskType,
   level: string
 ): { system: string; prompt: string } => {

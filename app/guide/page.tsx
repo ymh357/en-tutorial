@@ -896,12 +896,15 @@ const GuidePage = () => {
         {/* 高效使用建议 */}
         <Section id="tips" title="高效使用建议">
           <h3>每日推荐流程（约 20 分钟）</h3>
+          <p className="text-sm text-muted-foreground">
+            以下流程以精通轨道（mastery）为例。流利轨道（fluency，默认）下，Dashboard 会按&ldquo;最久没练&rdquo;轮换，SRS 复习不一定排首——这是正常的，遗忘在流利轨道下是可以接受的。
+          </p>
           <FlowDiagram
             steps={["SRS 复习", "听力 / 对话（交替）", "翻译热身", "阅读 / 写作（交替）"]}
           />
           <StepList>
             <Step index={1} title="先复习 SRS 卡片（5 分钟）">
-              把到期的卡片过一遍。这是保持记忆的关键环节，任何时候都不要跳过这一步。
+              把到期的卡片过一遍。这是保持记忆的关键环节，任何时候都不要跳过这一步。精通轨道用户尤其如此；流利轨道用户按 Dashboard 推荐即可，不必强求先复习。
             </Step>
             <Step index={2} title="做一次听力或对话（交替进行）">
               听力和对话交替安排。今天做听写或听力理解，明天做一次对话。完成后别忘了把
