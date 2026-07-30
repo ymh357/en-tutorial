@@ -75,6 +75,7 @@ export interface ConversationReview {
     lemma: string;
     definition: string;
     example: string;
+    sourceSentence?: string; // the real sentence where the word appeared (W2-T4)
     collocations?: string[];
     wordFamily?: string;
   }>;
@@ -253,6 +254,7 @@ export interface Part2Review {
     word: string;
     lemma: string;
     definition: string;
+    sourceSentence?: string; // the real sentence where the word appeared (W2-T4)
     example: string;
   }>;
   followUpFeedback: string;

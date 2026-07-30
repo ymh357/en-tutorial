@@ -346,6 +346,7 @@ export const part2ReviewSchema = z.object({
       word: z.string(),
       lemma: z.string(),
       definition: z.string(),
+      sourceSentence: z.string(),
       example: z.string(),
     })
   ),

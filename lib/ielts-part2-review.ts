@@ -27,7 +27,7 @@ const SCORING_SYSTEM_PROMPT = [
   "errors: concrete grammar/word errors the candidate made, with the corrected form and a short explanation.",
   "improvements: phrasings that were understandable but could be more natural/advanced.",
   "highlights: things the candidate did well.",
-  "newVocabulary: useful words/phrases worth learning (dictionary lemma form).",
+  "newVocabulary: useful words/phrases worth learning (dictionary lemma form). For each, include sourceSentence = the real sentence from the transcript where it actually appeared, and example = a DIFFERENT fresh sentence showing it in a new context.",
   "Return empty arrays (never omit fields) when a category has nothing.",
 ].join(" ");
 

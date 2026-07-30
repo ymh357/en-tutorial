@@ -57,7 +57,7 @@ The JSON must exactly match this schema:
     { "text": string, "reason": string }
   ],
   "newVocabulary": [
-    { "word": string, "lemma": string, "definition": string, "example": string, "collocations": string[], "wordFamily": string }
+    { "word": string, "lemma": string, "definition": string, "sourceSentence": string, "example": string, "collocations": string[], "wordFamily": string }
   ]
 }
 
@@ -69,7 +69,7 @@ Guidelines:
 - "newVocabulary" are useful words or phrases from the conversation (assistant's or user's) that are worth the learner adding to their vocabulary list — include the dictionary lemma form.
 - For each "newVocabulary" item, include "collocations": 3-5 common collocations/word partnerships for that word (e.g., for "resist": "resist temptation", "resist change", "resist the urge"). Return them as an array of short strings.
 - For each "newVocabulary" item, include "wordFamily": one related word from the same word family (e.g., for "resist": "resistance", for "decide": "decision"). Use an empty string if there is no useful related form.
-- The "example" sentence for each "newVocabulary" item must be a DIFFERENT sentence from how the word was actually used in this conversation — write a fresh example that shows the word in a new context, so the learner sees it used more than one way.
+- For each "newVocabulary" item, "sourceSentence" is the REAL sentence from this conversation where the word/phrase actually appeared (verbatim, or the closest containing turn) — this anchors the card to the learner's own lived context. "example" is a DIFFERENT fresh sentence showing the word in a new context, so the learner sees it used more than one way. Both are required.
 - Be encouraging in tone, but honest and precise about errors.
 - If there are no errors, improvements, highlights, or new vocabulary, return an empty array for that field — do not omit the field.
 - Output must be parseable by JSON.parse with no post-processing.`;
@@ -203,7 +203,7 @@ const ReviewPage = () => {
     kind: ItemKind,
     key: string,
     cardData: Pick<SrsCard, "type" | "lemma" | "front" | "back" | "context"> &
-      Partial<Pick<SrsCard, "collocations" | "wordFamily">>
+      Partial<Pick<SrsCard, "collocations" | "wordFamily" | "sourceSentence">>
   ) => {
     if (!conversation || addedKeys.has(key) || addingKey) return;
     setAddingKey(key);
@@ -217,6 +217,7 @@ const ReviewPage = () => {
           front: cardData.front,
           back: cardData.back,
           context: cardData.context,
+          sourceSentence: cardData.sourceSentence,
           source: "conversation",
           sourceId: conversation.id,
           easeFactor: 2.5,
@@ -470,7 +471,8 @@ const ReviewPage = () => {
                             lemma: vocab.lemma,
                             front: vocab.word,
                             back: vocab.definition,
-                            context: vocab.example,
+                            context: vocab.sourceSentence || vocab.example,
+                            sourceSentence: vocab.sourceSentence,
                             collocations: vocab.collocations,
                             wordFamily: vocab.wordFamily,
                           })
