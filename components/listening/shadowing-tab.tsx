@@ -28,32 +28,49 @@ import {
 } from "@/lib/speech";
 import { alignWords, type AlignResult } from "@/lib/word-align";
 import {
-  callReview,
+  listeningShadowingSchema,
+  toJsonSchema,
+} from "@/lib/ai-schemas";
+import {
   saveListeningExercise,
-  stripFences,
   ExerciseCompletionActions,
 } from "@/components/listening/shared";
 
 type RecStatus = "idle" | "recording" | "transcribing";
 
-const parseShadowingSentences = (raw: string): string[] | null => {
-  try {
-    const parsed = JSON.parse(stripFences(raw)) as unknown;
-    if (
-      !Array.isArray(parsed) ||
-      parsed.length === 0 ||
-      parsed.some((s) => typeof s !== "string")
-    ) {
-      return null;
-    }
-    return parsed as string[];
-  } catch {
-    return null;
-  }
+// Runtime shape of a shadowing set (mirrors listeningShadowingSchema).
+export interface ShadowingSentence {
+  text: string;
+  translation: string;
+  imageryHint: string;
+}
+export interface ShadowingData {
+  topic: string;
+  context: string;
+  sentences: ShadowingSentence[];
+}
+
+// Guard pool/fallback content (Record<string, unknown>) into a typed
+// ShadowingData, rejecting shapes that don't satisfy the schema contract.
+const isShadowingData = (value: unknown): value is ShadowingData => {
+  if (typeof value !== "object" || value === null) return false;
+  const v = value as Record<string, unknown>;
+  if (typeof v.topic !== "string" || typeof v.context !== "string") return false;
+  if (!Array.isArray(v.sentences) || v.sentences.length === 0) return false;
+  return v.sentences.every((s) => {
+    if (typeof s !== "object" || s === null) return false;
+    const sn = s as Record<string, unknown>;
+    return (
+      typeof sn.text === "string" &&
+      typeof sn.translation === "string" &&
+      typeof sn.imageryHint === "string"
+    );
+  });
 };
 
+
 export const ShadowingTab = ({ cefrLevel }: { cefrLevel: string }) => {
-  const [sentences, setSentences] = useState<string[]>([]);
+  const [data, setData] = useState<ShadowingData | null>(null);
   const [index, setIndex] = useState(0);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -95,7 +112,7 @@ export const ShadowingTab = ({ cefrLevel }: { cefrLevel: string }) => {
   const generateSentences = async (): Promise<void> => {
     setIsLoading(true);
     setError(null);
-    setSentences([]);
+    setData(null);
     setIndex(0);
     setTranscript(null);
     setResult(null);
@@ -110,12 +127,10 @@ export const ShadowingTab = ({ cefrLevel }: { cefrLevel: string }) => {
         .first();
 
       if (poolTask) {
-        // Shadowing pool content is a JSON string array (listeningShadowingSchema),
-        // unlike the object-shaped content of the other task types — cast via
-        // unknown and guard at runtime.
-        const content = poolTask.content as unknown as string[];
-        if (Array.isArray(content) && content.length > 0) {
-          setSentences(content);
+        // Shadowing pool content now matches listeningShadowingSchema (object
+        // shape: topic/context/sentences). Guard at runtime before adopting.
+        if (isShadowingData(poolTask.content)) {
+          setData(poolTask.content);
           await completeTask(poolTask.id);
           setIsLoading(false);
           return;
@@ -125,17 +140,27 @@ export const ShadowingTab = ({ cefrLevel }: { cefrLevel: string }) => {
       // Fall through to real-time generation
     }
 
-    // Fallback to real-time generation
+    // Fallback to real-time generation via the structured-output route (same
+    // schema as the pool, so pool and fallback yield identical shapes).
     try {
       const system =
-        "You are an English pronunciation coach. Return ONLY a valid JSON array of strings (no markdown fences, no explanation).";
-      const prompt = `Generate 5 short English sentences (5-10 words each) at ${cefrLevel} level for shadowing practice. Return as JSON array of strings.`;
-      const content = await callReview(prompt, system);
-      const parsed = parseShadowingSentences(content);
-      if (!parsed) {
+        "You are an English pronunciation coach. Return ONLY valid JSON (no markdown fences, no explanation).";
+      const prompt = `Generate 5 short English sentences (5-10 words each) at ${cefrLevel} level for shadowing practice. Pick a single concrete everyday topic. Return JSON: { "topic": "short topic", "context": "one sentence of scene/background a learner pictures before listening", "sentences": [{ "text": "English sentence", "translation": "Chinese translation", "imageryHint": "a brief cue to form the mental picture for this sentence, in Chinese" }] }`;
+      const res = await fetch("/api/review", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          prompt,
+          system,
+          schema: toJsonSchema(listeningShadowingSchema),
+        }),
+      });
+      if (!res.ok) throw new Error(`Request failed: ${res.status}`);
+      const payload = (await res.json()) as { object?: unknown };
+      if (!isShadowingData(payload.object)) {
         throw new Error("Could not parse the sentences. Please try again.");
       }
-      setSentences(parsed);
+      setData(payload.object);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to generate sentences");
     } finally {
@@ -149,7 +174,7 @@ export const ShadowingTab = ({ cefrLevel }: { cefrLevel: string }) => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const currentSentence = sentences[index] ?? "";
+  const currentSentence = data?.sentences[index]?.text ?? "";
 
   const startAttempt = async (): Promise<void> => {
     if (startingRef.current || recStatus !== "idle") return;
@@ -221,7 +246,7 @@ export const ShadowingTab = ({ cefrLevel }: { cefrLevel: string }) => {
     setTranscript(null);
     setResult(null);
     setApproximate(false);
-    if (index + 1 < sentences.length) {
+    if (data && index + 1 < data.sentences.length) {
       setIndex(index + 1);
     } else {
       await generateSentences();
@@ -247,9 +272,9 @@ export const ShadowingTab = ({ cefrLevel }: { cefrLevel: string }) => {
         <CardHeader className="pb-2">
           <CardTitle className="text-sm font-medium flex items-center justify-between">
             Repeat After Me
-            {sentences.length > 0 && (
+            {data && data.sentences.length > 0 && (
               <span className="text-xs text-muted-foreground font-normal">
-                {index + 1}/{sentences.length}
+                {index + 1}/{data.sentences.length}
               </span>
             )}
           </CardTitle>
@@ -258,7 +283,7 @@ export const ShadowingTab = ({ cefrLevel }: { cefrLevel: string }) => {
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
-          {isLoading && sentences.length === 0 ? (
+          {isLoading && !data ? (
             <div className="flex items-center justify-center py-8 text-muted-foreground">
               <Loader2 className="h-5 w-5 animate-spin mr-2" />
               Generating sentences...
@@ -373,7 +398,7 @@ export const ShadowingTab = ({ cefrLevel }: { cefrLevel: string }) => {
         />
       )}
 
-      {sentences.length > 0 && (
+      {data && data.sentences.length > 0 && (
         <Button
           variant="outline"
           className="w-full min-h-[44px]"

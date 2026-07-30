@@ -59,8 +59,8 @@ const buildPrompt = (
     },
     "listening-shadowing": {
       system:
-        "You are an English pronunciation coach. Return ONLY a valid JSON array of strings (no markdown fences, no explanation).",
-      prompt: `Generate 5 short English sentences (5-10 words each) at ${level} level for shadowing practice. Return as JSON array of strings.`,
+        "You are an English pronunciation coach. Return ONLY valid JSON (no markdown fences, no explanation).",
+      prompt: `Generate 5 short English sentences (5-10 words each) at ${level} level for shadowing practice. Pick a single concrete everyday topic. Return JSON: { "topic": "short topic", "context": "one sentence of scene/background a learner pictures before listening", "sentences": [{ "text": "English sentence", "translation": "Chinese translation", "imageryHint": "a brief cue to form the mental picture for this sentence, in Chinese" }] }`,
     },
     "translation-sentence": {
       system: "You are a Chinese-English translation teacher. Return ONLY valid JSON.",

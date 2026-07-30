@@ -199,9 +199,22 @@ export const listeningComprehensionSchema = z.object({
   ),
 });
 
-// Top-level JSON array, not an object — requires `output: "array"` mode with
-// `generateObject`/`streamObject` rather than the default object mode.
-export const listeningShadowingSchema = z.array(z.string());
+// Object-shaped so it fits the standard generateObject object path (a bare
+// z.array(z.string()) would need output:"array" mode, which the review route
+// does not set). Carries topic/context for the "imagine" stage (methodology:
+// form the mental picture before reading the English) plus a per-sentence
+// translation and imageryHint cue.
+export const listeningShadowingSchema = z.object({
+  topic: z.string(),
+  context: z.string(),
+  sentences: z.array(
+    z.object({
+      text: z.string(),
+      translation: z.string(),
+      imageryHint: z.string(),
+    })
+  ),
+});
 
 export const listeningPredictionSchema = z.object({
   firstHalf: z.string(),
