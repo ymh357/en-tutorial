@@ -183,6 +183,10 @@ export const ShadowingTab = ({
   // (deferred ① — previously "Next Sentence" on the last sentence silently
   // no-op'd, leaving no completion signal).
   const [finished, setFinished] = useState(false);
+  // T2a: text selection in the recall sentence → store a vocabulary card
+  // linked to this media Material + sentence index (for clip playback).
+  const [pendingSelection, setPendingSelection] = useState<string | null>(null);
+  const [justSavedCard, setJustSavedCard] = useState(false);
   // Pool/LLM-generated sentence set (text mode only). Media mode derives
   // `data` directly from `material` below instead of going through state —
   // materialToShadowingData is a pure sync function of `material`, so there's
@@ -642,6 +646,51 @@ export const ShadowingTab = ({
     }
   };
 
+  const handleSentenceMouseUp = (): void => {
+    if (!isMedia) return;
+    if (stage !== "recall") return;
+    if (subtitleMode === "hidden") return;
+    const sel = window.getSelection()?.toString().trim() ?? "";
+    if (sel.length === 0 || !currentSentence.includes(sel)) {
+      setPendingSelection(null);
+      return;
+    }
+    setPendingSelection(sel);
+  };
+
+  const handleSaveCard = async (): Promise<void> => {
+    if (!material || !pendingSelection) return;
+    const front = pendingSelection;
+    try {
+      await db.cards.add({
+        id: crypto.randomUUID(),
+        front,
+        back: "",
+        type: "vocabulary",
+        lemma: front,
+        context: "",
+        sourceSentence: currentSentence,
+        source: "listening",
+        sourceId: material.id,
+        materialId: material.id,
+        sentenceIndex: index,
+        easeFactor: 2.5,
+        interval: 0,
+        repetitions: 0,
+        nextReview: new Date(),
+        masteryLevel: "new",
+        createdAt: new Date(),
+        lastReviewedAt: null,
+      });
+      setJustSavedCard(true);
+      setTimeout(() => setJustSavedCard(false), 1500);
+    } catch (err) {
+      console.error("save card failed", err);
+    }
+    setPendingSelection(null);
+    window.getSelection()?.removeAllRanges();
+  };
+
   return (
     <div className="space-y-4">
       {error && (
@@ -897,10 +946,27 @@ export const ShadowingTab = ({
               {stage === "recall" && (
                 <div className="space-y-3">
                   {subtitleMode !== "hidden" && (
-                    <p className="text-base font-medium text-center py-2">
+                    <p
+                      className="text-base font-medium text-center py-2"
+                      onMouseUp={handleSentenceMouseUp}
+                    >
                       {currentSentence}
                     </p>
                   )}
+                  {pendingSelection ? (
+                    <div className="flex justify-center">
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => void handleSaveCard()}
+                      >
+                        存为生词卡：{pendingSelection}
+                      </Button>
+                    </div>
+                  ) : null}
+                  {justSavedCard ? (
+                    <p className="text-xs text-center text-primary">已存</p>
+                  ) : null}
                   {subtitleMode === "bilingual" && (
                     <p className="text-sm text-muted-foreground text-center italic">
                       {currentTranslation}
