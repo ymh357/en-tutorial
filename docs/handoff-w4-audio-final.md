@@ -1,10 +1,10 @@
-# Handoff — W4-T3 收尾(A)+ W4-T2(B)完成,W4 整体进入终审
+# Handoff — W4-T3 收尾(A)+ W4-T2(B)完成,W4 整体终审通过
 
-> 给新 session 的交接文档。本会话(2026-07-30)完成 W4-T3 浏览器实测+deferred 修复+review(A 阶段)与 W4-T2 音频原版素材全链路实现+review(B 阶段)。**先读本文件 + `docs/handoff-w4-continuation.md` 再动手。**
+> 给新 session 的交接文档。本会话(2026-07-30~31)完成 W4-T3 浏览器实测+deferred 修复+review(A 阶段)、W4-T2 音频原版素材全链路实现+review(B 阶段)、W4 整体独立终审+修复。**先读本文件 + `docs/handoff-w4-continuation.md` 再动手。**
 
 ## 一句话状态
 
-W4-T3 视频链路 A1 浏览器实测发现 P0(video 不可见)+ watchdog 误报,A2/A3 修复并经两轮 review。W4-T2 音频(@vercel/blob 直传 + HTMLAudioElement + 通用 MediaSource 契约)实现并经 review。W4 整体独立终审已派(结果待回)。**未 push**(42 commits 在 main 本地,origin/main 仍停 fefb75e)。**阻塞**:prod 未配 `BLOB_READ_WRITE_TOKEN`,音频实际上传+播放未浏览器验过。
+W4 全完成。W4-T3(video)A1 浏览器实测发现 P0+watchdog 误报,A2/A3 修复+review。W4-T2(audio)实现+review。W4 整体终审无 BLOCKER,全部发现根本性修复。`BLOB_READ_WRITE_TOKEN` 已配(vercel blob store `en-tutorial-audio`),audio 上传链路 prod 实测通(上传→路由→三招 UI→blob url 可播放 fetch 200 audio/mpeg)。**未 push**(47 commits 在 main 本地,origin/main 仍停 fefb75e)。**剩**:audio 播放的"听感+watchdog 边缘时序"需人耳人眼最终确认(DOM 层已确认 play() 未被拒、无 error、blob 可播;但 AB 循环/连续播放时 watchdog 仍 16s 弹 nudge,疑似 detached audio 事件时序,需真机听感诊断)。
 
 ## 本会话产出(commits, main, 从旧到新,未 push)
 
@@ -14,6 +14,9 @@ W4-T3 视频链路 A1 浏览器实测发现 P0(video 不可见)+ watchdog 误报
 07120b2  A3  review 修复:stage-gated watchdog / listen→recall pause / onReady rate
 61aedf4  B   W4-T2 音频:audio-source + upload-auth + import mode 切换 + 共用 client + shadowing-tab isMedia 泛化
 19ec6ac  B   review 修复:同源校验 / 错误分类 / accept 一致 / switchMode 清 url / audio destroy load()
+d5a05ed  终审修复:onError 契约对称 / onReady immediate-fire 一致 / upload 加固 / accept m4a / handler 合并
+f19a44a  audio autoplay 修复:play() 在用户手势内启动(非 loadedmetadata 回调 flush)
+45f4e54  audio AB-loop 修复:seek 不二次 play()(poll 回调非手势被 autoplay 拒)
 ```
 
 ## A 阶段:W4-T3 收尾
@@ -63,31 +66,34 @@ W4-T3 视频链路 A1 浏览器实测发现 P0(video 不可见)+ watchdog 误报
 - `app/listening/audio/[id]/page.tsx`(新)+ video page 改:Next 16 `await params`,都渲染 MaterialListeningClient。
 - `shadowing-tab.tsx`:player effect 分支 video(YouTube host)/audio(AudioMediaSource from sourceUrl)。所有原 video-only 门禁改 `isMedia`(默认 rate、口音隐藏、recall 空译文、末句 finished、listen→recall pause、watchdog cadence、rate clamp)。imagine audio 显标题引导无缩略图。
 
-### B prod 验证(代码层,token 缺失)
+### B prod 验证(token 已配,实测)
+
+`BLOB_READ_WRITE_TOKEN` 已配(blob store `en-tutorial-audio` / `store_ok8s6hg4NfpSe5xQ`,iad1,link 到项目 Production+Preview)。
 
 - ✅ import 页 video/audio 切换
 - ✅ audio 文件选择 + 自动填标题 + 大小显示
 - ✅ srt 字幕解析 → 预览
-- ✅ 上传失败友好降 errors("音频上传或保存失败"+ catch 不卡死)
-- ⚠️ `BLOB_READ_WRITE_TOKEN` 缺失 → 实际上传 + audio 路由播放未验(curl 确认 upload-auth 返 500 missing token)
+- ✅ **实际上传成功**:mp3 经 `@vercel/blob` multipart 直传 → blob url `...public.blob.vercel-storage.com/audio/test-audio-sJ...` → saveMaterial mediaType:audio → 跳 `/listening/audio/[id]`
+- ✅ audio 路由三招 UI:imagine(标题+"先看标题想象这段音频")+ listen(播放/AB/6 变速/口音隐藏)+ recall
+- ✅ blob url 可播性硬验:fetch 200 `audio/mpeg` 64KB + `new Audio(url)` loadedmetadata dur=3.93s
+- ✅ play() 未被 autoplay 拒(HTMLAudioElement.prototype.play probe:calls=1 rejections=[])
+- ✅ 无 error alert / 无 console warn(error 事件未触发=加载成功)
+- ⚠️ **未确认(需人耳人眼真机)**:audio 实际出声、AB 循环手感、watchdog 边缘时序。DOM 层测到 AB 循环/连续播放时 watchdog 仍 16s 弹 nudge(单句 play 未拒、blob 可播,但 activeInterval 似未持续喂——疑似 detached `<audio>` 事件时序或 stageRef/play 事件链问题,DOM probe 抓不到已建 detAudio 实例)。已修 autoplay(45f4e54 AB seek 不二次 play),但 16s nudge 仍在,根因待真机诊断。
 
-## 阻塞:prod 未配 BLOB_READ_WRITE_TOKEN
+## 待诊断:audio watchdog 16s nudge(非阻塞,需真机)
 
-`vercel env ls` 只有 5 个 OG_* 变量,**无 BLOB_READ_WRITE_TOKEN**。handoff-w4-continuation 声称"cron put 已用 blob,应已配"是**错误**——cron `generate-tasks` 代码 `import { put } from "@vercel/blob"` 存在但 token 从未配,cron 的 blob put 大概一直失败。
-
-音频上传链路被此阻塞。**需用户在 Vercel**:创建 Blob store → 拿 `BLOB_READ_WRITE_TOKEN` → `vercel env add BLOB_READ_WRITE_TOKEN` (Production) → 重新部署。配后:浏览器实测 audio 上传 + `/listening/audio/[id]` 逐句播放。
+audio 单句播放 play() 未被拒、blob url 可播(fetch+loadedmetadata 证),但 AB 循环/连续播放时 watchdog 仍 16s 弹"走神了"。DOM 层诊断极限:detAudio 是 `new Audio()` detached,probe 无法在 player effect 后注入 hook。可能根因:(a) audio `play` 事件触发 stateCbs→activeInterval 启动,但 5s markActive 周期因某闭包/stageRef 未生效;(b) AB seek 不触发新 `play` 事件(音频本就 playing)→ 无新 "playing" stateCbs → 但 activeInterval 本应自运行。**需真机**:开浏览器 DevTools,在 audio-source.ts 临时加 `console.log` 看 onStateChange/activeInterval,或直接听是否有声。若无声,问题在 play()虽未拒但 audio 未真播(.detached 某些浏览器行为);若有声但 nudge 弹,问题在 watchdog stageRef/activeInterval。
 
 ## 如何继续(新 session)
 
-### 选项 1:配 token + 验 audio + push(首选)
-1. 用户配 `BLOB_READ_WRITE_TOKEN`(Vercel Blob store)。
-2. `vercel env add` + 重新部署。
-3. 浏览器实测 audio 上传 + 逐句播放/AB/变速/末句完成(对照 video 已验项)。
-4. 处理终审发现(见下)。
-5. push(需用户授权,42 commits)。
+### 选项 1:真机诊断 audio watchdog + push(首选)
+1. 本地 `vercel dev` 或 prod 打开 `/listening/audio/[id]`,DevTools 听是否有声 + 临时 log audio-source onStateChange。
+2. 修 watchdog 根因(若 play 事件没触发 activeInterval,或在 audio-source 用 timeupdate 事件驱动 markActive 而非依赖 play/pause stateCbs)。
+3. push(需用户授权,47 commits)。
 
-### 选项 2:无 token 先处理终审 + push
-终审结果回来后修,不依赖 token 的发现先处理,push。
+### 选项 2:直接 push 现状
+audio 上传链路+三招 UI 全验通,watchdog 边缘时序非阻塞(单句播放可用)。push 后真机再修。
+
 
 ## W4 整体终审
 
