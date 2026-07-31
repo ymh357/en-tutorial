@@ -60,15 +60,21 @@ export function useAudioClipPlayback(): {
     }
 
     const { sourceUrl, startMs, endMs } = clip;
+    // Degenerate bounds (zero/negative duration) can't bound a clip — fall
+    // back to TTS instead of playing from the file start to an unreachable
+    // endMs (which would spin the poll forever).
+    if (!(endMs > startMs)) {
+      void speak(fallbackText);
+      return;
+    }
     const audio = new Audio(sourceUrl);
     audioRef.current = audio;
-    let started = false;
 
     // Fire play() in the user-gesture call stack (this hook's play is invoked
     // synchronously from a button onClick). loadedmetadata may not be ready
     // yet, but play() can start; the seek happens once metadata loads.
     audio.onloadedmetadata = () => {
-      if (started) audio.currentTime = startMs / 1000;
+      audio.currentTime = startMs / 1000;
     };
     audio.onerror = () => {
       cleanup();
@@ -87,7 +93,6 @@ export function useAudioClipPlayback(): {
       setPlaying(false);
     };
 
-    started = true;
     setPlaying(true);
     audio
       .play()

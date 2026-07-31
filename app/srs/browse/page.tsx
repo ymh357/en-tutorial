@@ -283,7 +283,7 @@ const CardRow = ({ card }: { card: CardType }) => {
             </Badge>
           </div>
           <p className="truncate text-sm text-muted-foreground">
-            {truncate(card.back, 100)}
+            {truncate(card.back || card.sourceSentence || "", 100)}
           </p>
           <p className="text-xs text-muted-foreground">
             Next review: {formatDate(card.nextReview)}
@@ -326,7 +326,7 @@ const BrowsePage = () => {
         if (!query) return true;
         return (
           card.front.toLowerCase().includes(query) ||
-          card.back.toLowerCase().includes(query)
+          (card.back || card.sourceSentence || "").toLowerCase().includes(query)
         );
       })
       .sort(

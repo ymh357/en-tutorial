@@ -15,11 +15,20 @@
 
 import { handleUpload, type HandleUploadBody } from "@vercel/blob/client";
 
-const ALLOWED_ORIGINS = new Set([
-  "https://en-tutorial.vercel.app",
-  // Allow local dev (vercel dev / next dev on the same machine).
-  "http://localhost:3000",
-]);
+// Same-origin only — blocks cross-site callers from minting upload tokens.
+// Covers the production deploy, per-commit Vercel preview deploys
+// (en-tutorial-<hash>-<scope>.vercel.app), and local dev (next/vercel dev,
+// including Next's auto-increment port when 3000 is taken). Preview deploys
+// get a fresh origin per commit, so a static allowlist would 403 them all.
+function isAllowedOrigin(origin: string): boolean {
+  try {
+    const { hostname, port } = new URL(origin);
+    if (hostname === "localhost" && /^300[0-9]$/.test(port)) return true;
+    return /^en-tutorial(-[^.]+)?\.vercel\.app$/.test(hostname);
+  } catch {
+    return false;
+  }
+}
 
 const AUDIO_CONTENT_TYPES = [
   "audio/mpeg",
@@ -43,11 +52,10 @@ export async function POST(request: Request): Promise<Response> {
     );
   }
 
-  // Same-origin only — blocks cross-site callers from minting upload tokens.
-  // Require the Origin header to be present AND in the allowlist (a missing
-  // Origin is treated as untrusted rather than passed through).
+  // Require the Origin header to be present AND allowed (a missing Origin is
+  // treated as untrusted rather than passed through).
   const origin = request.headers.get("origin");
-  if (origin == null || !ALLOWED_ORIGINS.has(origin)) {
+  if (origin == null || !isAllowedOrigin(origin)) {
     return Response.json({ error: "forbidden origin" }, { status: 403 });
   }
 

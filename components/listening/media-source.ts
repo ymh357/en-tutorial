@@ -90,7 +90,6 @@ export interface YouTubeMediaSource {
   /** Clamp to nearest available rate; returns actual applied rate, or null if
    * the player isn't ready yet (caller should keep the user's selection). */
   setRate(rate: number): number | null;
-  getRate(): number;
   getAvailableRates(): number[];
   /** Toggle AB-loop replay of the current sentence range. */
   setAbLoop(on: boolean): void;
@@ -267,9 +266,6 @@ export const createYouTubePlayer = (
       )[0];
       player.setPlaybackRate?.(clamped);
       return clamped;
-    },
-    getRate() {
-      return player?.getPlaybackRate?.() ?? 1;
     },
     getAvailableRates() {
       return player?.getAvailablePlaybackRates?.() ?? [0.5, 1, 1.5, 2];

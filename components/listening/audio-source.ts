@@ -30,7 +30,7 @@ export const createAudioPlayer = (opts: AudioPlayerOpts): MediaSource => {
   let abLoop = false;
   let currentStartMs = 0;
   let currentEndMs = 0;
-  let pendingPlay: { startMs: number; endMs: number } | null = null;
+  let pendingPlay: { startMs: number } | null = null;
   let ready = false;
   let failed = false;
   let destroyed = false;
@@ -143,7 +143,9 @@ export const createAudioPlayer = (opts: AudioPlayerOpts): MediaSource => {
       // gesture), so the browser rejected play() and the learner heard nothing
       // (A1 audio test: 8s watchdog nudge fired because playback never started).
       // If metadata isn't ready, the loadedmetadata handler re-seeks to startMs.
-      pendingPlay = ready ? null : { startMs, endMs };
+      // Only startMs is needed for the deferred seek; endMs is applied
+      // synchronously by playInternal (currentEndMs) at call time.
+      pendingPlay = ready ? null : { startMs };
       playInternal(startMs, endMs);
     },
     pause() {
@@ -162,9 +164,6 @@ export const createAudioPlayer = (opts: AudioPlayerOpts): MediaSource => {
       )[0];
       audio.playbackRate = clamped;
       return clamped;
-    },
-    getRate() {
-      return audio.playbackRate || 1;
     },
     getAvailableRates() {
       return [...STANDARD_RATES];
