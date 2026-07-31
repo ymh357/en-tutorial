@@ -310,6 +310,74 @@ export const createYouTubePlayer = (
 // and getAvailableRates consistent across all MediaSource implementations.
 const STANDARD_RATES = [0.5, 0.75, 1, 1.25, 1.5, 2];
 
+// Pure onExpired retry state machine, extracted from createVideoPlayer's
+// <video> "error" listener so the retry transitions are unit-testable without
+// jsdom. `destroyed` is deliberately NOT part of this state — it is a
+// caller-level guard applied around the side effects (video.src assignment,
+// onErrorCbs.forEach), matching the current code's `if (destroyed) return;`
+// checks inside .then/.catch.
+export interface RetryState {
+  /** A retry has been initiated (never resets — one retry per player). */
+  retried: boolean;
+  /** A retry is in-flight (suppresses stray errors during it). */
+  retrying: boolean;
+  /** Media ready (loadedmetadata fired). */
+  ready: boolean;
+}
+
+export type RetryEvent =
+  | { type: "error" } // <video> error fired
+  | { type: "resolved" } // onExpired() promise resolved (fresh src set)
+  | { type: "rejected" }; // onExpired() promise rejected
+
+export interface RetryDecision {
+  state: RetryState;
+  /** Initiate onExpired() re-resolve (only on first error, when a callback
+   * exists and no retry has been attempted yet). */
+  try: boolean;
+  /** Report failure via onErrorCbs (second error, no callback, or rejected). */
+  surface: boolean;
+}
+
+export const nextRetryState = (
+  state: RetryState,
+  event: RetryEvent,
+  hasExpiredCallback: boolean
+): RetryDecision => {
+  if (event.type === "error") {
+    // Stray error during an in-flight retry — suppressed regardless of
+    // `retried` (mirrors the current `if (destroyed || retrying) return;`
+    // guard, which checks `retrying` before ever consulting `retried`).
+    if (state.retrying) {
+      return { state, try: false, surface: false };
+    }
+    // First error, retry available: initiate retry, reset `ready` so a stale
+    // onReady doesn't fire for the old src.
+    if (hasExpiredCallback && !state.retried) {
+      return {
+        state: { retried: true, retrying: true, ready: false },
+        try: true,
+        surface: false,
+      };
+    }
+    // Second error after a completed retry, or no retry possible — surface.
+    return { state, try: false, surface: true };
+  }
+  if (event.type === "resolved") {
+    return {
+      state: { ...state, retrying: false },
+      try: false,
+      surface: false,
+    };
+  }
+  // rejected
+  return {
+    state: { ...state, retrying: false },
+    try: false,
+    surface: true,
+  };
+};
+
 export interface VideoPlayerOpts {
   /** Direct media URL (e.g. a resolved Bilibili playurl mp4 stream). */
   src: string;
@@ -354,8 +422,9 @@ export const createVideoPlayer = (opts: VideoPlayerOpts): MediaSource => {
   // Guards the onExpired retry: only one re-resolve attempt per player
   // instance, and re-entry-safe if a second error event fires while the
   // first re-resolve is still in flight (fire-and-await, not fire-and-block).
-  let retried = false;
-  let retrying = false;
+  // The decision logic itself lives in the pure nextRetryState reducer above;
+  // this object is just the mutable slot createVideoPlayer feeds through it.
+  let retryState: RetryState = { retried: false, retrying: false, ready: false };
 
   const mapVideoEvent = (
     type: string
@@ -375,33 +444,40 @@ export const createVideoPlayer = (opts: VideoPlayerOpts): MediaSource => {
     }
   });
   video.addEventListener("error", () => {
-    if (destroyed || retrying) return;
-    // First error, with a re-resolver available and not yet retried this
-    // session: attempt one fresh-URL retry instead of surfacing failure.
-    if (opts.onExpired && !retried) {
-      retried = true;
-      retrying = true;
-      // Reset ready so onReady re-fires once the fresh src's metadata loads —
-      // the old src's playback position is meaningless for the new stream.
-      ready = false;
-      void opts.onExpired()
+    if (destroyed || retryState.retrying) return;
+    const decision = nextRetryState(
+      retryState,
+      { type: "error" },
+      !!opts.onExpired
+    );
+    retryState = decision.state;
+    if (decision.try) {
+      // Only the retry-init branch changes `ready` (reducer resets it to
+      // false) — the surface branch must leave live `ready` untouched, or a
+      // 2nd/no-callback error after metadata already loaded would wrongly
+      // clobber `ready` back to false (T5 parity: original code only wrote
+      // `ready = false;` inside the retry branch).
+      ready = retryState.ready;
+      void opts.onExpired!()
         .then((fresh) => {
+          const resolved = nextRetryState(retryState, { type: "resolved" }, !!opts.onExpired);
+          retryState = resolved.state;
           if (destroyed) return;
           video.src = fresh;
           video.load();
         })
         .catch(() => {
+          const rejected = nextRetryState(retryState, { type: "rejected" }, !!opts.onExpired);
+          retryState = rejected.state;
           if (destroyed) return;
           failed = true;
           pendingPlay = null;
           clearPoll();
           onErrorCbs.forEach((cb) => cb("视频加载失败（链接已失效）"));
-        })
-        .finally(() => {
-          retrying = false;
         });
       return;
     }
+    if (!decision.surface) return;
     // Second error (already retried) or no onExpired configured — surface it.
     failed = true;
     pendingPlay = null;
