@@ -3,9 +3,13 @@
 "use client"
 
 import * as React from "react"
-import { Check, Plus } from "lucide-react"
+import { Headphones, Plus, Check, Volume2 } from "lucide-react"
 
 import { cn } from "@/lib/utils"
+import { db } from "@/lib/db"
+import type { Material } from "@/lib/types"
+import { speak } from "@/lib/tts"
+import { useAudioClipPlayback, type AudioClip } from "@/lib/use-audio-clip"
 
 type WordCardProps = Omit<React.ComponentProps<"div">, "onClick"> & {
   word: string
@@ -19,8 +23,10 @@ type WordCardProps = Omit<React.ComponentProps<"div">, "onClick"> & {
   sourceSentence?: string
   /** Cue to form the mental picture for abstract words (methodology). */
   imageryHint?: string
-  /** Audio source URL for pronunciation playback (future: W4 audio materials). */
-  audioSrc?: string
+  /** Audio Material this card was mined from + the sentence index — enables
+   *  "听原句原声" clip playback (T2b). Only present for listening-mined cards. */
+  materialId?: string
+  sentenceIndex?: number
   onAdd?: () => void
   added?: boolean
   /** Disables the Add button (e.g. while the add request is in flight) without
@@ -37,15 +43,54 @@ function WordCard({
   definition,
   example,
   sourceSentence,
-  // TODO(W4): imageryHint/audioSrc are reserved slots — declared but not yet
-  // rendered (no data source until authentic audio/picture materials land).
+  // imageryHint is a reserved slot (methodology: mental-picture cue); not
+  // rendered yet — audio materials have empty imageryHint today.
   imageryHint,
-  audioSrc,
+  materialId,
+  sentenceIndex,
   onAdd,
   added = false,
   addDisabled = false,
   ...props
 }: WordCardProps) {
+  const clip = useAudioClipPlayback()
+  const [audioClip, setAudioClip] = React.useState<AudioClip | null>(null)
+
+  // Prefetch the AudioClip bounds (Material lookup) on render so the click
+  // handler can call clip.play() synchronously — any await inside the
+  // click handler would push audio.play() out of the user-gesture call
+  // stack and get it silently rejected by the browser's autoplay policy.
+  React.useEffect(() => {
+    let cancelled = false
+
+    const resolve = async (): Promise<AudioClip | null> => {
+      if (materialId == null || sentenceIndex == null) return null
+      const material: Material | undefined = await db.materials.get(materialId)
+      const sentence = material?.sentences?.[sentenceIndex]
+      if (
+        material?.mediaType === "audio" &&
+        material.sourceUrl != null &&
+        sentence?.audioStartMs != null &&
+        sentence?.audioEndMs != null
+      ) {
+        return {
+          sourceUrl: material.sourceUrl,
+          startMs: sentence.audioStartMs,
+          endMs: sentence.audioEndMs,
+        }
+      }
+      return null
+    }
+
+    void resolve().then((next) => {
+      if (!cancelled) setAudioClip(next)
+    })
+
+    return () => {
+      cancelled = true
+    }
+  }, [materialId, sentenceIndex])
+
   // Join "ADJECTIVE · B2" only from the parts that exist.
   const meta = [partOfSpeech, level].filter(Boolean).join(" · ")
 
@@ -62,11 +107,21 @@ function WordCard({
         <h4 className="font-heading text-[20px] leading-tight font-bold">
           {word}
         </h4>
-        {phonetic ? (
-          <span className="font-mono text-[12.5px] text-muted-foreground">
-            {phonetic}
-          </span>
-        ) : null}
+        <div className="flex items-center gap-2">
+          {phonetic ? (
+            <span className="font-mono text-[12.5px] text-muted-foreground">
+              {phonetic}
+            </span>
+          ) : null}
+          <button
+            type="button"
+            onClick={() => void speak(word)}
+            aria-label={`Pronounce ${word}`}
+            className="text-muted-foreground hover:text-primary transition-colors"
+          >
+            <Volume2 className="size-4" aria-hidden />
+          </button>
+        </div>
       </div>
 
       {meta ? (
@@ -82,6 +137,17 @@ function WordCard({
           <span className="not-italic text-[10px] uppercase tracking-wide text-primary/70 mr-1">真实语境</span>
           {sourceSentence}
         </p>
+      ) : null}
+
+      {materialId != null && sentenceIndex != null ? (
+        <button
+          type="button"
+          onClick={() => clip.play(audioClip, sourceSentence ?? word)}
+          className="mt-2 inline-flex items-center gap-1.5 text-xs font-semibold text-primary"
+        >
+          <Headphones className="size-3.5" aria-hidden />
+          {clip.playing ? "播放中…" : "听原句原声"}
+        </button>
       ) : null}
 
       {/* Hide the fresh-example line when it duplicates the source sentence. */}
