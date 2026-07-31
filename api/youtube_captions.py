@@ -53,6 +53,19 @@ def fetch_captions(video_id):
         "no_warnings": True,
         "noprogress": True,
     }
+    # YouTube blocks Vercel datacenter IPs with a cookies-based bot check
+    # ("Sign in to confirm you're not a bot"). Without cookies every request
+    # 503s. YTC_COOKIES holds a Netscape-format cookies.txt (exported from a
+    # logged-in browser session) as an encrypted Vercel env var; materialize
+    # it to /tmp per invocation (the runtime fs is read-only outside /tmp).
+    # Use a small account — these cookies are a live Google session and a
+    # busy serverless caller can trip YouTube anti-abuse.
+    cookies_env = os.environ.get("YTC_COOKIES", "")
+    if cookies_env.strip():
+        cookies_path = "/tmp/yt-cookies.txt"
+        with open(cookies_path, "w", encoding="utf-8") as f:
+            f.write(cookies_env)
+        opts["cookiefile"] = cookies_path
     url = f"https://www.youtube.com/watch?v={video_id}"
     with yt_dlp.YoutubeDL(opts) as ydl:
         info = ydl.extract_info(url, download=True)
