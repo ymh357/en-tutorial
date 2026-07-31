@@ -31,7 +31,7 @@ import { useProfile } from "@/hooks/use-db";
 import { db } from "@/lib/db";
 import { dbHelpers } from "@/lib/db-helpers";
 import { recordCost } from "@/lib/cost-tracker";
-import { completeTask } from "@/lib/task-pool";
+import { completeTask, getReusableTask } from "@/lib/task-pool";
 import { speak } from "@/lib/tts";
 import {
   listeningComprehensionSchema,
@@ -86,16 +86,36 @@ const DictationTab = ({ cefrLevel }: { cefrLevel: string }) => {
         .and(t => !t.completed && t.assignedDate !== "")
         .first();
 
-      if (poolTask) {
-        const content = poolTask.content as { sentences: string[] };
-        if (content.sentences && content.sentences.length > 0) {
-          setPoolSentences(content.sentences);
-          setSentenceIndex(0);
-          setSentence(content.sentences[0]);
-          await completeTask(poolTask.id);
-          setIsLoading(false);
-          return;
-        }
+      if (poolTask && isDictationData(poolTask.content)) {
+        const { sentences } = poolTask.content;
+        setPoolSentences(sentences);
+        setSentenceIndex(0);
+        setSentence(sentences[0]);
+        await completeTask(poolTask.id, "listening-dictation");
+        setIsLoading(false);
+        return;
+      }
+    } catch {
+      // Fall through to real-time generation
+    }
+
+    // Alternating repetition (W3): no fresh pool item, so revive a previously-
+    // seen one rather than discarding it. Still falls through to real-time
+    // generation if none eligible or the revived row is stale.
+    try {
+      const reusable = await getReusableTask("listening-dictation");
+      if (reusable && isDictationData(reusable.content)) {
+        const { sentences } = reusable.content;
+        setPoolSentences(sentences);
+        setSentenceIndex(0);
+        setSentence(sentences[0]);
+        await completeTask(reusable.id, "listening-dictation");
+        setIsLoading(false);
+        return;
+      }
+      if (reusable) {
+        // Revived a stale/old-shape row — burn it so it isn't re-revived.
+        await completeTask(reusable.id);
       }
     } catch {
       // Fall through to real-time generation
@@ -293,6 +313,16 @@ interface ComprehensionData {
   topic: string;
   questions: ComprehensionQuestion[];
 }
+
+// Local shape guard for the dictation pool-task content (mirrors the
+// fresh-path truthiness check, made explicit so the reused-content path can
+// validate older rows without trusting a bare `as` cast).
+const isDictationData = (value: unknown): value is { sentences: string[] } => {
+  if (!value || typeof value !== "object") return false;
+  const v = value as Record<string, unknown>;
+  return Array.isArray(v.sentences) && v.sentences.length > 0 &&
+    v.sentences.every((s) => typeof s === "string");
+};
 
 // Local shape guard for pool-task content (already an object read from
 // IndexedDB, not raw AI response text — no fence-strip/JSON.parse needed).
