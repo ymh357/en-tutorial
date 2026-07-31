@@ -2,23 +2,26 @@
 // Plays a single audio-Material sentence clip for WordCard / SRS review.
 // Lightweight vs createAudioPlayer (no per-sentence/AB/onStateChange contract):
 // just seek+play one bounded clip. Mirrors audio-source.ts's autoplay fix —
-// play() is fired in the user-gesture call stack (the button onClick → hook
-// play), and loadedmetadata only re-seeks; calling play() from loadedmetadata
-// would be rejected by the autoplay policy (silent).
+// play() is synchronous and fires audio.play() immediately in the caller's
+// user-gesture call stack (e.g. a button onClick); loadedmetadata only
+// re-seeks. The caller (WordCard/SRS) is responsible for prefetching the
+// Material and resolving { sourceUrl, startMs, endMs } BEFORE the gesture,
+// since any await before play() would push it past the gesture and get it
+// silently rejected by the browser's autoplay policy.
 
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { db } from "@/lib/db";
 import { speak } from "@/lib/tts";
-import type { Material } from "@/lib/types";
+
+export interface AudioClip {
+  sourceUrl: string;
+  startMs: number;
+  endMs: number;
+}
 
 export function useAudioClipPlayback(): {
-  play: (
-    materialId: string,
-    sentenceIndex: number,
-    fallbackText: string
-  ) => Promise<void>;
+  play: (clip: AudioClip | null, fallbackText: string) => void;
   playing: boolean;
 } {
   const audioRef = useRef<HTMLAudioElement | null>(null);
@@ -44,40 +47,19 @@ export function useAudioClipPlayback(): {
 
   useEffect(() => cleanup, []);
 
-  const play = async (
-    materialId: string,
-    sentenceIndex: number,
-    fallbackText: string
-  ): Promise<void> => {
+  const play = (clip: AudioClip | null, fallbackText: string): void => {
     // Tear down any prior playback before starting a new one.
     cleanup();
 
-    let material: Material | undefined;
-    try {
-      material = await db.materials.get(materialId);
-    } catch {
+    // No clip (non-audio material, missing bounds, or prefetch failed) —
+    // fall back to TTS so the learner still hears the sentence.
+    if (!clip) {
       void speak(fallbackText);
       return;
     }
 
-    const sentence = material?.sentences?.[sentenceIndex];
-    const startMs = sentence?.audioStartMs;
-    const endMs = sentence?.audioEndMs;
-    // Only audio materials with a bounded clip (both start+end) can play a
-    // real clip; anything else (video, missing bounds, no material) falls
-    // back to TTS so the learner still hears the sentence.
-    if (
-      !material ||
-      material.mediaType !== "audio" ||
-      !material.sourceUrl ||
-      startMs == null ||
-      endMs == null
-    ) {
-      void speak(fallbackText);
-      return;
-    }
-
-    const audio = new Audio(material.sourceUrl);
+    const { sourceUrl, startMs, endMs } = clip;
+    const audio = new Audio(sourceUrl);
     audioRef.current = audio;
     let started = false;
 
@@ -93,31 +75,33 @@ export function useAudioClipPlayback(): {
       void speak(fallbackText);
     };
 
-    try {
-      started = true;
-      setPlaying(true);
-      await audio.play();
-      // If metadata already loaded by now, seek immediately; otherwise the
-      // onloadedmetadata handler will seek.
-      if (audio.readyState >= 1) audio.currentTime = startMs / 1000;
+    started = true;
+    setPlaying(true);
+    audio
+      .play()
+      .then(() => {
+        // If metadata already loaded by now, seek immediately; otherwise the
+        // onloadedmetadata handler will seek.
+        if (audio.readyState >= 1) audio.currentTime = startMs / 1000;
 
-      // Poll to pause at endMs (clip bound).
-      if (pollRef.current) clearInterval(pollRef.current);
-      pollRef.current = setInterval(() => {
-        if (audio.currentTime * 1000 >= endMs) {
-          audio.pause();
-          if (pollRef.current) {
-            clearInterval(pollRef.current);
-            pollRef.current = null;
+        // Poll to pause at endMs (clip bound).
+        if (pollRef.current) clearInterval(pollRef.current);
+        pollRef.current = setInterval(() => {
+          if (audio.currentTime * 1000 >= endMs) {
+            audio.pause();
+            if (pollRef.current) {
+              clearInterval(pollRef.current);
+              pollRef.current = null;
+            }
+            setPlaying(false);
           }
-          setPlaying(false);
-        }
-      }, 100);
-    } catch {
-      cleanup();
-      setPlaying(false);
-      void speak(fallbackText);
-    }
+        }, 100);
+      })
+      .catch(() => {
+        cleanup();
+        setPlaying(false);
+        void speak(fallbackText);
+      });
   };
 
   return { play, playing };
