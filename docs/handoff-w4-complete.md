@@ -113,7 +113,8 @@ bdb7b2a  Task3  WordCard T1 发音 + T2b 听原句 + 删 audioSrc
 
 ### W4 之外遗留(handoff-w4-continuation 记载)
 3. **W3 审查 #6**:cron 产 27 条、客户端只用 9 条(level-scoping 丢 18 条成本)。中期改 `/api/tasks/today?level=studyLevel` 服务端过滤。
-4. **getReusableTask 仅 shadowing 接入**:其余 8 个 pool 消费方(dictation/comprehension/prediction/reader/translate/writing)仍 miss→实时生成。
+4. ~~**getReusableTask 仅 shadowing 接入**~~ **已完成(2026-07-31,SDD 6 task + final review + fix wave)**:5 个生成型消费方(dictation/comprehension/prediction/reader-AiGenerateTab/translate)已接 fresh→reusable→realtime 三段式,`seenIn`=PoolTaskType 字面量,默认 6h。4 无守卫站补 shape 谓词(accept-set 不放宽)。**2 个每日新卡型**(reader Today's Article / writing Today's Prompt)**未接**(每日新鲜语义)。Final review 发现 1 Critical + 3 Important 跨 task 架构 bug,fix wave 根因修复:(a) `getReusableTask` 写 `assignedDate=today()+completed=false` 使复活行满足 fresh 谓词,泄漏到同页未接线的每日新卡消费者→4 处每日新卡/probe 查询加 `!t.exposureCount` gate 排除复活行;(b) reusable guard-fail burn 用 `completeTask` 设 `completed=true`,恰是 revive 资格谓词→burn 不退休反而 6h 后再复活,5 处改 `db.poolTasks.delete`(真退休);(c) `isComprehensionData` 空 passage/topic、`isReadingArticleData` 未验元素补齐。commits fd657b5..2498267(本地未 push)。详见 `docs/superpowers/specs/2026-07-31-getreusable-task-wiring-design.md` + `docs/superpowers/plans/2026-07-31-getreusable-task-wiring.md`。
+  - parked(非阻塞):5 guard 5 种严格度(无共享模块收益);shadowing fresh-path burn→delete(pre-existing,另议);translate probe `poolTypeByMode` 未收窄 PoolTaskType(out of scope);spec doc:63 旧"burn"措辞待更。
 5. **fluency 模式 overdue 顺延**:`lib/task-pool.ts` 注释仍提 TASKS_PER_DAY=6/overdue,fluency 下不应 overdue 置顶但 getTodayTasks 仍按 assignedDate 顺延。
 6. **W2 审查 N1**:WordCard 的 imageryHint 槽位(已保留未渲染,audio Material 的 imageryHint 当前空串)。待 imageryHint 有数据源再渲染。
 7. **ruff Python lint**:`api/youtube_captions.py` 未引 ruff(dev-only),待确认。
@@ -140,6 +141,6 @@ bdb7b2a  Task3  WordCard T1 发音 + T2b 听原句 + 删 audioSrc
 W4 已闭环 + 独立整体终审通过。继续点:
 - **push D 阶段两 commit**(31d257f、017dfd5)— 需用户授权(本地 main 已超 origin/main 两个 commit)。push 后 origin/main = 017dfd5。
 - **真机听感确认**(audio/video 出声)→ 若有问题定位到具体路径。
-- **W3/W2 遗留**(上面 #3-#7)— 按价值排:`getReusableTask` 8 消费方接入(语料交替重复池真正生效,方法论核心)> cron 成本优化 > fluency overdue。
+- **W3/W2 遗留**(上面 #3-#7)— 按价值排:getReusableTask 接入**已完成**;接着 **cron 成本优化**(#3,服务端 27 条客户端只用 9 条)> fluency overdue(#5)> ruff(#7)> 旧 Material migration(#8)。
 - **migration #8**(旧 Material audioEndMs 修复)——若 audio/video 素材已积累。
 - **W4-外 新增候选**:listening 挖词卡接字典/LLM 填 `back` 释义(当前 spec 故意 empty,见 I2(a) spec question)。
