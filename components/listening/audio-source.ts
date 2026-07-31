@@ -44,10 +44,14 @@ export const createAudioPlayer = (opts: AudioPlayerOpts): MediaSource => {
     if (ready || destroyed) return;
     ready = true;
     onReadyCbs.forEach((cb) => cb());
+    // If play() was already called in the user's gesture (before metadata was
+    // ready), playback has started but currentTime couldn't be set to startMs
+    // yet — seek now to the sentence start so the clip plays from the right
+    // point. (playInternal deferred the seek with `if (ready)`.)
     if (pendingPlay && !destroyed) {
-      const { startMs, endMs } = pendingPlay;
+      const { startMs } = pendingPlay;
       pendingPlay = null;
-      playInternal(startMs, endMs);
+      audio.currentTime = startMs / 1000;
     }
   });
   // Audio is a detached <audio> (sound only — no visible error frame like
@@ -110,11 +114,12 @@ export const createAudioPlayer = (opts: AudioPlayerOpts): MediaSource => {
   const playInternal = (startMs: number, endMs: number): void => {
     currentStartMs = startMs;
     currentEndMs = endMs;
-    audio.currentTime = startMs / 1000;
-    // Autoplay policy can reject play() when called outside a user gesture
-    // (e.g. the pendingPlay flush from loadedmetadata, which isn't a gesture).
-    // Log the rejection so it's diagnosable — don't surface as a hard error
-    // since the user's own click-path goes through a gesture and works.
+    if (ready) audio.currentTime = startMs / 1000;
+    // autoplay policy: play() must run in the user-gesture call stack when
+    // possible. The pendingPlay flush from loadedmetadata is NOT a gesture, so
+    // browsers reject it — therefore play() always kicks off play() here in the
+    // caller's gesture, and if metadata isn't ready yet the loadedmetadata
+    // handler re-seeks to startMs. Log rejections for diagnosis.
     void audio.play().catch((e) => {
       console.warn("audio play() rejected (autoplay policy?)", e);
     });
@@ -127,12 +132,14 @@ export const createAudioPlayer = (opts: AudioPlayerOpts): MediaSource => {
       // count a listen (C2-class: a guarded action that fails silently while
       // side effects accumulate). The error is already surfaced via onError.
       if (failed) return;
-      if (!ready) {
-        pendingPlay = { startMs, endMs };
-        clearPoll();
-        return;
-      }
-      pendingPlay = null;
+      // Always attempt playback in the caller's (user-gesture) call stack —
+      // HTMLAudioElement.play() can start before loadedmetadata, and the
+      // autoplay policy only allows it within a gesture. The earlier design
+      // queued pendingPlay and flushed from the loadedmetadata callback (not a
+      // gesture), so the browser rejected play() and the learner heard nothing
+      // (A1 audio test: 8s watchdog nudge fired because playback never started).
+      // If metadata isn't ready, the loadedmetadata handler re-seeks to startMs.
+      pendingPlay = ready ? null : { startMs, endMs };
       playInternal(startMs, endMs);
     },
     pause() {
