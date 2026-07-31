@@ -34,6 +34,7 @@ const sourceLabels: Record<CardSource, string> = {
   writing: "Writing",
   translate: "Translation",
   manual: "Manual",
+  listening: "精听",
 };
 
 const masteryLabels: Record<MasteryLevel, string> = {

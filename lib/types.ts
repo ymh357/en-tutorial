@@ -5,7 +5,8 @@ export type CardSource =
   | "reading"
   | "writing"
   | "translate"
-  | "manual";
+  | "manual"
+  | "listening";
 export type MasteryLevel = "new" | "learning" | "relearning" | "familiar" | "mastered";
 export type ScenarioType = "preset" | "custom" | "free" | "recommended";
 export type WritingTaskType =
@@ -39,6 +40,7 @@ export interface Card {
   lapses?: number; // cumulative failure count; algorithm reads `card.lapses ?? 0`
   lapsedInterval?: number; // interval right before entering relearning, for graduation scaling; cleared once graduated
   materialId?: string; // link to the Material this card was mined from (W4)
+  sentenceIndex?: number; // for listening-mined cards: index into Material.sentences (T2b clip playback)
   sourceSentence?: string; // the real sentence where the word was actually encountered, kept distinct from a fresh `example`
   imageryHint?: string; // a cue to form the mental picture for abstract words (methodology: fire-together-wire-together)
 }
