@@ -304,3 +304,228 @@ export const createYouTubePlayer = (
     },
   };
 };
+
+// Standard playback-rate grid (matches audio-source.ts) — HTMLVideoElement
+// supports arbitrary rates, but clamping to this grid keeps the rate buttons
+// and getAvailableRates consistent across all MediaSource implementations.
+const STANDARD_RATES = [0.5, 0.75, 1, 1.25, 1.5, 2];
+
+export interface VideoPlayerOpts {
+  /** Direct media URL (e.g. a resolved Bilibili playurl mp4 stream). */
+  src: string;
+  // React-owned wrapper element. Unlike createYouTubePlayer (which mounts a
+  // non-React <div> that YT.Player replaces with an iframe), the <video>
+  // element itself is appended directly into host — no intermediary mount
+  // node is needed since we own the element outright.
+  host: HTMLElement;
+  // Bilibili's resolved mp4 stream URL expires after a short TTL. If a
+  // playback error occurs, onExpired re-resolves a fresh signed URL so the
+  // learner doesn't hit a dead player on a stale link. One retry only — a
+  // second error after retrying is a real failure (network/CORS/corrupt
+  // file), not an expired URL.
+  onExpired?: () => Promise<string>;
+}
+
+// HTMLVideoElement wrapper — same per-sentence MediaSource contract as
+// createAudioPlayer (audio-source.ts), but mounted visibly in `host` (a
+// picture to render, unlike audio's detached element) and with an
+// onExpired retry path for signed URLs that expire. The 100ms startPoll
+// reads video.currentTime for AB-loop endMs — always readable on a media
+// element, which is why this direct-<video> path works where embedding
+// Bilibili's native iframe would not expose playback position.
+export const createVideoPlayer = (opts: VideoPlayerOpts): MediaSource => {
+  const video = document.createElement("video");
+  video.src = opts.src;
+  video.controls = true;
+  opts.host.appendChild(video);
+  video.load();
+
+  const stateCbs = new Set<(s: "playing" | "paused" | "ended") => void>();
+  const onReadyCbs = new Set<() => void>();
+  const onErrorCbs = new Set<(message: string) => void>();
+  let pollInterval: ReturnType<typeof setInterval> | null = null;
+  let abLoop = false;
+  let currentStartMs = 0;
+  let currentEndMs = 0;
+  let pendingPlay: { startMs: number } | null = null;
+  let ready = false;
+  let failed = false;
+  let destroyed = false;
+  // Guards the onExpired retry: only one re-resolve attempt per player
+  // instance, and re-entry-safe if a second error event fires while the
+  // first re-resolve is still in flight (fire-and-await, not fire-and-block).
+  let retried = false;
+  let retrying = false;
+
+  const mapVideoEvent = (
+    type: string
+  ): "playing" | "paused" | "ended" | null =>
+    type === "play" ? "playing" : type === "pause" ? "paused" : type === "ended" ? "ended" : null;
+
+  video.addEventListener("loadedmetadata", () => {
+    if (ready || destroyed) return;
+    ready = true;
+    onReadyCbs.forEach((cb) => cb());
+    // Mirrors audio-source: if play() ran before metadata was ready, seek to
+    // the queued startMs now (playInternal deferred the seek with `if (ready)`).
+    if (pendingPlay && !destroyed) {
+      const { startMs } = pendingPlay;
+      pendingPlay = null;
+      video.currentTime = startMs / 1000;
+    }
+  });
+  video.addEventListener("error", () => {
+    if (destroyed || retrying) return;
+    // First error, with a re-resolver available and not yet retried this
+    // session: attempt one fresh-URL retry instead of surfacing failure.
+    if (opts.onExpired && !retried) {
+      retried = true;
+      retrying = true;
+      // Reset ready so onReady re-fires once the fresh src's metadata loads —
+      // the old src's playback position is meaningless for the new stream.
+      ready = false;
+      void opts.onExpired()
+        .then((fresh) => {
+          if (destroyed) return;
+          video.src = fresh;
+          video.load();
+        })
+        .catch(() => {
+          if (destroyed) return;
+          failed = true;
+          pendingPlay = null;
+          clearPoll();
+          onErrorCbs.forEach((cb) => cb("视频加载失败（链接已失效）"));
+        })
+        .finally(() => {
+          retrying = false;
+        });
+      return;
+    }
+    // Second error (already retried) or no onExpired configured — surface it.
+    failed = true;
+    pendingPlay = null;
+    clearPoll();
+    const err = video.error;
+    const msg =
+      err?.code === 4
+        ? "视频加载失败（URL 失效或网络错误）"
+        : err?.code === 3
+          ? "视频解码失败（文件可能损坏）"
+          : "视频加载失败";
+    onErrorCbs.forEach((cb) => cb(msg));
+  });
+  video.addEventListener("play", () => {
+    const s = mapVideoEvent("play");
+    if (s) stateCbs.forEach((cb) => cb(s));
+  });
+  video.addEventListener("pause", () => {
+    const s = mapVideoEvent("pause");
+    if (s) stateCbs.forEach((cb) => cb(s));
+  });
+  video.addEventListener("ended", () => {
+    const s = mapVideoEvent("ended");
+    if (s) stateCbs.forEach((cb) => cb(s));
+    clearPoll();
+  });
+
+  const clearPoll = (): void => {
+    if (pollInterval) {
+      clearInterval(pollInterval);
+      pollInterval = null;
+    }
+  };
+  const startPoll = (): void => {
+    clearPoll();
+    pollInterval = setInterval(() => {
+      const ms = video.currentTime * 1000;
+      if (ms >= currentEndMs) {
+        if (abLoop) {
+          // Seek back without pausing — element is already playing, so it
+          // keeps playing from startMs with no second play() call. Calling
+          // play() here would run outside any user gesture (setInterval
+          // callback) and be rejected by the autoplay policy.
+          video.currentTime = currentStartMs / 1000;
+        } else {
+          video.pause();
+          clearPoll();
+        }
+      }
+    }, 100);
+  };
+
+  // Requires metadata ready (currentTime is settable only once duration is known).
+  const playInternal = (startMs: number, endMs: number): void => {
+    currentStartMs = startMs;
+    currentEndMs = endMs;
+    if (ready) video.currentTime = startMs / 1000;
+    // autoplay policy: play() must run in the user-gesture call stack when
+    // possible — always kick off play() here in the caller's gesture; if
+    // metadata isn't ready yet the loadedmetadata handler re-seeks to startMs.
+    void video.play().catch((e) => {
+      console.warn("video play() rejected (autoplay policy?)", e);
+    });
+    startPoll();
+  };
+
+  return {
+    play(startMs, endMs) {
+      // If the media failed to load (and no further retry is possible),
+      // don't queue/play and don't let the caller count a listen. The error
+      // is already surfaced via onError.
+      if (failed) return;
+      pendingPlay = ready ? null : { startMs };
+      playInternal(startMs, endMs);
+    },
+    pause() {
+      pendingPlay = null;
+      video.pause();
+      clearPoll();
+    },
+    seekTo(ms) {
+      if (ready) video.currentTime = ms / 1000;
+    },
+    setRate(rate) {
+      const clamped = [...STANDARD_RATES].sort(
+        (a, b) => Math.abs(a - rate) - Math.abs(b - rate)
+      )[0];
+      video.playbackRate = clamped;
+      return clamped;
+    },
+    getAvailableRates() {
+      return [...STANDARD_RATES];
+    },
+    setAbLoop(on) {
+      abLoop = on;
+    },
+    onStateChange(cb) {
+      stateCbs.add(cb);
+      return () => stateCbs.delete(cb);
+    },
+    onReady(cb) {
+      onReadyCbs.add(cb);
+      // If metadata already loaded (e.g. cached), fire immediately.
+      if (ready) cb();
+      return () => onReadyCbs.delete(cb);
+    },
+    onError(cb) {
+      onErrorCbs.add(cb);
+      // If the error already fired before subscription, surface it now.
+      if (failed) cb("视频加载失败");
+      return () => onErrorCbs.delete(cb);
+    },
+    destroy() {
+      destroyed = true;
+      pendingPlay = null;
+      clearPoll();
+      stateCbs.clear();
+      onReadyCbs.clear();
+      onErrorCbs.clear();
+      video.pause();
+      video.src = "";
+      video.removeAttribute("src");
+      video.load();
+      if (video.parentNode === opts.host) opts.host.removeChild(video);
+    },
+  };
+};
