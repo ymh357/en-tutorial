@@ -662,30 +662,35 @@ export const ShadowingTab = ({
     if (!material || !pendingSelection) return;
     const front = pendingSelection;
     try {
-      await db.cards.add({
-        id: crypto.randomUUID(),
-        front,
-        back: "",
-        type: "vocabulary",
-        lemma: front,
-        context: "",
-        sourceSentence: currentSentence,
-        source: "listening",
-        sourceId: material.id,
-        materialId: material.id,
-        sentenceIndex: index,
-        easeFactor: 2.5,
-        interval: 0,
-        repetitions: 0,
-        nextReview: new Date(),
-        masteryLevel: "new",
-        createdAt: new Date(),
-        lastReviewedAt: null,
-      });
+      const existing = await dbHelpers.getCardByLemma(front);
+      if (!existing) {
+        await db.cards.add({
+          id: crypto.randomUUID(),
+          front,
+          back: "",
+          type: "vocabulary",
+          lemma: front,
+          context: "",
+          sourceSentence: currentSentence,
+          source: "listening",
+          sourceId: material.id,
+          materialId: material.id,
+          sentenceIndex: index,
+          easeFactor: 2.5,
+          interval: 0,
+          repetitions: 0,
+          nextReview: new Date(),
+          masteryLevel: "new",
+          createdAt: new Date(),
+          lastReviewedAt: null,
+        });
+        await dbHelpers.incrementTodayStat("wordsLearned");
+      }
       setJustSavedCard(true);
       setTimeout(() => setJustSavedCard(false), 1500);
     } catch (err) {
       console.error("save card failed", err);
+      setError(err instanceof Error ? err.message : "Failed to save card");
     }
     setPendingSelection(null);
     window.getSelection()?.removeAllRanges();

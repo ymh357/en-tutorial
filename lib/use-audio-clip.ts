@@ -38,6 +38,7 @@ export function useAudioClipPlayback(): {
       a.pause();
       a.onloadedmetadata = null;
       a.onerror = null;
+      a.onended = null;
       a.src = "";
       a.removeAttribute("src");
       a.load();
@@ -73,6 +74,17 @@ export function useAudioClipPlayback(): {
       cleanup();
       setPlaying(false);
       void speak(fallbackText);
+    };
+    // Natural end-of-file guard: if endMs is slightly past the actual audio
+    // duration (rounding/truncated blob), the endMs poll never fires because
+    // currentTime freezes below endMs once playback ends. Without this, the
+    // poll spins forever and `playing` stays stuck true.
+    audio.onended = () => {
+      if (pollRef.current) {
+        clearInterval(pollRef.current);
+        pollRef.current = null;
+      }
+      setPlaying(false);
     };
 
     started = true;
