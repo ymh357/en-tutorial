@@ -6,7 +6,8 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "lint:py": "ruff check api/ && ruff format --check api/"
   },
   "dependencies": {
     "@ai-sdk/openai-compatible": "^3.0.11",

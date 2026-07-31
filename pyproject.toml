@@ -1,0 +1,19 @@
+# Python tooling for the Vercel Services backend (api/youtube_captions.py).
+# ruff is dev-only — it is NOT in requirements.txt (runtime deps deployed to
+# Vercel Services). Install locally: `brew install ruff` (or pip install ruff).
+# Run: `npm run lint:py` (or `ruff check api/`).
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+# A pragmatic baseline. E/F (pycodestyle errors / pyflakes) are the floor;
+# I (import sorting) keeps the yt-dlp/stdlib grouping tidy; UP (pyupgrade)
+# nudges modern syntax. BLE001 is allowed inline via noqa where a top-level
+# ASGI catch-all is intentional (see api/youtube_captions.py).
+select = ["E", "F", "I", "UP"]
+
+[tool.ruff.lint.isort]
+# stdlib / third-party separation is enough for a single-module service.
+known-first-party = []

@@ -58,8 +58,7 @@ def fetch_captions(video_id):
         info = ydl.extract_info(url, download=True)
 
     # Manual subtitles override auto for the same language code (more accurate).
-    subs = {**(info.get("automatic_captions", {}) or {}),
-            **(info.get("subtitles", {}) or {})}
+    subs = {**(info.get("automatic_captions", {}) or {}), **(info.get("subtitles", {}) or {})}
     for lang in ("en-orig", "en"):
         entries = subs.get(lang)
         if not entries:
@@ -71,7 +70,7 @@ def fetch_captions(video_id):
         if not filepath:
             continue
         try:
-            with open(filepath, "r", encoding="utf-8") as f:
+            with open(filepath, encoding="utf-8") as f:
                 data = json.load(f)
             # Deferred ③: en-orig can yield a structurally valid but empty
             # json3 (events missing/None/[]) on some videos. Don't return that
@@ -121,16 +120,19 @@ async def app(scope, receive, send):
         # Map yt-dlp failures: unavailable/private -> 404; transient/network/429 -> 503.
         msg = str(e)
         lower = msg.lower()
-        unavailable = any(s in lower for s in
-                          ("private", "unavailable", "does not exist", "removed"))
+        unavailable = any(
+            s in lower for s in ("private", "unavailable", "does not exist", "removed")
+        )
         status = 404 if unavailable else 503
-        body = {"error": "caption source unavailable" if unavailable else "caption fetch failed",
-                "videoId": video_id}
+        body = {
+            "error": "caption source unavailable" if unavailable else "caption fetch failed",
+            "videoId": video_id,
+        }
         if DEBUG_DETAIL:
             body["detail"] = msg
         await _respond(send, status, body)
         return
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 — intentional ASGI catch-all so an unexpected (non yt-dlp) failure returns a clean 500 instead of a stack trace
         # Unexpected (non yt-dlp) error — keep the diagnostic behind the flag too.
         body = {"error": "internal error", "videoId": video_id}
         if DEBUG_DETAIL:
