@@ -1,7 +1,17 @@
-# Python tooling for the Vercel Services backend (api/youtube_captions.py).
-# ruff is dev-only — it is NOT in requirements.txt (runtime deps deployed to
-# Vercel Services). Install locally: `brew install ruff` (or pip install ruff).
-# Run: `npm run lint:py` (or `ruff check api/`).
+# Python backend for the Vercel Services `captions` service (api/youtube_captions.py).
+# Vercel Services' Python runtime builds this with uv, which requires a
+# [project] table to lock. Runtime deps live here (not requirements.txt) so uv
+# is the single source of truth. ruff is a local dev tool, not a runtime dep —
+# install it separately (`brew install ruff`); run `npm run lint:py`.
+
+[project]
+name = "captions"
+version = "0"
+requires-python = ">=3.11"
+dependencies = [
+    "yt-dlp>=2026.7.4",
+    "certifi>=2026.7.22",
+]
 
 [tool.ruff]
 line-length = 100
