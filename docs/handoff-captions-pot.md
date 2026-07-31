@@ -129,3 +129,25 @@ ed4e74a fix(listening): accurate 503 copy — YouTube anti-bot blocks auto-capti
 - 新 route 已随 push 自动部署(git-connected)。push 后 prod 即有 `/api/bilibili/captions` + `/api/bilibili/media`。
 - prod origin/main 待 push(本会话 commits 全 local)。push 需用户授权。
 
+### 自证轮(2026-07-31,用户指令:不要依赖实测 代码自证)
+
+user 要求"代码做到能自证",不靠真机实测。自证轮 3 任务完成 + broad re-review 通过(commits 4574884 / 1aacd27 / 515e250):
+
+- **T9 b23 服务端化**:`resolveBvid`(server,lib/bilibili.ts)+ `isBilibiliLink`(pure client)+ 两路由 `?url=` + import 页删客户端 b23 fetch + shadowing-tab 用 `isBilibiliLink`/`?url=`。消除客户端 CORS 黑盒(服务端 fetch 无 CORS)+ 修掉 sourceUrl=b23→extractBvid null→静默无视频 隐患。
+- **T10 onExpired reducer**:抽纯 `nextRetryState(state,event,hasCallback)` reducer,createVideoPlayer 委派。T5 行为不变(一次重试/retrying 守卫/ready 重置/surface)。fix C1:`ready=retryState.ready` 收进 try 分支(surface 路径不再覆盖 live ready,seekTo/onReady T5 parity)。
+- **T11+T12 测试基建 + 矩阵**:node:test + tsx devDep(首个测试),33/33 通过。6 文件:parseBilibili、wbiSign(独立 re-derive md5,非 golden)/getMixinKey/pickEnglishSubtitle/resolveBvid、isBilibiliLink/extractBvid、两路由控制流(含 **T4 C1 回归守卫**:解析 -352 重试 URL query string 断言每键一次)、nextRetryState 6 转移。
+
+**6 项"实测"自证映射(broad re-review 判诚实)**:
+| 项 | 判定 |
+|---|---|
+| 字幕管线 | parseBilibili test 自证解析;真实字幕 JSON 载荷形态 = external(代码不可控) |
+| b23 CORS | **结构性消除**(服务端化,客户端无 CORS 机制可失败) |
+| wbi -352 重试 | **自证**(C1 guard 解析 query 串计数 + wbiSign 独立 re-derive) |
+| onExpired 过期 | reducer **自证**;DOM 壳 T5-reviewed 未变(诚实边界) |
+| prod IP 风控 | external(需真流量,代码降级 503→粘贴 已验) |
+| CSS sizing | 已 T8 修(diff 证据) |
+
+仍 external 的(真实字幕 JSON 载荷、prod 负载 IP 风控)是代码不可控的外部属性,非自证失败。**自证目标达成**:代码可控的纯函数/状态机/控制流全部由可重复测试 pinned,不依赖真机。
+
+**运维新增**:`tsx` devDep(test 运行);`npm test` 跑 `**/*.test.ts`。无新 env。push 后 prod 自动部署。
+
