@@ -44,10 +44,12 @@ import type { Material } from "@/lib/types";
 import { materialToShadowingData } from "@/components/listening/material-adapter";
 import {
   createYouTubePlayer,
+  createVideoPlayer,
   type MediaSource,
 } from "@/components/listening/media-source";
 import { createAudioPlayer } from "@/components/listening/audio-source";
 import { extractVideoId } from "@/lib/youtube";
+import { extractBvid } from "@/lib/bilibili-client";
 
 type RecStatus = "idle" | "recording" | "transcribing";
 
@@ -148,6 +150,13 @@ export const ShadowingTab = ({
   const isAudio = mediaKind === "audio";
   const isMedia = isVideo || isAudio;
   const videoId = isVideo ? extractVideoId(material?.sourceUrl) : null;
+  // Bilibili fallback: a video Material with no extractable YouTube id (its
+  // sourceUrl is a bilibili.com watch URL) still needs a platform id to drive
+  // the media-construction effect's dispatch below. Only checked when videoId
+  // is absent — a URL can't match both extractors.
+  const bvid = isVideo && !videoId && material?.sourceUrl
+    ? extractBvid(material.sourceUrl)
+    : null;
   // Methodology: level decides step fineness. fine (A1-A2) => slower default
   // playback + forced imagine context; coarse (C1-C2) => native speed, may
   // skip the guided imagine step.
@@ -303,95 +312,139 @@ export const ShadowingTab = ({
     return () => clearInterval(timer);
   }, [stage]);
 
-  // Media mode: construct the player once (video: YouTube iframe via host;
-  // audio: HTMLAudioElement from sourceUrl). The effect body only builds the
-  // player, refs it, and registers callbacks — setState happens inside those
-  // callbacks only (React 19 rule, see the focus-watchdog effect above for the
-  // same pattern). `data` itself is derived from `material` above (no state
-  // needed — see the `data` derivation comment).
+  // Media mode: construct the player once (video: YouTube iframe via host, or
+  // Bilibili <video> via an async-resolved signed mp4 URL; audio: HTMLAudioElement
+  // from sourceUrl). The effect body only builds the player, refs it, and
+  // registers callbacks — setState happens inside those callbacks only (React 19
+  // rule, see the focus-watchdog effect above for the same pattern). `data`
+  // itself is derived from `material` above (no state needed — see the `data`
+  // derivation comment).
   useEffect(() => {
     if (!isMedia || !material) return;
-    let source: MediaSource;
-    if (isVideo) {
-      if (!videoId) return;
-      const host = playerHostRef.current;
-      if (!host) return;
-      source = createYouTubePlayer({ videoId, host });
-    } else if (isAudio && material.sourceUrl) {
-      source = createAudioPlayer({ src: material.sourceUrl });
-    } else {
-      return;
-    }
-    sourceRef.current = source;
-    // Media playback is a legitimately still, sustained-attention activity —
-    // register with the focus watchdog so continuous PLAYING doesn't get
-    // mistaken for going idle. A single markActive() on the state change is
-    // NOT enough: the player then plays for many seconds with no further
-    // state events, so the watchdog (which arms on listen/recall entry) would
-    // fire its 20s nudge mid-playback. Keep marking active on a cadence while
-    // playing, and stop when paused/ended (A1 found this nudge firing during
-    // playback). Gate markActive on stage==="listen" via stageRef (the effect
-    // doesn't re-run on stage change) so a still-playing clip can't keep the
-    // watchdog fed in recall, where idle SHOULD nudge (review [重要]).
-    let activeInterval: ReturnType<typeof setInterval> | null = null;
-    const markActiveIfListening = (): void => {
-      if (stageRef.current === "listen") markActive();
-    };
-    // Capture availableRates + sync the player's rate once, at onReady — the
-    // earliest point getAvailableRates() reflects the actual media. Doing this
-    // on the first onStateChange was unreliable: if the video is unavailable or
-    // auto-play is blocked, the player sits at -1 (unstarted, mapState null)
-    // and onStateChange never fires, leaving availableRates null forever and
-    // rate buttons undisabled pre-ready (review [次要]). Audio's onReady fires
-    // on loadedmetadata.
-    const unsubscribeReady = source.onReady(() => {
-      const rates = source.getAvailableRates();
-      setAvailableRates(rates);
-      if (!rates.includes(playbackRate)) {
-        const applied = source.setRate(playbackRate);
-        if (applied != null) setUserRateOverride(applied);
-      } else {
-        source.setRate(playbackRate);
-      }
-    });
-    const unsubscribe = source.onStateChange((state) => {
-      if (state === "playing") {
-        markActiveIfListening();
-        if (!activeInterval) {
-          activeInterval = setInterval(() => markActiveIfListening(), 5000);
+    // Shared wiring for every MediaSource implementation (YouTube/Bilibili/
+    // audio) so the Bilibili branch's async resolve ends up with byte-for-byte
+    // the same callbacks as the synchronous branches below. Returns the
+    // cleanup teardown that each branch (sync or async) is responsible for
+    // invoking on its own cleanup path.
+    const wireSource = (source: MediaSource): (() => void) => {
+      sourceRef.current = source;
+      // Media playback is a legitimately still, sustained-attention activity —
+      // register with the focus watchdog so continuous PLAYING doesn't get
+      // mistaken for going idle. A single markActive() on the state change is
+      // NOT enough: the player then plays for many seconds with no further
+      // state events, so the watchdog (which arms on listen/recall entry) would
+      // fire its 20s nudge mid-playback. Keep marking active on a cadence while
+      // playing, and stop when paused/ended (A1 found this nudge firing during
+      // playback). Gate markActive on stage==="listen" via stageRef (the effect
+      // doesn't re-run on stage change) so a still-playing clip can't keep the
+      // watchdog fed in recall, where idle SHOULD nudge (review [重要]).
+      let activeInterval: ReturnType<typeof setInterval> | null = null;
+      const markActiveIfListening = (): void => {
+        if (stageRef.current === "listen") markActive();
+      };
+      // Capture availableRates + sync the player's rate once, at onReady — the
+      // earliest point getAvailableRates() reflects the actual media. Doing this
+      // on the first onStateChange was unreliable: if the video is unavailable or
+      // auto-play is blocked, the player sits at -1 (unstarted, mapState null)
+      // and onStateChange never fires, leaving availableRates null forever and
+      // rate buttons undisabled pre-ready (review [次要]). Audio's onReady fires
+      // on loadedmetadata.
+      const unsubscribeReady = source.onReady(() => {
+        const rates = source.getAvailableRates();
+        setAvailableRates(rates);
+        if (!rates.includes(playbackRate)) {
+          const applied = source.setRate(playbackRate);
+          if (applied != null) setUserRateOverride(applied);
+        } else {
+          source.setRate(playbackRate);
         }
-      } else {
+      });
+      const unsubscribe = source.onStateChange((state) => {
+        if (state === "playing") {
+          markActiveIfListening();
+          if (!activeInterval) {
+            activeInterval = setInterval(() => markActiveIfListening(), 5000);
+          }
+        } else {
+          if (activeInterval) {
+            clearInterval(activeInterval);
+            activeInterval = null;
+          }
+          markActiveIfListening();
+        }
+      });
+      // Surface media load failures (blob URL dead / file corrupt / video
+      // unavailable / embedding disabled). Without this, audio in particular — a
+      // detached <audio> with no visible error frame — fails silently: ready
+      // never true, play() no-ops, listensCount still climbs (review [重要]).
+      const unsubscribeError = source.onError((message) => {
+        setError(message);
         if (activeInterval) {
           clearInterval(activeInterval);
           activeInterval = null;
         }
-        markActiveIfListening();
-      }
-    });
-    // Surface media load failures (blob URL dead / file corrupt / video
-    // unavailable / embedding disabled). Without this, audio in particular — a
-    // detached <audio> with no visible error frame — fails silently: ready
-    // never true, play() no-ops, listensCount still climbs (review [重要]).
-    const unsubscribeError = source.onError((message) => {
-      setError(message);
-      if (activeInterval) {
-        clearInterval(activeInterval);
-        activeInterval = null;
-      }
-    });
-    return () => {
-      if (activeInterval) clearInterval(activeInterval);
-      unsubscribe();
-      unsubscribeReady();
-      unsubscribeError();
-      source.destroy();
-      sourceRef.current = null;
+      });
+      return () => {
+        if (activeInterval) clearInterval(activeInterval);
+        unsubscribe();
+        unsubscribeReady();
+        unsubscribeError();
+        source.destroy();
+        sourceRef.current = null;
+      };
     };
+
+    if (isVideo && videoId) {
+      const host = playerHostRef.current;
+      if (!host) return;
+      return wireSource(createYouTubePlayer({ videoId, host }));
+    }
+    if (isVideo && bvid) {
+      // Bilibili has no client-side extractable stream URL (unlike YouTube's
+      // iframe embed) — /api/bilibili/media must resolve a signed mp4 URL
+      // server-side first. That fetch is async, but the effect body itself
+      // must stay synchronous (no setState here — React 19 set-state-in-effect).
+      // `cancelled` guards the post-await body against the React 19 StrictMode
+      // mount→unmount→mount race: if this effect's cleanup already ran by the
+      // time the fetch resolves, we must not wire a player onto a torn-down
+      // ref/host — teardown (if a player was already wired) is invoked directly
+      // via the closed-over `teardown` variable, not a ref (nothing else needs
+      // to read it, so no ref indirection is warranted).
+      let cancelled = false;
+      let teardown: (() => void) | null = null;
+      const host = playerHostRef.current;
+      const resolveMediaUrl = (): Promise<string> =>
+        fetch(`/api/bilibili/media?bvid=${bvid}`)
+          .then((r) => r.json())
+          .then((j: { url?: string; error?: string }) => {
+            if (!j.url) throw new Error(j.error ?? "视频加载失败");
+            return j.url;
+          });
+      void resolveMediaUrl()
+        .then((url) => {
+          if (cancelled || !host) return;
+          const source = createVideoPlayer({ src: url, host, onExpired: resolveMediaUrl });
+          teardown = wireSource(source);
+        })
+        .catch((err: unknown) => {
+          if (cancelled) return;
+          setError(err instanceof Error ? err.message : "视频加载失败");
+        });
+      return () => {
+        cancelled = true;
+        teardown?.();
+        teardown = null;
+      };
+    }
+    if (isAudio && material.sourceUrl) {
+      return wireSource(createAudioPlayer({ src: material.sourceUrl }));
+    }
+    return undefined;
     // playbackRate is captured at first-readiness above, not on every change —
     // re-running this effect would tear down and rebuild the player. The rate
     // buttons call setRate imperatively for live changes.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isMedia, isVideo, isAudio, material, videoId]);
+  }, [isMedia, isVideo, isAudio, material, videoId, bvid]);
 
   // Defensive reset on material identity change. Today each Material lives on
   // its own route that remounts this component, so this is a no-op in practice
