@@ -320,8 +320,10 @@ const TranslatePage = () => {
           setIsGenerating(false);
           return;
         }
-        // Revived a stale/old-shape row — burn it so it isn't re-revived.
-        await completeTask(reusable.id);
+        // Delete the unrenderable row — guard confirmed a bad/old shape, so
+        // no consumer of this type can display it; deletion guarantees
+        // getReusableTask can never revive it again.
+        await db.poolTasks.delete(reusable.id);
       }
     } catch {
       // Fall through to real-time generation
@@ -387,9 +389,13 @@ const TranslatePage = () => {
           paragraph: "translation-paragraph",
         };
         for (const m of ["sentence", "paragraph"] as const) {
+          // Exclude revived rows (exposureCount >= 1) — only genuinely fresh
+          // pool content qualifies here; a revived row is a private handshake
+          // for the consumer that called getReusableTask, not a public "today"
+          // pick for every consumer of this type.
           const task = await db.poolTasks
             .where("type").equals(poolTypeByMode[m])
-            .and((t) => !t.completed && t.assignedDate !== "")
+            .and((t) => !t.completed && t.assignedDate !== "" && !t.exposureCount)
             .first();
           if (task) {
             setMode(m);

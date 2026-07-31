@@ -186,9 +186,13 @@ const WritingPage = () => {
   useEffect(() => {
     const loadPoolPrompt = async () => {
       try {
+        // Exclude revived rows (exposureCount >= 1) — only genuinely fresh
+        // pool content qualifies here; a revived row is a private handshake
+        // for the consumer that called getReusableTask, not a public "today"
+        // pick for every consumer of this type.
         const poolTask = await db.poolTasks
           .where("type").equals("writing-prompt")
-          .and(t => !t.completed && t.assignedDate !== "")
+          .and(t => !t.completed && t.assignedDate !== "" && !t.exposureCount)
           .first();
 
         if (poolTask) {

@@ -114,8 +114,10 @@ const DictationTab = ({ cefrLevel }: { cefrLevel: string }) => {
         return;
       }
       if (reusable) {
-        // Revived a stale/old-shape row — burn it so it isn't re-revived.
-        await completeTask(reusable.id);
+        // Delete the unrenderable row — guard confirmed a bad/old shape, so
+        // no consumer of this type can display it; deletion guarantees
+        // getReusableTask can never revive it again.
+        await db.poolTasks.delete(reusable.id);
       }
     } catch {
       // Fall through to real-time generation
@@ -332,9 +334,12 @@ const isDictationData = (value: unknown): value is { sentences: string[] } => {
 const isComprehensionData = (value: unknown): value is ComprehensionData => {
   if (!value || typeof value !== "object") return false;
   const v = value as { passage?: unknown; topic?: unknown; questions?: unknown };
+  // Non-empty required — an empty passage/topic yields an unanswerable
+  // exercise; intentional narrowing (reusable path reaches older rows
+  // likelier to be degenerate).
   return (
-    typeof v.passage === "string" &&
-    typeof v.topic === "string" &&
+    typeof v.passage === "string" && v.passage.length > 0 &&
+    typeof v.topic === "string" && v.topic.length > 0 &&
     Array.isArray(v.questions) &&
     v.questions.length > 0 &&
     v.questions.every(
@@ -408,7 +413,10 @@ const ComprehensionTab = ({ cefrLevel }: { cefrLevel: string }) => {
         return;
       }
       if (reusable) {
-        await completeTask(reusable.id);
+        // Delete the unrenderable row — guard confirmed a bad/old shape, so
+        // no consumer of this type can display it; deletion guarantees
+        // getReusableTask can never revive it again.
+        await db.poolTasks.delete(reusable.id);
       }
     } catch {
       // Fall through to real-time generation
@@ -701,7 +709,10 @@ const PredictionTab = ({ cefrLevel }: { cefrLevel: string }) => {
         return;
       }
       if (reusable) {
-        await completeTask(reusable.id);
+        // Delete the unrenderable row — guard confirmed a bad/old shape, so
+        // no consumer of this type can display it; deletion guarantees
+        // getReusableTask can never revive it again.
+        await db.poolTasks.delete(reusable.id);
       }
     } catch {
       // Fall through to real-time generation
@@ -956,9 +967,13 @@ const ListeningPage = () => {
       try {
         for (const m of POOL_CHECK_MODES) {
           const type = `listening-${m}` as PoolTaskType;
+          // Exclude revived rows (exposureCount >= 1) — only genuinely fresh
+          // pool content qualifies here. A revived row shouldn't auto-select
+          // a tab as "ready"; that's a private handshake for the consumer
+          // that called getReusableTask, not a public "today" pick.
           const task = await db.poolTasks
             .where("type").equals(type)
-            .and((t) => !t.completed && t.assignedDate !== "")
+            .and((t) => !t.completed && t.assignedDate !== "" && !t.exposureCount)
             .first();
           if (task) {
             setMode(m);

@@ -95,7 +95,19 @@ const isReadingArticleData = (value: unknown): value is ReaderArticleContent => 
   const v = value as Record<string, unknown>;
   if (typeof v.title !== "string" || v.title.length === 0) return false;
   if (typeof v.content !== "string" || v.content.length === 0) return false;
-  if (v.comprehensionQuestions !== undefined && !Array.isArray(v.comprehensionQuestions)) return false;
+  // Optional array — missing/undefined still passes (matches old `?? []`).
+  // When present, validate each element against the ComprehensionQuestion
+  // shape so a malformed/old-shape element diverts to real-time generation
+  // instead of rendering broken question data.
+  if (v.comprehensionQuestions !== undefined) {
+    if (!Array.isArray(v.comprehensionQuestions)) return false;
+    const questionsOk = v.comprehensionQuestions.every((q): boolean => {
+      if (!q || typeof q !== "object") return false;
+      const qv = q as Record<string, unknown>;
+      return typeof qv.question === "string" && typeof qv.type === "string";
+    });
+    if (!questionsOk) return false;
+  }
   return true;
 };
 
@@ -156,7 +168,10 @@ const AiGenerateTab = ({
         return;
       }
       if (reusable) {
-        await completeTask(reusable.id);
+        // Delete the unrenderable row — guard confirmed a bad/old shape, so
+        // no consumer of this type can display it; deletion guarantees
+        // getReusableTask can never revive it again.
+        await db.poolTasks.delete(reusable.id);
       }
     } catch {
       // Fall through to real-time generation
@@ -716,9 +731,13 @@ const ReaderPage = () => {
   useEffect(() => {
     const loadPoolArticle = async () => {
       try {
+        // Exclude revived rows (exposureCount >= 1) — only genuinely fresh
+        // pool content qualifies here; a revived row is a private handshake
+        // for the consumer that called getReusableTask, not a public "today"
+        // pick for every consumer of this type.
         const task = await db.poolTasks
           .where("type").equals("reading-article")
-          .and((t) => !t.completed && t.assignedDate !== "")
+          .and((t) => !t.completed && t.assignedDate !== "" && !t.exposureCount)
           .first();
         if (task) {
           const content = task.content as {
