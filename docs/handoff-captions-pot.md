@@ -91,3 +91,41 @@ ed4e74a fix(listening): accurate 503 copy — YouTube anti-bot blocks auto-capti
 3. **serverless 抓 YouTube 字幕的本质脆弱**:bot(可 cookies 解)+ POT(需 Chromium,serverless 跑不了)+ 持续猫鼠。cookies 只解第一层。换平台比死磕 POT 更根本。
 4. **用户资源约束决定架构**:Mac 笔记本做持久 POT provider 不实际(非常驻/v6 非固定)。"根本性修复"要考虑用户实际能维护什么,非理想环境。
 5. **多平台 = 单平台反爬不致命**:把 import 抽象成多 adapter,任一平台挂不影响其他,比单平台单工具(yt-dlp 抓 YT)抗反爬。
+
+---
+
+## 更新(2026-07-31):B站自动抓取已落地 — "一个平台满足即可"达成
+
+采证通过 + 设计 + SDD 8 任务全部完成并逐任务评审 + broad review 通过。YouTube 被 POT 死结,**B站作为"能满足自动抓字幕"的那个平台已落地**。spec: `docs/superpowers/specs/2026-07-31-bilibili-import-design.md`,plan: `docs/superpowers/plans/2026-07-31-bilibili-import.md`,ledger: `.superpowers/sdd/2026-07-31-bilibili-import/progress.md`。
+
+### 采证结论(实测,非假设)
+从 Vercel datacenter IP(iad1)实测 B站链路:**免 wbi 签名、免 cookie** 全通——`view`(取 cid)、`player/wbi/v2`(字幕列表)、`playurl?fnval=1&qn=16`(单段 mp4 直链)全 `code:0`,stream HEAD 200 带或不带 Referer。与 YouTube POT(需 Chromium 运行时,serverless 不可做)形成根本对比。`lib/bilibili.ts` 的 wbi 签名是 `-352` 风控时的**回退路径**(纯 MD5,serverless 可做),非默认;`BILI_SESSDATA` cookie 作未来 datacenter 风控升级时的备用(用户提供过 cookies,暂未设 env,因当前不需要)。
+
+### 已交付(8 任务,commits f4e1399..f9829c5)
+- `lib/bilibili-client.ts`(extractBvid,client-safe)+ `lib/bilibili.ts`(server: wbi sign/resolveCid/pickEnglishSubtitle/fetchSubtitleJson)
+- `app/api/bilibili/captions/route.ts`(字幕:无签名→-352 wbi 重试→选英文字幕→parseBilibili;503→粘贴兜底/404)
+- `app/api/bilibili/media/route.ts`(流:playurl fnval=1 qn=16→单段 mp4,优先 backup_url;200 {url,cid}/503)
+- `parseBilibili` in `lib/subtitle-parse.ts`(from/to 秒→ms,content→text)
+- `createVideoPlayer` in `components/listening/media-source.ts`(HTMLVideoElement MediaSource,镜像 createAudioPlayer + onExpired 过期重解析一次)
+- `shadowing-tab.tsx` 视频分支平台感知(YT 同步 / B站异步 resolve+createVideoPlayer,wireSource 共享回调,React 19 strict-effect-safe `cancelled` 守卫)
+- `import/page.tsx` B站 URL 分发(extractBvid→captions;b23.tv 客户端重定向解析;503→粘贴兜底)
+- broad review 修: B站 `<video>` CSS sizing(host div `[&>video]` 选择器,此前只有 `[&>iframe]`);删临时 probe route。
+
+### 必须真机实测才能 ship(6 项,broad reviewer 列出 — code 路径已审,网络/边缘未实测)
+1. **真实英文字幕 B站视频走全路径**:T1 probe 用的视频无字幕,`pickEnglishSubtitle`→`fetchSubtitleJson`→`parseBilibili`→渲染 从未在真实字幕 JSON 上跑过。需用户给一个已知有英文字幕的 bvid 验证。
+2. **b23.tv 短链在真实浏览器重定向**:客户端 `fetch(url,{redirect:"follow"})` 受 CORS 影响,未实测;失败则优雅降级到"无法识别该链接"。
+3. **wbi 签名重试在真实 -352 下**:所有 probe 命中无签名路径,`fetchMixinKey`/`wbiSign`/重试 零真实网络验证。需从不同网络/IP 触发 -352 验证。
+4. **onExpired 中途过期重解析**:签名 mp4 URL 真实过期时 `video` error → onExpired → 续播,未实测。
+5. **持续生产负载下 IP 风控**:T1 probe 单 bvid/单区域(iad1)/单时刻,非永久保证。量上来可能 -352/HTML 拦截页(当前优雅降级为通用错误+无粘贴兜底)。
+6. **视频 CSS sizing 修复在浏览器视觉确认**:listen 态及其他 stage/breakpoint,确认无 YouTube iframe 回归。
+
+### Parked(非阻塞,broad-reviewer call,镜像 YouTube 既有模式)
+- 503 双因(无英文字幕 / 空解析)共用一条硬编码文案,空解析被误报。一行可修(读 `d.error`)。
+- captions/media 两条路由无 try/catch(上游返 HTML/网络错时裸 500),客户端 `res.json().catch` 优雅降级。
+
+### 运维状态(沿袭 + 新增)
+- `YTC_COOKIES`:仍设(YouTube 路径,已死但保留作 POT 解后即通基建)。
+- `BILI_SESSDATA`:**未设**(当前 datacenter 免 cookie 可通)。若未来 -352 风控触发,设此 env(用户提供过 B站小号 cookies,同 `YTC_COOKIES` 风险性质——等同 B站登录态,建议小号)。
+- 新 route 已随 push 自动部署(git-connected)。push 后 prod 即有 `/api/bilibili/captions` + `/api/bilibili/media`。
+- prod origin/main 待 push(本会话 commits 全 local)。push 需用户授权。
+
