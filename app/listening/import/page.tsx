@@ -77,7 +77,7 @@ export default function ImportPage() {
       if (res.status === 503) {
         setPasting(true);
         setError(
-          "自动抓取失败（视频可能被限流）。请手动粘贴 srt/vtt 字幕："
+          "YouTube 当前限制字幕自动抓取（反爬）。请手动粘贴 srt/vtt/json3 字幕，或改用音频上传："
         );
         return;
       }
