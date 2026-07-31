@@ -1,10 +1,30 @@
-# Handoff — W4 全部完成(W4-T3 收尾 + W4-T2 音频 + WordCard 接线),已 push
+# Handoff — W4 全部完成(W4-T3 收尾 + W4-T2 音频 + WordCard 接线),已 push;+ 独立整体终审一轮
 
 > 给新 session 的交接文档。本会话(2026-07-30~31)完成 W4-T3 浏览器实测/deferred/review、W4-T2 音频原版素材全链路、WordCard 接线 W4 成果(TTS 发音 + listening 挖词原声)。**先读本文件 + `docs/handoff-w4-continuation.md`(W0–W4-T1 细节)+ `docs/handoff-w4-audio-final.md`(W4-T2/T3 收尾过程)再动手。**
 
 ## 一句话状态
 
-方法论四招前三招已落地,W4 原版素材三路(text/video/audio)全完成并 prod 验证,WordCard/SRS 已消费 W4 成果(单词 TTS 发音 + listening 挖词 → SRS 听原句原声)。**全部已 push**(origin/main = 19e8e12)。剩余仅 W4 之外的遗留(cron 成本/getReusableTask 接入/ruff 等)+ 人耳听感最终确认。
+方法论四招前三招已落地,W4 原版素材三路(text/video/audio)全完成并 prod 验证,WordCard/SRS 已消费 W4 成果(单词 TTS 发音 + listening 挖词 → SRS 听原句原声)。**C 阶段后又跑了一轮跨 A+B+C 独立整体终审(opus),发现 2 Critical + 4 Important + 5 Minor + 2 spec question,全部根因修复,scoped 复审(sonnet)确认 10/10 RESOLVED、零回归。** origin/main = 61fff3e(handoff)已 push;终审修复两 commit(31d257f、017dfd5)**本地未 push**(待授权)。剩余仅 W4 之外的遗留(cron 成本/getReusableTask 接入/ruff 等)+ 人耳听感最终确认。
+
+## 独立整体终审一轮(本会话末尾,goal 的"整体完整 独立 reviewer review")
+
+派 opus Code Reviewer 审 A+B+C 全范围(`0aeaeab^..19e8e12`,16 文件 diff)。架构事实全确认干净:MediaSource 契约对称、YouTube DOM 所有权隔离、onReady/onError immediate-fire、subtitle-parse endMs trim、autoplay 黄金规则(无 await-then-play / AB 不二次 play / useAudioClipPlayback 同步)、CardSource exhaustiveness、watchdog stageRef 门控、player 生命周期无泄漏、upload 同源校验、text 路径零改动、无遗留 debug log。
+
+发现的真缺陷(已全修,scoped 复审 RESOLVED):
+- **C1**:`handleSaveCard` 把划选原文直接当 `lemma` 写 → 破坏全 app `isWordKnown`/去重不变量(lemma 列契约是 lemmatized 基形,`getCardByLemma` 是精确索引等值查询)。修:`await ensureLemmatizer()` → `lemmatize(front)` → 用 lemma 去重+写入。
+- **C2**:多词选区(三击选整句)被当 vocabulary 卡存入 lemma 索引。修:`handleSentenceMouseUp` 剥首尾标点 + `^[A-Za-z][A-Za-z'-]*$` 单词校验,非单词不挂存卡入口。
+- **I1**:`justSavedCard` 的 setTimeout 未捕获 → tab 切换后 setState 泄漏。修:`savedTimerRef` + unmount 清 + `mountedRef` 门控。
+- **I3**:`finished` 只置 true 不重置,"Try Another" 在末句把学习者困在 imagine 阶段。修:`ExerciseCompletionActions` 加 `!finished` 门控。
+- **I4**:player effect 依赖 material 但 finished/index/abLoop 不随重置(latent,路由 remount 下不触发)。修:render-time ref-guard 重置(React 19 "render 中调 prop 变化调整 state" 模式,**非** effect 主体——effect 主体同步 setState 被 React 19 禁)。
+- **I2(browse)**:空 back 回退 `sourceSentence` 只加在 `srs/page.tsx`,browse 渲染空 + 搜不到。修:browse 渲染与搜索都加 `card.back || card.sourceSentence || ""`。
+- **S2**:upload-auth 白名单硬编码单生产域 + localhost:3000 → preview deploy 全 403。修:`isAllowedOrigin` 用 URL 解析,接受 localhost:3000-3009 + `^en-tutorial(-[^.]+)?\.vercel\.app$`(生产 + preview);恶意 lookalike / opaque "null" / 缺 Origin 均 403。
+- **M1**:use-audio-clip 死 `if(started)` guard 移除 + 加 `endMs>startMs` sanity(TTS fallback)。
+- **M2**:audio-source `pendingPlay.endMs` 死字段移除(flush 只用 startMs)。
+- **M3**:`getRate()` 零调用方,从契约 + 两实现一并移除。
+
+留(复审认可,非缺陷):**M4** audio stall 事件非对称(runtime-only,无法静态定论);**M5** WordCard `materialId`/`sentenceIndex` 当前无消费方传值,但 prefetch effect 在 materialId 缺省时早返回 null(干净 no-op),spec 前瞻设计两处复用,保留。**spec question S1**:media 模式 bilingual 不可达(material-adapter 硬编码 translation:""),挖词门禁 `!=="hidden"` 等价正确,仅 spec 措辞 "english/bilingual" 与现实不符——未来若 adapter 填翻译需复核。**spec question I2(a)**:listening 挖词卡 `back` 留空(spec 故意 no-LLM),SRS "show answer" 回退显 sourceSentence(语境句非释义)——是 spec 取舍,若想要真正释义需接字典/LLM,属未来增强。
+
+复审 commits:`31d257f`(Phase1: C1/C2/I1/I3/I4)、`017dfd5`(Phase2: I2-browse/S2/M1/M2/M3)。tsc + eslint 全量 0 error。
 
 ## 项目约束(必读,沿袭 handoff-w4-continuation)
 
@@ -46,6 +66,12 @@ bdb7b2a  Task3  WordCard T1 发音 + T2b 听原句 + 删 audioSrc
 6c39a53  Task5  SRS 听原句按钮 + 空 back 回退 sourceSentence
 19e8e12  final fix  mining lemma 去重 + clip ended-listener(防"播放中…"卡死)
 ```
+### D 阶段 — 独立整体终审一轮 + 根因修复(本地未 push)
+```
+31d257f  D1  C1 lemma 归一化 / C2 单词校验 / I1 timer 卸载安全 / I3 finished 门控 / I4 material 换重置(render-time)
+017dfd5  D2  I2 browse 空 back 一致 / S2 origin 白名单覆盖 preview / M1 死 guard+endMs sanity / M2 死 endMs / M3 删 getRate
+```
+
 
 ## 关键架构事实(本会话新增,新 session 需知道)
 
@@ -111,7 +137,9 @@ bdb7b2a  Task3  WordCard T1 发音 + T2b 听原句 + 删 audioSrc
 
 ## 如何继续(新 session)
 
-W4 已闭环。继续点:
+W4 已闭环 + 独立整体终审通过。继续点:
+- **push D 阶段两 commit**(31d257f、017dfd5)— 需用户授权(本地 main 已超 origin/main 两个 commit)。push 后 origin/main = 017dfd5。
 - **真机听感确认**(audio/video 出声)→ 若有问题定位到具体路径。
 - **W3/W2 遗留**(上面 #3-#7)— 按价值排:`getReusableTask` 8 消费方接入(语料交替重复池真正生效,方法论核心)> cron 成本优化 > fluency overdue。
 - **migration #8**(旧 Material audioEndMs 修复)——若 audio/video 素材已积累。
+- **W4-外 新增候选**:listening 挖词卡接字典/LLM 填 `back` 释义(当前 spec 故意 empty,见 I2(a) spec question)。
