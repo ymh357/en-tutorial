@@ -80,7 +80,11 @@ const parseCueBlocks = (content: string): MaterialSentence[] => {
     if (cueIdx === -1) continue;
     const [startStr, endStr] = lines[cueIdx].split("-->");
     const startMs = parseTimestamp(startStr.trim());
-    const endMs = parseTimestamp((endStr ?? "").split(/\s/)[0]);
+    // endStr may carry a leading space (from "start --> end"); trim before
+    // splitting off any trailing cue settings, otherwise split(/\s/)[0] hits
+    // the leading space and yields "" → endMs 0 → audioEndMs dropped (which
+    // silently broke per-sentence playback bounds for every srt/vtt material).
+    const endMs = parseTimestamp((endStr ?? "").trim().split(/\s/)[0]);
     const text = lines
       .slice(cueIdx + 1)
       .join(" ")
