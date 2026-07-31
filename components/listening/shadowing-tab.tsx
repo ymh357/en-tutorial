@@ -904,7 +904,7 @@ export const ShadowingTab = ({
                   ref={playerHostRef}
                   className={
                     stage === "listen"
-                      ? "aspect-video w-full rounded-md overflow-hidden [&>iframe]:block [&>iframe]:h-full [&>iframe]:w-full"
+                      ? "aspect-video w-full rounded-md overflow-hidden [&>iframe]:block [&>iframe]:h-full [&>iframe]:w-full [&>video]:block [&>video]:h-full [&>video]:w-full [&>video]:object-contain"
                       : "hidden"
                   }
                 />
