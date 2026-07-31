@@ -4,7 +4,7 @@
 
 ## 一句话状态
 
-W4 全完成。W4-T3(video)A1 浏览器实测发现 P0+watchdog 误报,A2/A3 修复+review。W4-T2(audio)实现+review。W4 整体终审无 BLOCKER,全部发现根本性修复。`BLOB_READ_WRITE_TOKEN` 已配(vercel blob store `en-tutorial-audio`),audio 上传链路 prod 实测通(上传→路由→三招 UI→blob url 可播放 fetch 200 audio/mpeg)。**未 push**(47 commits 在 main 本地,origin/main 仍停 fefb75e)。**剩**:audio 播放的"听感+watchdog 边缘时序"需人耳人眼最终确认(DOM 层已确认 play() 未被拒、无 error、blob 可播;但 AB 循环/连续播放时 watchdog 仍 16s 弹 nudge,疑似 detached audio 事件时序,需真机听感诊断)。
+W4 全完成。W4-T3(video)A1 浏览器实测发现 P0+watchdog 误报,A2/A3 修复+review。W4-T2(audio)实现+review。W4 整体终审无 BLOCKER,全部发现根本性修复。`BLOB_READ_WRITE_TOKEN` 已配(vercel blob store `en-tutorial-audio`),audio 上传链路 prod 实测通。**真机诊断发现并修复 srt/vtt 解析丢 audioEndMs 的根因 BUG**(影响所有 srt/vtt 素材),audio 逐句 seek/AB/句尾停/watchdog 全验通。**未 push**(48 commits 在 main 本地,origin/main 仍停 fefb75e)。
 
 ## 本会话产出(commits, main, 从旧到新,未 push)
 
@@ -17,6 +17,7 @@ W4 全完成。W4-T3(video)A1 浏览器实测发现 P0+watchdog 误报,A2/A3 修
 d5a05ed  终审修复:onError 契约对称 / onReady immediate-fire 一致 / upload 加固 / accept m4a / handler 合并
 f19a44a  audio autoplay 修复:play() 在用户手势内启动(非 loadedmetadata 回调 flush)
 45f4e54  audio AB-loop 修复:seek 不二次 play()(poll 回调非手势被 autoplay 拒)
+0bd07e2  真机诊断根因修复:subtitle-parse endMs trim(srt/vtt 丢 audioEndMs → 句尾停/AB/watchdog 全错)
 ```
 
 ## A 阶段:W4-T3 收尾
@@ -78,21 +79,23 @@ f19a44a  audio autoplay 修复:play() 在用户手势内启动(非 loadedmetadat
 - ✅ blob url 可播性硬验:fetch 200 `audio/mpeg` 64KB + `new Audio(url)` loadedmetadata dur=3.93s
 - ✅ play() 未被 autoplay 拒(HTMLAudioElement.prototype.play probe:calls=1 rejections=[])
 - ✅ 无 error alert / 无 console warn(error 事件未触发=加载成功)
-- ⚠️ **未确认(需人耳人眼真机)**:audio 实际出声、AB 循环手感、watchdog 边缘时序。DOM 层测到 AB 循环/连续播放时 watchdog 仍 16s 弹 nudge(单句 play 未拒、blob 可播,但 activeInterval 似未持续喂——疑似 detached `<audio>` 事件时序或 stageRef/play 事件链问题,DOM probe 抓不到已建 detAudio 实例)。已修 autoplay(45f4e54 AB seek 不二次 play),但 16s nudge 仍在,根因待真机诊断。
+- ⚠️ ~~AB/连续播放 watchdog 16s nudge~~ **已修复(真机诊断)**:根因是 `lib/subtitle-parse.ts` parseCueBlocks 的 end 时间戳未 trim——`"start --> end"` split 后 endStr 带 leading 空格,`split(/\s/)[0]` 取到空串→endMs=0→audioEndMs undefined(每条 srt/vtt 句都丢 endMs!)。playSentence fallback 到 nextStart,poll 的句尾停/AB seek 都基于错误边界,音频跑到自然 end触发 pause+ended→activeInterval 被清→20s nudge。**影响所有 srt/vtt 素材**(audio 上传 + video 503 粘贴降级);json3 不受影响(用 dDurationMs)。
+- ✅ **修复后 prod 重验(新 audio material)**:Dexie sentences `audioEndMs` 正确填(500→3500/4000→6500);AB 循环 28s 无 nudge;无 error。
+- commit `0bd07e2`。真机诊断用了临时 console.log(已移除)。
 
-## 待诊断:audio watchdog 16s nudge(非阻塞,需真机)
+## 待诊断:audio watchdog 16s nudge ← 已解决(见上)
 
-audio 单句播放 play() 未被拒、blob url 可播(fetch+loadedmetadata 证),但 AB 循环/连续播放时 watchdog 仍 16s 弹"走神了"。DOM 层诊断极限:detAudio 是 `new Audio()` detached,probe 无法在 player effect 后注入 hook。可能根因:(a) audio `play` 事件触发 stateCbs→activeInterval 启动,但 5s markActive 周期因某闭包/stageRef 未生效;(b) AB seek 不触发新 `play` 事件(音频本就 playing)→ 无新 "playing" stateCbs → 但 activeInterval 本应自运行。**需真机**:开浏览器 DevTools,在 audio-source.ts 临时加 `console.log` 看 onStateChange/activeInterval,或直接听是否有声。若无声,问题在 play()虽未拒但 audio 未真播(.detached 某些浏览器行为);若有声但 nudge 弹,问题在 watchdog stageRef/activeInterval。
+~~audio 单句播放 play() 未被拒、blob url 可播……~~ 根因已定位并修复(subtitle-parse endMs trim),非 detached audio 事件时序问题。autoplay/AB 的两个修复(f19a44a/45f4e54)仍是正确改进,保留。
 
 ## 如何继续(新 session)
 
-### 选项 1:真机诊断 audio watchdog + push(首选)
-1. 本地 `vercel dev` 或 prod 打开 `/listening/audio/[id]`,DevTools 听是否有声 + 临时 log audio-source onStateChange。
-2. 修 watchdog 根因(若 play 事件没触发 activeInterval,或在 audio-source 用 timeupdate 事件驱动 markActive 而非依赖 play/pause stateCbs)。
-3. push(需用户授权,47 commits)。
+真机诊断已解决 audio watchdog 根因(subtitle-parse endMs trim,commit 0bd07e2),audio 链路 prod 全验通(上传/路由/三招/逐句 seek/AB 循环/句尾停/watchdog 不误报)。
 
-### 选项 2:直接 push 现状
-audio 上传链路+三招 UI 全验通,watchdog 边缘时序非阻塞(单句播放可用)。push 后真机再修。
+### 剩余
+1. **push**(需用户授权,48 commits 在 main 本地,origin/main 停 fefb75e)。
+2. (可选)人耳确认 audio 出声(DOM 层已确认 play() resolved + blob 可播 + AB 循环逻辑工作,但"听感"需人耳)。
+3. (可选)W1 遗留 W3 审查 #6(cron 27 条客户端只用 9 条)、getReusableTask 其余 8 消费方——非 W4 范畴。
+
 
 
 ## W4 整体终审
