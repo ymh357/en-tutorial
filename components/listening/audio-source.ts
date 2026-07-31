@@ -100,8 +100,12 @@ export const createAudioPlayer = (opts: AudioPlayerOpts): MediaSource => {
       const ms = audio.currentTime * 1000;
       if (ms >= currentEndMs) {
         if (abLoop) {
+          // Seek back to the sentence start WITHOUT pausing — the element is
+          // already in the playing state, so it keeps playing from startMs with
+          // no second play() call. Calling play() here would run outside any
+          // user gesture (it's a setInterval callback) and be rejected by the
+          // autoplay policy, breaking the loop.
           audio.currentTime = currentStartMs / 1000;
-          void audio.play().catch(() => {});
         } else {
           audio.pause();
           clearPoll();
