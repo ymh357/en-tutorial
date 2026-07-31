@@ -112,13 +112,11 @@ bdb7b2a  Task3  WordCard T1 发音 + T2b 听原句 + 删 audioSrc
 2. deferred ⑤ playSentence fallback 窗口(audioEndMs 缺时 nextStart/+15s/+5s)手感。
 
 ### W4 之外遗留(handoff-w4-continuation 记载)
-3. **W3 审查 #6**:cron 产 27 条、客户端只用 9 条(level-scoping 丢 18 条成本)。中期改 `/api/tasks/today?level=studyLevel` 服务端过滤。
-4. ~~**getReusableTask 仅 shadowing 接入**~~ **已完成(2026-07-31,SDD 6 task + final review + fix wave)**:5 个生成型消费方(dictation/comprehension/prediction/reader-AiGenerateTab/translate)已接 fresh→reusable→realtime 三段式,`seenIn`=PoolTaskType 字面量,默认 6h。4 无守卫站补 shape 谓词(accept-set 不放宽)。**2 个每日新卡型**(reader Today's Article / writing Today's Prompt)**未接**(每日新鲜语义)。Final review 发现 1 Critical + 3 Important 跨 task 架构 bug,fix wave 根因修复:(a) `getReusableTask` 写 `assignedDate=today()+completed=false` 使复活行满足 fresh 谓词,泄漏到同页未接线的每日新卡消费者→4 处每日新卡/probe 查询加 `!t.exposureCount` gate 排除复活行;(b) reusable guard-fail burn 用 `completeTask` 设 `completed=true`,恰是 revive 资格谓词→burn 不退休反而 6h 后再复活,5 处改 `db.poolTasks.delete`(真退休);(c) `isComprehensionData` 空 passage/topic、`isReadingArticleData` 未验元素补齐。commits fd657b5..2498267(本地未 push)。详见 `docs/superpowers/specs/2026-07-31-getreusable-task-wiring-design.md` + `docs/superpowers/plans/2026-07-31-getreusable-task-wiring.md`。
-  - parked(非阻塞):5 guard 5 种严格度(无共享模块收益);shadowing fresh-path burn→delete(pre-existing,另议);translate probe `poolTypeByMode` 未收窄 PoolTaskType(out of scope);spec doc:63 旧"burn"措辞待更。
-5. **fluency 模式 overdue 顺延**:`lib/task-pool.ts` 注释仍提 TASKS_PER_DAY=6/overdue,fluency 下不应 overdue 置顶但 getTodayTasks 仍按 assignedDate 顺延。
+3. **W3 审查 #6(cron 27→9 成本)**:经 2026-07-31 采证判定**伪问题/不修**。handoff 旧建议"中期改 `/api/tasks/today?level=studyLevel` 服务端过滤"是**错的**——pull-time 过滤只省传输/存储,27 次 LLM 调用成本在 cron-time 已发生,不省。真省须 cron-time 减产,但 cron 无用户态(无服务端 DB、无 auth),3 band 是为覆盖任意 level 用户。用户当前按量付费但此量级不在意,且未来开放多用户时 3 band 合理。结论:不动 cron,保留 3 band。`generatePoolTasks(level,count)` 的 `count` 是死参数(产 9 条恒定,与 count 无关)——已知小瑕疵,无害。
+5. **fluency 模式 overdue 顺延**:经 2026-07-31 采证判定**概念混淆/不修**。`getTodayTasks`(pool 顺延,overdue-first)仅 `app/page.tsx` 首页计数早退用,**不进 study-engine 的 plan 组成**(study-engine 接 `dueCards`=SRS 卡来自 cards 表非 poolTasks,grep 确认 study-engine 不引用 pool)。fluency/mastery 的 SRS 置顶控制已在 study-engine 正确实现(`srsFirst` 门控,fluency 下 srs 优先级 50.5 非 100)。pool 的 overdue 顺延与 fluency study plan 是两套独立系统,前者不"置顶"后者。`task-pool.ts` 那条注释是陈旧误导。
 6. **W2 审查 N1**:WordCard 的 imageryHint 槽位(已保留未渲染,audio Material 的 imageryHint 当前空串)。待 imageryHint 有数据源再渲染。
-7. **ruff Python lint**:`api/youtube_captions.py` 未引 ruff(dev-only),待确认。
-8. **video 503 粘贴降级的旧 Material**:parseSrt endMs BUG 修复前创建的 video/audio Material 的 audioEndMs 仍丢失在 Dexie,重新导入才修。可加 migration 或提示重导。
+7. **ruff Python lint**:**已完成(2026-07-31)**。加 `pyproject.toml`(ruff 配置,E/F/I/UP baseline)+ `package.json` `lint:py` script(`ruff check api/ && ruff format --check api/`)。ruff dev-only,不在 requirements.txt。`api/youtube_captions.py`:UP015 自动修(open 去 mode 参)+ format 重排;唯一 BLE001(ASGI 顶层 blind except 兜底)有意保留,加 `# noqa: BLE001` 带理由。`npm run lint:py` 通过。
+8. **旧 Material audioEndMs migration**:经 2026-07-31 采证判定 **migration 不可行**——import 时 `content: ""` 恒空,原始字幕文本未存;受害的是 503 粘贴降级 srt/vtt 路径(原文未存),audio blob URL 无字幕,video json3 路径不受 BUG 影响(用 dDurationMs)。故无法从旧 Material 自身重算。**改为运行时检测+提示**(`components/listening/shadowing-tab.tsx` commit 9fdbbf6):`useMemo` 算 sentences 缺 `audioEndMs` 比例 >50% → 顶部 Alert 温和提示"句尾停顿可能不精确,重新导入可修复"。不阻断使用,playSentence 既有 fallback(nextStart/+15s/+5s)仍容错。
 
 ## 关键文件(新 session 需知道)
 
@@ -141,6 +139,6 @@ bdb7b2a  Task3  WordCard T1 发音 + T2b 听原句 + 删 audioSrc
 W4 已闭环 + 独立整体终审通过。继续点:
 - **push D 阶段两 commit**(31d257f、017dfd5)— 需用户授权(本地 main 已超 origin/main 两个 commit)。push 后 origin/main = 017dfd5。
 - **真机听感确认**(audio/video 出声)→ 若有问题定位到具体路径。
-- **W3/W2 遗留**(上面 #3-#7)— 按价值排:getReusableTask 接入**已完成**;接着 **cron 成本优化**(#3,服务端 27 条客户端只用 9 条)> fluency overdue(#5)> ruff(#7)> 旧 Material migration(#8)。
+- **W3/W2 遗留**(上面 #3-#7)— #4 getReusableTask、#7 ruff、#8 endMs 提示**已完成**;#3 cron 成本、#5 fluency overdue 经采证判定**伪问题/概念混淆,不修**;剩 #6 imageryHint 槽位(待数据源)。W4-外 遗留实质清零。
 - **migration #8**(旧 Material audioEndMs 修复)——若 audio/video 素材已积累。
 - **W4-外 新增候选**:listening 挖词卡接字典/LLM 填 `back` 释义(当前 spec 故意 empty,见 I2(a) spec question)。
