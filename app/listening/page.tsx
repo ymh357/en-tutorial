@@ -348,6 +348,17 @@ const isComprehensionData = (value: unknown): value is ComprehensionData => {
   );
 };
 
+// Local shape guard for the prediction pool-task content (mirrors the
+// fresh-path truthiness check, made explicit so the reused-content path can
+// validate older rows without trusting a bare `as` cast).
+const isPredictionData = (value: unknown): value is { firstHalf: string; secondHalf: string; topic: string } => {
+  if (!value || typeof value !== "object") return false;
+  const v = value as Record<string, unknown>;
+  return typeof v.firstHalf === "string" && v.firstHalf.length > 0 &&
+    typeof v.secondHalf === "string" && v.secondHalf.length > 0 &&
+    typeof v.topic === "string" && v.topic.length > 0;
+};
+
 const ComprehensionTab = ({ cefrLevel }: { cefrLevel: string }) => {
   const [data, setData] = useState<ComprehensionData | null>(null);
   const [isLoading, setIsLoading] = useState(false);
@@ -669,14 +680,28 @@ const PredictionTab = ({ cefrLevel }: { cefrLevel: string }) => {
         .and(t => !t.completed && t.assignedDate !== "")
         .first();
 
-      if (poolTask) {
-        const content = poolTask.content as { firstHalf: string; secondHalf: string; topic: string };
-        if (content.firstHalf && content.secondHalf && content.topic) {
-          setPassage(content);
-          await completeTask(poolTask.id);
-          setIsLoading(false);
-          return;
-        }
+      if (poolTask && isPredictionData(poolTask.content)) {
+        setPassage(poolTask.content);
+        await completeTask(poolTask.id, "listening-prediction");
+        setIsLoading(false);
+        return;
+      }
+    } catch {
+      // Fall through to real-time generation
+    }
+
+    // Alternating repetition (W3): no fresh item — revive a previously-seen
+    // prediction passage rather than discarding it.
+    try {
+      const reusable = await getReusableTask("listening-prediction");
+      if (reusable && isPredictionData(reusable.content)) {
+        setPassage(reusable.content);
+        await completeTask(reusable.id, "listening-prediction");
+        setIsLoading(false);
+        return;
+      }
+      if (reusable) {
+        await completeTask(reusable.id);
       }
     } catch {
       // Fall through to real-time generation
