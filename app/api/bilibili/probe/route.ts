@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { extractBvid, resolveCid, biliHeaders } from "../_lib";
+import { extractBvid, resolveCid, biliHeaders } from "@/lib/bilibili";
 
 export const dynamic = "force-dynamic";
 
