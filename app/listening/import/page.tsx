@@ -72,10 +72,12 @@ export default function ImportPage() {
       try {
         const res = await fetch(`/api/bilibili/captions?url=${encodeURIComponent(url)}`);
         if (res.status === 503) {
+          // Read the route's specific cause (no English sub / empty parse /
+          // upstream 503) rather than a single hardcoded string, so an
+          // empty-parse isn't misreported as "no English subtitle".
+          const d = await res.json().catch(() => ({}));
           setPasting(true);
-          setError(
-            "该视频暂无英文字幕或被风控拦截，请手动粘贴 srt/vtt 字幕，或改用音频上传："
-          );
+          setError(d.error || "该视频暂无英文字幕或被风控拦截，请手动粘贴 srt/vtt 字幕，或改用音频上传：");
           return;
         }
         if (!res.ok) {

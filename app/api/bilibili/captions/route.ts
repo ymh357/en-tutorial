@@ -22,34 +22,43 @@ export async function GET(req: Request) {
   const meta = await resolveCid(bvid);
   if (!meta) return NextResponse.json({ error: "video not found", url }, { status: 404 });
 
-  // Try unsigned; -352 → wbi-signed retry.
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Bilibili's loose JSON response shape
-  let subJ: any = await (
-    await fetch(`https://api.bilibili.com/x/player/wbi/v2?bvid=${bvid}&cid=${meta.cid}`, {
-      headers: biliHeaders(),
-    })
-  ).json();
-  if (subJ.code === -352) {
-    const mk = await fetchMixinKey();
-    const signed = wbiSign({ bvid, cid: String(meta.cid) }, mk.imgKey, mk.subKey);
-    subJ = await (
-      await fetch(`https://api.bilibili.com/x/player/wbi/v2?${new URLSearchParams(signed)}`, {
+  try {
+    // Try unsigned; -352 → wbi-signed retry.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Bilibili's loose JSON response shape
+    let subJ: any = await (
+      await fetch(`https://api.bilibili.com/x/player/wbi/v2?bvid=${bvid}&cid=${meta.cid}`, {
         headers: biliHeaders(),
       })
     ).json();
-  }
-  const subs = subJ?.data?.subtitle?.subtitles ?? [];
-  const en = pickEnglishSubtitle(subs);
-  if (!en) {
+    if (subJ.code === -352) {
+      const mk = await fetchMixinKey();
+      const signed = wbiSign({ bvid, cid: String(meta.cid) }, mk.imgKey, mk.subKey);
+      subJ = await (
+        await fetch(`https://api.bilibili.com/x/player/wbi/v2?${new URLSearchParams(signed)}`, {
+          headers: biliHeaders(),
+        })
+      ).json();
+    }
+    const subs = subJ?.data?.subtitle?.subtitles ?? [];
+    const en = pickEnglishSubtitle(subs);
+    if (!en) {
+      return NextResponse.json(
+        { error: "该视频暂无英文字幕或被风控拦截，请手动粘贴 srt/vtt 字幕，或改用音频上传：", bvid },
+        { status: 503 }
+      );
+    }
+    const body = await fetchSubtitleJson(en);
+    const sentences = parseBilibili(body);
+    if (sentences.length === 0) {
+      return NextResponse.json({ error: "字幕解析为空", bvid }, { status: 503 });
+    }
+    return NextResponse.json({ bvid, cid: meta.cid, languageCode: en.lan, sentences });
+  } catch {
+    // Upstream network failure / non-JSON risk-control interstitial — surface
+    // a 503 (not a bare 500) so the import page offers its paste fallback.
     return NextResponse.json(
-      { error: "该视频暂无英文字幕或被风控拦截，请手动粘贴 srt/vtt 字幕，或改用音频上传：", bvid },
+      { error: "字幕服务暂不可用，请手动粘贴 srt/vtt 字幕，或改用音频上传：", bvid },
       { status: 503 }
     );
   }
-  const body = await fetchSubtitleJson(en);
-  const sentences = parseBilibili(body);
-  if (sentences.length === 0) {
-    return NextResponse.json({ error: "字幕解析为空", bvid }, { status: 503 });
-  }
-  return NextResponse.json({ bvid, cid: meta.cid, languageCode: en.lan, sentences });
 }
