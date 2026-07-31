@@ -104,6 +104,19 @@ export const parseSrt = (content: string): MaterialSentence[] =>
 export const parseVtt = (content: string): MaterialSentence[] =>
   parseCueBlocks(content);
 
+// Bilibili subtitle JSON: { body: [{ from, to, content }, ...] } in seconds.
+// Normalize to MaterialSentence with ms timestamps via the shared toSentence.
+export const parseBilibili = (data: unknown): MaterialSentence[] => {
+  const body = (data as { body?: { from?: number; to?: number; content?: string }[] } | null)
+    ?.body;
+  if (!Array.isArray(body)) return [];
+  return body
+    .filter((s) => s && typeof s.content === "string" && s.content.trim().length > 0)
+    .map((s) =>
+      toSentence(s.content!.trim(), (s.from ?? 0) * 1000, (s.to ?? 0) * 1000)
+    );
+};
+
 /** Detect format by content and parse accordingly. */
 export const parseSubtitles = (content: string): MaterialSentence[] => {
   const trimmed = content.trimStart();
