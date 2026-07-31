@@ -377,10 +377,27 @@ const ComprehensionTab = ({ cefrLevel }: { cefrLevel: string }) => {
         const content = poolTask.content;
         if (isComprehensionData(content)) {
           setData(content);
-          await completeTask(poolTask.id);
+          await completeTask(poolTask.id, "listening-comprehension");
           setIsLoading(false);
           return;
         }
+      }
+    } catch {
+      // Fall through to real-time generation
+    }
+
+    // Alternating repetition (W3): no fresh item — revive a previously-seen
+    // comprehension passage rather than discarding it.
+    try {
+      const reusable = await getReusableTask("listening-comprehension");
+      if (reusable && isComprehensionData(reusable.content)) {
+        setData(reusable.content);
+        await completeTask(reusable.id, "listening-comprehension");
+        setIsLoading(false);
+        return;
+      }
+      if (reusable) {
+        await completeTask(reusable.id);
       }
     } catch {
       // Fall through to real-time generation
