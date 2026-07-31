@@ -1,8 +1,8 @@
 "use client";
 
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
-import { Library, PartyPopper, Volume2 } from "lucide-react";
+import { Headphones, Library, PartyPopper, Volume2 } from "lucide-react";
 import { db } from "@/lib/db";
 import { dbHelpers } from "@/lib/db-helpers";
 import { useProfile, useSessionQueue } from "@/hooks/use-db";
@@ -12,7 +12,8 @@ import {
   ratingLabels,
   type Rating,
 } from "@/lib/srs-algorithm";
-import type { Card as CardType, CardSource, MasteryLevel } from "@/lib/types";
+import type { Card as CardType, CardSource, MasteryLevel, Material } from "@/lib/types";
+import { useAudioClipPlayback, type AudioClip } from "@/lib/use-audio-clip";
 import {
   Card,
   CardContent,
@@ -109,6 +110,47 @@ const SrsPage = () => {
   const ratingInFlightRef = useRef(false);
 
   const currentCard: CardType | undefined = queue?.[0];
+
+  const clip = useAudioClipPlayback();
+  const [audioClip, setAudioClip] = useState<AudioClip | null>(null);
+
+  // Prefetch the AudioClip bounds (Material lookup) whenever the current card
+  // changes, so the button's click handler can call clip.play() synchronously
+  // — any await inside the click handler would push audio.play() out of the
+  // user-gesture call stack and get it silently rejected by the browser's
+  // autoplay policy.
+  useEffect(() => {
+    let cancelled = false;
+    const materialId = currentCard?.materialId;
+    const sentenceIndex = currentCard?.sentenceIndex;
+
+    const resolve = async (): Promise<AudioClip | null> => {
+      if (materialId == null || sentenceIndex == null) return null;
+      const material: Material | undefined = await db.materials.get(materialId);
+      const sentence = material?.sentences?.[sentenceIndex];
+      if (
+        material?.mediaType === "audio" &&
+        material.sourceUrl != null &&
+        sentence?.audioStartMs != null &&
+        sentence?.audioEndMs != null
+      ) {
+        return {
+          sourceUrl: material.sourceUrl,
+          startMs: sentence.audioStartMs,
+          endMs: sentence.audioEndMs,
+        };
+      }
+      return null;
+    };
+
+    void resolve().then((next) => {
+      if (!cancelled) setAudioClip(next);
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [currentCard?.materialId, currentCard?.sentenceIndex]);
 
   const nextIntervals = useMemo(() => {
     if (!currentCard) return null;
@@ -294,11 +336,25 @@ const SrsPage = () => {
             >
               <Volume2 />
             </Button>
+            {currentCard.materialId != null && currentCard.sentenceIndex != null ? (
+              <Button
+                variant="ghost"
+                size="icon"
+                aria-label={clip.playing ? "播放中…" : "听原句原声"}
+                onClick={() =>
+                  clip.play(audioClip, currentCard.sourceSentence ?? currentCard.front)
+                }
+              >
+                <Headphones />
+              </Button>
+            ) : null}
           </div>
 
           {showAnswer && (
             <div className="space-y-3 rounded-lg bg-muted/50 p-4">
-              <p className="text-base font-medium">{currentCard.back}</p>
+              <p className="text-base font-medium">
+                {currentCard.back || currentCard.sourceSentence || ""}
+              </p>
               {currentCard.context && (
                 <p className="text-sm text-muted-foreground italic">
                   &ldquo;{currentCard.context}&rdquo;
