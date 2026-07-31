@@ -25,7 +25,7 @@
 ### Task 1: Datacenter probe (BLOCKER — confirms both residual risks before any UI)
 
 **Files:**
-- Create: `app/api/bilibili/_probe/route.ts` (TEMPORARY — deleted in Task 8 broad-review cleanup unless retained as a debug toggle)
+- Create: `app/api/bilibili/probe/route.ts` (TEMPORARY — deleted in Task 8 broad-review cleanup unless retained as a debug toggle)
 - Create: `app/api/bilibili/_lib.ts` (minimal extractBvid + wbi helpers — expanded by Task 2)
 
 **Interfaces:**
@@ -71,7 +71,7 @@ export const resolveCid = async (
 };
 ```
 
-`app/api/bilibili/_probe/route.ts` — exercises captions + view + playurl + stream-head, logs each step's status so the controller reads them from Vercel deployment logs:
+`app/api/bilibili/probe/route.ts` — exercises captions + view + playurl + stream-head, logs each step's status so the controller reads them from Vercel deployment logs:
 ```typescript
 import { NextResponse } from "next/server";
 import { extractBvid, resolveCid, biliHeaders } from "../_lib";
@@ -129,7 +129,7 @@ export async function GET(req: Request) {
 - [ ] **Step 2: Deploy probe to Vercel and run**
 
 Run: `vercel --prod --yes` (user pre-authorized prod deploy in prior sessions; confirm context still allows — if not, ask).
-Then: `curl 'https://<prod>/api/bilibili/_probe?bvid=BV1qh3W6bEqf'`.
+Then: `curl 'https://<prod>/api/bilibili/probe?bvid=BV1qh3W6bEqf'`.
 Expected: a `log` array revealing each step's code + the stream HEAD result.
 
 - [ ] **Step 3: Interpret + decide BILI_SESSDATA**
@@ -144,7 +144,7 @@ Record the finding in the SDD ledger before Task 2.
 - [ ] **Step 4: Commit probe scaffolding**
 
 ```bash
-git add app/api/bilibili/_lib.ts app/api/bilibili/_probe/route.ts
+git add app/api/bilibili/_lib.ts app/api/bilibili/probe/route.ts
 git commit -m "feat(bilibili): datacenter probe for captions+playurl+stream reachability"
 ```
 
@@ -154,7 +154,7 @@ git commit -m "feat(bilibili): datacenter probe for captions+playurl+stream reac
 
 **Files:**
 - Modify: `app/api/bilibili/_lib.ts` → rename/move to `lib/bilibili.ts` (server-only, `import "server-only"`), expand with wbi + pickEnglishSubtitle.
-- Update: `app/api/bilibili/_probe/route.ts` import path (or leave probe pointing at old path and delete with it in Task 8).
+- Update: `app/api/bilibili/probe/route.ts` import path (or leave probe pointing at old path and delete with it in Task 8).
 
 **Interfaces:**
 - Produces: `extractBvid(url): string | null`, `biliHeaders()`, `fetchMixinKey(): Promise<{imgKey, subKey}>`, `wbiSign(params, mixinKey)`, `resolveCid(bvid)`, `pickEnglishSubtitle(subtitles): subtitleEntry | null`, `fetchSubtitleJson(entry): Promise<any>`.
@@ -174,7 +174,7 @@ Task 1's `app/api/bilibili/_lib.ts` is replaced by `lib/bilibili.ts` here (move 
 
 Use Node `crypto` (`import crypto from "node:crypto"`) for MD5: `crypto.createHash("md5").update(...).digest("hex")`.
 
-- [ ] **Step 3: Update `app/api/bilibili/_probe/route.ts`** import to `@/lib/bilibili` (drop the temporary `_lib.ts` — `git mv`/delete it).
+- [ ] **Step 3: Update `app/api/bilibili/probe/route.ts`** import to `@/lib/bilibili` (drop the temporary `_lib.ts` — `git mv`/delete it).
 
 - [ ] **Step 4: Verify type-check + lint**
 
@@ -183,7 +183,7 @@ Run: `npx tsc --noEmit` and `npx eslint . --quiet` — 0 errors.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add lib/bilibili-client.ts lib/bilibili.ts app/api/bilibili/_probe/route.ts
+git add lib/bilibili-client.ts lib/bilibili.ts app/api/bilibili/probe/route.ts
 git rm app/api/bilibili/_lib.ts
 git commit -m "feat(bilibili): wbi sign + cid resolve + english subtitle picker (client/server split)"
 ```
@@ -400,7 +400,7 @@ git commit -m "feat(listening): import page Bilibili URL dispatch"
 ### Task 8: Broad whole-branch review + cleanup
 
 **Files:**
-- Delete (if probe not retained): `app/api/bilibili/_probe/route.ts`
+- Delete (if probe not retained): `app/api/bilibili/probe/route.ts`
 - Review: full branch diff.
 
 - [ ] **Step 1: Dispatch final code reviewer** on the whole branch (most capable model) — spec compliance + code quality, with the spec path `docs/superpowers/specs/2026-07-31-bilibili-import-design.md` and global constraints.
@@ -412,7 +412,7 @@ git commit -m "feat(listening): import page Bilibili URL dispatch"
 - [ ] **Step 4: Commit cleanup**
 
 ```bash
-git rm app/api/bilibili/_probe/route.ts
+git rm app/api/bilibili/probe/route.ts
 git commit -m "chore(bilibili): remove datacenter probe scaffold"
 ```
 
