@@ -21,6 +21,7 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 import { ErrorState } from "@/components/states/error-state";
 import { db } from "@/lib/db";
 import { dbHelpers } from "@/lib/db-helpers";
+import { ensureLemmatizer, lemmatize } from "@/lib/lemma";
 import { completeTask, getReusableTask } from "@/lib/task-pool";
 import { speak } from "@/lib/tts";
 import {
@@ -239,6 +240,12 @@ export const ShadowingTab = ({
   // True once ShadowingTab has unmounted; guards setState calls that would
   // otherwise land after startRecording()'s await resolves post-unmount.
   const mountedRef = useRef(true);
+  // Holds the "已存" feedback timer so it can be cleared on unmount instead
+  // of firing setJustSavedCard(false) on a gone panel.
+  const savedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Tracks the last material id seen during render so a material swap resets
+  // the stage machine (see the render-time guard below).
+  const prevMaterialIdRef = useRef<string | null | undefined>(undefined);
   const [approximate, setApproximate] = useState(false); // last attempt used the SpeechRecognition fallback (auto-corrected → unreliable for a repeat check)
   const [transcript, setTranscript] = useState<string | null>(null);
   const [result, setResult] = useState<AlignResult | null>(null);
@@ -259,6 +266,10 @@ export const ShadowingTab = ({
   useEffect(() => {
     return () => {
       mountedRef.current = false;
+      if (savedTimerRef.current) {
+        clearTimeout(savedTimerRef.current);
+        savedTimerRef.current = null;
+      }
       sessionRef.current?.cancel();
       sessionRef.current = null;
     };
@@ -371,6 +382,21 @@ export const ShadowingTab = ({
     // buttons call setRate imperatively for live changes.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isMedia, isVideo, isAudio, material, videoId]);
+
+  // Defensive reset on material identity change. Today each Material lives on
+  // its own route that remounts this component, so this is a no-op in practice
+  // (initial values already match). It only fires if ShadowingTab is ever
+  // reused with a different material in the same mount (e.g. a playlist) —
+  // without it, `finished`/`index`/`abLoop` would carry over from the prior
+  // material and the stage machine would open on the wrong sentence. Done in
+  // render (not an effect) per React 19's "adjust state when a prop changes"
+  // pattern: the ref guard makes it run only on actual id change.
+  if (prevMaterialIdRef.current !== (material?.id ?? null)) {
+    prevMaterialIdRef.current = material?.id ?? null;
+    setFinished(false);
+    setIndex(0);
+    setAbLoop(false);
+  }
 
   const generateSentences = async (): Promise<void> => {
     setIsLoading(true);
@@ -650,26 +676,42 @@ export const ShadowingTab = ({
     if (!isMedia) return;
     if (stage !== "recall") return;
     if (subtitleMode === "hidden") return;
-    const sel = window.getSelection()?.toString().trim() ?? "";
-    if (sel.length === 0 || !currentSentence.includes(sel)) {
+    const raw = window.getSelection()?.toString().trim() ?? "";
+    if (raw.length === 0 || !currentSentence.includes(raw)) {
       setPendingSelection(null);
       return;
     }
-    setPendingSelection(sel);
+    // Only a single lexical item backs a vocabulary card: a multi-word drag
+    // (or a triple-click grabbing the whole sentence) can't populate the
+    // lemma index the card dedups against. Strip surrounding punctuation,
+    // then require one word of letters.
+    const word = raw.replace(/^[^A-Za-z]+|[^A-Za-z]+$/g, "");
+    if (!/^[A-Za-z][A-Za-z'-]*$/.test(word)) {
+      setPendingSelection(null);
+      return;
+    }
+    setPendingSelection(word);
   };
 
   const handleSaveCard = async (): Promise<void> => {
     if (!material || !pendingSelection) return;
     const front = pendingSelection;
     try {
-      const existing = await dbHelpers.getCardByLemma(front);
+      // The `lemma` column is contractually a lemmatized base form — every
+      // other mining path (reader) writes lemmatize(word), and isWordKnown
+      // queries getCardByLemma(lemmatize(...)). Writing the raw inflected
+      // selection here would make the word read as unknown forever and miss
+      // dedup against an existing card for the same lemma.
+      await ensureLemmatizer();
+      const lemma = lemmatize(front);
+      const existing = await dbHelpers.getCardByLemma(lemma);
       if (!existing) {
         await db.cards.add({
           id: crypto.randomUUID(),
           front,
           back: "",
           type: "vocabulary",
-          lemma: front,
+          lemma,
           context: "",
           sourceSentence: currentSentence,
           source: "listening",
@@ -687,7 +729,11 @@ export const ShadowingTab = ({
         await dbHelpers.incrementTodayStat("wordsLearned");
       }
       setJustSavedCard(true);
-      setTimeout(() => setJustSavedCard(false), 1500);
+      if (savedTimerRef.current) clearTimeout(savedTimerRef.current);
+      savedTimerRef.current = setTimeout(() => {
+        if (mountedRef.current) setJustSavedCard(false);
+        savedTimerRef.current = null;
+      }, 1500);
     } catch (err) {
       console.error("save card failed", err);
       setError(err instanceof Error ? err.message : "Failed to save card");
@@ -1171,7 +1217,7 @@ export const ShadowingTab = ({
         </Card>
       )}
 
-      {result && transcript !== null && (
+      {!finished && result && transcript !== null && (
         <ExerciseCompletionActions
           onTryAnother={() => void nextSentence()}
         />
