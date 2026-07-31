@@ -33,10 +33,11 @@ import { useProfile } from "@/hooks/use-db";
 import { db } from "@/lib/db";
 import { dbHelpers } from "@/lib/db-helpers";
 import { recordCost } from "@/lib/cost-tracker";
-import { completeTask } from "@/lib/task-pool";
+import { completeTask, getReusableTask } from "@/lib/task-pool";
 import { translateGenSchema, translateEvalSchema, toJsonSchema } from "@/lib/ai-schemas";
 import type {
   Card as SrsCard,
+  PoolTaskType,
   TranslationExercise as TranslationExerciseRecord,
 } from "@/lib/types";
 import { normalizeTo100, scoreLabel } from "@/lib/rubric";
@@ -110,6 +111,15 @@ const isTranslationExercise = (value: unknown): value is TranslationExercise => 
     typeof v.referenceTranslation === "string" &&
     Array.isArray(v.keyPoints)
   );
+};
+
+// Sentence pool bundles multiple exercises under { items: [...] }; validate
+// the wrapper + each element via isTranslationExercise.
+const isTranslationSentenceSetData = (value: unknown): value is { items: TranslationExercise[] } => {
+  if (!value || typeof value !== "object") return false;
+  const v = value as Record<string, unknown>;
+  if (!Array.isArray(v.items) || v.items.length === 0) return false;
+  return v.items.every((it) => isTranslationExercise(it));
 };
 
 type Segment = {
@@ -256,7 +266,7 @@ const TranslatePage = () => {
     setExercise(null);
 
     // Map mode to pool task type
-    const poolTypeMap: Record<ExerciseMode, string> = {
+    const poolTypeMap: Record<ExerciseMode, PoolTaskType> = {
       sentence: "translation-sentence",
       paragraph: "translation-paragraph",
       situational: "translation-situational",
@@ -270,26 +280,48 @@ const TranslatePage = () => {
         .first();
 
       if (poolTask) {
-        const content = poolTask.content as Record<string, unknown>;
-
         if (targetMode === "sentence") {
           // Sentence pool has { items: [{ chinese, referenceTranslation, keyPoints }] }
-          const items = content.items as TranslationExercise[] | undefined;
-          if (items && items.length > 0) {
-            setExercise(items[0]);
-            await completeTask(poolTask.id);
+          if (isTranslationSentenceSetData(poolTask.content)) {
+            setExercise(poolTask.content.items[0]);
+            await completeTask(poolTask.id, "translation-sentence");
             setIsGenerating(false);
             return;
           }
         } else {
           // Paragraph and situational have { chinese, referenceTranslation, keyPoints }
-          if (isTranslationExercise(content)) {
-            setExercise(content);
-            await completeTask(poolTask.id);
+          if (isTranslationExercise(poolTask.content)) {
+            setExercise(poolTask.content);
+            await completeTask(poolTask.id, poolTypeMap[targetMode]);
             setIsGenerating(false);
             return;
           }
         }
+      }
+    } catch {
+      // Fall through to real-time generation
+    }
+
+    // Alternating repetition (W3): no fresh item — revive a previously-seen
+    // translation exercise rather than discarding it.
+    try {
+      const reusable = await getReusableTask(poolTypeMap[targetMode]);
+      if (reusable) {
+        if (targetMode === "sentence") {
+          if (isTranslationSentenceSetData(reusable.content)) {
+            setExercise(reusable.content.items[0]);
+            await completeTask(reusable.id, "translation-sentence");
+            setIsGenerating(false);
+            return;
+          }
+        } else if (isTranslationExercise(reusable.content)) {
+          setExercise(reusable.content);
+          await completeTask(reusable.id, poolTypeMap[targetMode]);
+          setIsGenerating(false);
+          return;
+        }
+        // Revived a stale/old-shape row — burn it so it isn't re-revived.
+        await completeTask(reusable.id);
       }
     } catch {
       // Fall through to real-time generation
