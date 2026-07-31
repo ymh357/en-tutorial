@@ -1,14 +1,17 @@
 import { NextResponse } from "next/server";
-import { resolveCid, biliHeaders, fetchMixinKey, wbiSign } from "@/lib/bilibili";
+import { resolveBvid, resolveCid, biliHeaders, fetchMixinKey, wbiSign } from "@/lib/bilibili";
 
 export const dynamic = "force-dynamic";
 
 export async function GET(req: Request) {
-  const bvid = new URL(req.url).searchParams.get("bvid");
-  if (!bvid) return NextResponse.json({ error: "bvid required" }, { status: 400 });
+  const url = new URL(req.url).searchParams.get("url");
+  if (!url) return NextResponse.json({ error: "url required" }, { status: 400 });
+
+  const bvid = await resolveBvid(url);
+  if (!bvid) return NextResponse.json({ error: "video not found", url }, { status: 404 });
 
   const meta = await resolveCid(bvid);
-  if (!meta) return NextResponse.json({ error: "video not found", bvid }, { status: 404 });
+  if (!meta) return NextResponse.json({ error: "video not found", url }, { status: 404 });
 
   // qn=16 (360P, highest quality available unsigned/without login per Task 1
   // probe) + fnval=1 (mp4/durl, not DASH). Try unsigned; -352 → wbi-signed retry.
@@ -38,6 +41,6 @@ export async function GET(req: Request) {
   // Prefer backup_url[0] (standard upos-sz-mirror* CDN host) over base_url,
   // which can be a region/ISP-specific custom host that may not resolve for
   // any given client.
-  const url = durl[0].backup_url?.[0] ?? durl[0].url;
-  return NextResponse.json({ url, cid: meta.cid });
+  const mediaUrl = durl[0].backup_url?.[0] ?? durl[0].url;
+  return NextResponse.json({ url: mediaUrl, cid: meta.cid });
 }

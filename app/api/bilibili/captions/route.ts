@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import {
+  resolveBvid,
   resolveCid,
   biliHeaders,
   fetchMixinKey,
@@ -12,11 +13,14 @@ import { parseBilibili } from "@/lib/subtitle-parse";
 export const dynamic = "force-dynamic";
 
 export async function GET(req: Request) {
-  const bvid = new URL(req.url).searchParams.get("bvid");
-  if (!bvid) return NextResponse.json({ error: "bvid required" }, { status: 400 });
+  const url = new URL(req.url).searchParams.get("url");
+  if (!url) return NextResponse.json({ error: "url required" }, { status: 400 });
+
+  const bvid = await resolveBvid(url);
+  if (!bvid) return NextResponse.json({ error: "video not found", url }, { status: 404 });
 
   const meta = await resolveCid(bvid);
-  if (!meta) return NextResponse.json({ error: "video not found", bvid }, { status: 404 });
+  if (!meta) return NextResponse.json({ error: "video not found", url }, { status: 404 });
 
   // Try unsigned; -352 → wbi-signed retry.
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Bilibili's loose JSON response shape

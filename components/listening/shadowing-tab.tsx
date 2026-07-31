@@ -49,7 +49,7 @@ import {
 } from "@/components/listening/media-source";
 import { createAudioPlayer } from "@/components/listening/audio-source";
 import { extractVideoId } from "@/lib/youtube";
-import { extractBvid } from "@/lib/bilibili-client";
+import { isBilibiliLink } from "@/lib/bilibili-client";
 
 type RecStatus = "idle" | "recording" | "transcribing";
 
@@ -151,12 +151,12 @@ export const ShadowingTab = ({
   const isMedia = isVideo || isAudio;
   const videoId = isVideo ? extractVideoId(material?.sourceUrl) : null;
   // Bilibili fallback: a video Material with no extractable YouTube id (its
-  // sourceUrl is a bilibili.com watch URL) still needs a platform id to drive
-  // the media-construction effect's dispatch below. Only checked when videoId
-  // is absent — a URL can't match both extractors.
-  const bvid = isVideo && !videoId && material?.sourceUrl
-    ? extractBvid(material.sourceUrl)
-    : null;
+  // sourceUrl is a bilibili.com watch URL or an unresolved b23.tv short link)
+  // still needs a platform check to drive the media-construction effect's
+  // dispatch below. Resolution to a bvid happens server-side (resolveBvid) —
+  // this is only the branch decision. Only checked when videoId is absent —
+  // a URL can't match both extractors.
+  const isBili = isVideo && !videoId ? isBilibiliLink(material?.sourceUrl ?? "") : false;
   // Methodology: level decides step fineness. fine (A1-A2) => slower default
   // playback + forced imagine context; coarse (C1-C2) => native speed, may
   // skip the guided imagine step.
@@ -399,22 +399,25 @@ export const ShadowingTab = ({
       if (!host) return;
       return wireSource(createYouTubePlayer({ videoId, host }));
     }
-    if (isVideo && bvid) {
+    if (isVideo && isBili) {
       // Bilibili has no client-side extractable stream URL (unlike YouTube's
       // iframe embed) — /api/bilibili/media must resolve a signed mp4 URL
-      // server-side first. That fetch is async, but the effect body itself
-      // must stay synchronous (no setState here — React 19 set-state-in-effect).
-      // `cancelled` guards the post-await body against the React 19 StrictMode
-      // mount→unmount→mount race: if this effect's cleanup already ran by the
-      // time the fetch resolves, we must not wire a player onto a torn-down
-      // ref/host — teardown (if a player was already wired) is invoked directly
-      // via the closed-over `teardown` variable, not a ref (nothing else needs
-      // to read it, so no ref indirection is warranted).
+      // server-side first (it also resolves b23.tv short links there — no
+      // CORS server-side, unlike the browser fetch this replaced). That fetch
+      // is async, but the effect body itself must stay synchronous (no
+      // setState here — React 19 set-state-in-effect). `cancelled` guards the
+      // post-await body against the React 19 StrictMode mount→unmount→mount
+      // race: if this effect's cleanup already ran by the time the fetch
+      // resolves, we must not wire a player onto a torn-down ref/host —
+      // teardown (if a player was already wired) is invoked directly via the
+      // closed-over `teardown` variable, not a ref (nothing else needs to
+      // read it, so no ref indirection is warranted).
       let cancelled = false;
       let teardown: (() => void) | null = null;
       const host = playerHostRef.current;
+      const sourceUrl = material.sourceUrl ?? "";
       const resolveMediaUrl = (): Promise<string> =>
-        fetch(`/api/bilibili/media?bvid=${bvid}`)
+        fetch(`/api/bilibili/media?url=${encodeURIComponent(sourceUrl)}`)
           .then((r) => r.json())
           .then((j: { url?: string; error?: string }) => {
             if (!j.url) throw new Error(j.error ?? "视频加载失败");
@@ -444,7 +447,7 @@ export const ShadowingTab = ({
     // re-running this effect would tear down and rebuild the player. The rate
     // buttons call setRate imperatively for live changes.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isMedia, isVideo, isAudio, material, videoId, bvid]);
+  }, [isMedia, isVideo, isAudio, material, videoId, isBili]);
 
   // Defensive reset on material identity change. Today each Material lives on
   // its own route that remounts this component, so this is a no-op in practice

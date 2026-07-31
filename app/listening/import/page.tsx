@@ -31,7 +31,7 @@ import {
 import { dbHelpers } from "@/lib/db-helpers";
 import { parseJson3, parseSubtitles } from "@/lib/subtitle-parse";
 import { extractVideoId } from "@/lib/youtube";
-import { extractBvid } from "@/lib/bilibili-client";
+import { isBilibiliLink } from "@/lib/bilibili-client";
 import { TOPICS, DEFAULT_TOPIC } from "@/lib/topics";
 import type { MaterialSentence } from "@/lib/types";
 
@@ -63,31 +63,14 @@ export default function ImportPage() {
   const [isUploading, setIsUploading] = useState(false);
 
   const handleFetchCaptions = async () => {
-    let currentUrl = url;
-    // b23.tv short links carry no BV token until the redirect resolves, so
-    // extractBvid can't match them yet. Resolve client-side first, then
-    // re-set the URL to the canonical bilibili.com/video/BV... form. A plain
-    // bilibili.com or youtube.com URL skips this (no b23.tv in it).
-    if (/b23\.tv\//i.test(currentUrl)) {
-      try {
-        const res = await fetch(currentUrl, { redirect: "follow" });
-        currentUrl = res.url || currentUrl;
-        setUrl(currentUrl);
-      } catch {
-        // Redirect resolution failed — fall through and let extractBvid /
-        // extractVideoId report "no video ID found" below.
-      }
-    }
-
-    const bvid = extractBvid(currentUrl);
-    if (bvid) {
+    if (isBilibiliLink(url)) {
       setVideoId(null);
       setError(null);
       setSentences(null);
       setPasting(false);
       setIsFetching(true);
       try {
-        const res = await fetch(`/api/bilibili/captions?bvid=${bvid}`);
+        const res = await fetch(`/api/bilibili/captions?url=${encodeURIComponent(url)}`);
         if (res.status === 503) {
           setPasting(true);
           setError(
@@ -115,7 +98,7 @@ export default function ImportPage() {
       return;
     }
 
-    const id = extractVideoId(currentUrl);
+    const id = extractVideoId(url);
     if (!id) {
       setError("无法识别该链接（支持 YouTube 与 B站）。");
       return;

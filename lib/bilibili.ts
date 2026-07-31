@@ -2,6 +2,7 @@
 // No "server-only" import: this module uses node:crypto, which already fails
 // hard if bundled into a client component, giving the same guard.
 import crypto from "node:crypto";
+import { extractBvid } from "./bilibili-client";
 
 export { extractBvid } from "./bilibili-client";
 
@@ -16,6 +17,21 @@ export const biliHeaders = (): Record<string, string> => ({
   // sensitive, so a -352 could surface under prod load later.
   ...(process.env.BILI_SESSDATA ? { Cookie: `SESSDATA=${process.env.BILI_SESSDATA}` } : {}),
 });
+
+// Resolve any Bilibili URL (canonical watch URL OR b23.tv short link) to a
+// bvid. Server-side — b23 redirect resolution has no CORS here (unlike a
+// browser fetch). Returns null for non-Bilibili URLs or unresolvable b23 links.
+export const resolveBvid = async (url: string): Promise<string | null> => {
+  const direct = extractBvid(url);
+  if (direct) return direct;
+  if (!/b23\.tv\//i.test(url)) return null;
+  try {
+    const res = await fetch(url, { redirect: "follow", headers: biliHeaders() });
+    return extractBvid(res.url);
+  } catch {
+    return null; // graceful — caller 404/400s
+  }
+};
 
 // Resolve cid via view API. Returns { cid, title } or null.
 export const resolveCid = async (
