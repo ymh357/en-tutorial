@@ -26,7 +26,7 @@ import {
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { db } from "@/lib/db";
 import { useReadingSessions } from "@/hooks/use-db";
-import { completeTask } from "@/lib/task-pool";
+import { completeTask, getReusableTask } from "@/lib/task-pool";
 import { recordCost } from "@/lib/cost-tracker";
 import { readerArticleGenSchema, toJsonSchema } from "@/lib/ai-schemas";
 import { UNKNOWN_DIFFICULTY, type ReadingSession } from "@/lib/types";
@@ -81,6 +81,24 @@ interface GeneratedArticle {
   comprehensionQuestions: ComprehensionQuestion[];
 }
 
+type ReaderArticleContent = {
+  title: string;
+  content: string;
+  comprehensionQuestions?: ComprehensionQuestion[];
+};
+
+// Shape guard for pool task content. Requires non-empty title/content to
+// match the old truthiness check (`content.title && content.content`), which
+// rejected empty strings — a plain `typeof === "string"` check would not.
+const isReadingArticleData = (value: unknown): value is ReaderArticleContent => {
+  if (!value || typeof value !== "object") return false;
+  const v = value as Record<string, unknown>;
+  if (typeof v.title !== "string" || v.title.length === 0) return false;
+  if (typeof v.content !== "string" || v.content.length === 0) return false;
+  if (v.comprehensionQuestions !== undefined && !Array.isArray(v.comprehensionQuestions)) return false;
+  return true;
+};
+
 const AiGenerateTab = ({
   onSessionCreated,
 }: {
@@ -107,18 +125,38 @@ const AiGenerateTab = ({
         .and(t => !t.completed && t.assignedDate !== "")
         .first();
 
-      if (poolTask) {
-        const content = poolTask.content as { title: string; content: string; comprehensionQuestions: ComprehensionQuestion[] };
-        if (content.title && content.content) {
-          setGenerated({
-            title: content.title,
-            content: content.content,
-            comprehensionQuestions: content.comprehensionQuestions ?? [],
-          });
-          await completeTask(poolTask.id);
-          setIsGenerating(false);
-          return;
-        }
+      if (poolTask && isReadingArticleData(poolTask.content)) {
+        const c = poolTask.content;
+        setGenerated({
+          title: c.title,
+          content: c.content,
+          comprehensionQuestions: c.comprehensionQuestions ?? [],
+        });
+        await completeTask(poolTask.id, "reading-article");
+        setIsGenerating(false);
+        return;
+      }
+    } catch {
+      // Fall through to real-time generation
+    }
+
+    // Alternating repetition (W3): no fresh article — revive a previously-
+    // seen one rather than discarding it.
+    try {
+      const reusable = await getReusableTask("reading-article");
+      if (reusable && isReadingArticleData(reusable.content)) {
+        const c = reusable.content;
+        setGenerated({
+          title: c.title,
+          content: c.content,
+          comprehensionQuestions: c.comprehensionQuestions ?? [],
+        });
+        await completeTask(reusable.id, "reading-article");
+        setIsGenerating(false);
+        return;
+      }
+      if (reusable) {
+        await completeTask(reusable.id);
       }
     } catch {
       // Fall through to real-time generation
