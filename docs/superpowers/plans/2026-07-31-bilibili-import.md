@@ -297,7 +297,12 @@ export async function GET(req: Request) {
   if (puJ.code === -352) {
     const mk = await fetchMixinKey();
     const signed = wbiSign({ bvid, cid: String(meta.cid), qn: "16", fnval: "1", fnver: "0", fourk: "1" }, mk.imgKey, mk.subKey);
-    puJ = await (await fetch(`${base}&${new URLSearchParams(signed)}`, { headers: biliHeaders() })).json();
+    // Rebuild the URL from the endpoint base + signed params — do NOT append onto
+    // `base`, which already holds the same six unsigned keys; appending would
+    // duplicate every param and break wbi signature verification (the client
+    // signed the dedup'd `signed` object; the server's duplicate-key resolution
+    // would mismatch w_rid). Mirror the captions route's clean-URL pattern.
+    puJ = await (await fetch(`https://api.bilibili.com/x/player/playurl?${new URLSearchParams(signed)}`, { headers: biliHeaders() })).json();
   }
   const durl = puJ?.data?.durl;
   if (!Array.isArray(durl) || !durl[0]) {
