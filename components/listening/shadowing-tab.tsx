@@ -7,7 +7,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { ArrowRight, Loader2, Mic, Play, Square } from "lucide-react";
+import { AlertTriangle, ArrowRight, Loader2, Mic, Play, Square } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -197,6 +197,16 @@ export const ShadowingTab = ({
     () => (isMedia && material ? materialToShadowingData(material) : genData),
     [isMedia, material, genData]
   );
+  // Detect materials created before the subtitle-parse endMs fix (srt/vtt cues
+  // lost their end timestamp → audioEndMs undefined on every sentence). Those
+  // rows can't be auto-repaired (the pasted subtitle text isn't stored), so
+  // playSentence falls back to a synthesized bound; surface a soft nudge when a
+  // majority of sentences lack endMs so the learner knows re-importing fixes it.
+  const incompleteEndMs = useMemo(() => {
+    if (!material?.sentences || material.sentences.length === 0) return false;
+    const missing = material.sentences.filter((s) => s.audioEndMs == null).length;
+    return missing / material.sentences.length > 0.5;
+  }, [material]);
   const [index, setIndex] = useState(0);
   const [stage, setStage] = useState<Stage>("imagine");
   // Mirror stage into a ref so the player-construction effect's onStateChange
@@ -753,6 +763,15 @@ export const ShadowingTab = ({
           <AlertDescription>
             Recording is not supported in this browser. Try a recent Chrome,
             Safari, or Firefox.
+          </AlertDescription>
+        </Alert>
+      )}
+
+      {incompleteEndMs && (
+        <Alert>
+          <AlertTriangle className="h-4 w-4" />
+          <AlertDescription>
+            部分句子缺少结束时间戳，句尾停顿可能不精确。重新导入该素材可修复。
           </AlertDescription>
         </Alert>
       )}
