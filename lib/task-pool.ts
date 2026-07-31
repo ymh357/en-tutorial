@@ -97,10 +97,13 @@ export const completeTask = async (
 // the lowest exposureCount that hasn't been seen within `minIntervalMs`, and
 // reactivates it (completed=false). Returns the reactivated task or null when
 // nothing is eligible. Callers fall back to real-time generation on null.
-// Adoption: currently wired into shadowing only; other pool consumers
-// (dictation/comprehension/prediction/reader/translate/writing) still fall
-// through to real-time generation on a miss — adopting getReusableTask there
-// is tracked as W4 follow-up (review W3 #3).
+// Adoption: wired into all 5 generation-type consumers (shadowing, dictation,
+// comprehension, prediction, reader-AiGenerateTab, translate) as of the
+// getReusableTask wiring plan. The 2 daily-new-card consumers (reader Today's
+// Article, writing Today's Prompt) are deliberately NOT wired — reviving old
+// content would violate their fresh-per-day semantic. Consumers delete a
+// revived row whose shape guard fails (see each site), so this function never
+// re-revives an unrenderable row.
 export const getReusableTask = async (
   type: PoolTaskType,
   minIntervalMs = 6 * 60 * 60 * 1000 // 6h: don't immediately redo what was just done

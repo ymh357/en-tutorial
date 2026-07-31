@@ -384,7 +384,7 @@ const TranslatePage = () => {
   useEffect(() => {
     const pickMode = async () => {
       try {
-        const poolTypeByMode: Record<"sentence" | "paragraph", string> = {
+        const poolTypeByMode: Record<"sentence" | "paragraph", PoolTaskType> = {
           sentence: "translation-sentence",
           paragraph: "translation-paragraph",
         };

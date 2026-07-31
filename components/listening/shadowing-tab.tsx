@@ -441,10 +441,12 @@ export const ShadowingTab = ({
           setIsLoading(false);
           return;
         }
-        // Stale pre-W1-T2 content (bare string[] shape): mark complete so this
-        // row isn't re-fetched and rejected every visit, then fall through to
-        // real-time generation.
-        await completeTask(poolTask.id);
+        // Stale pre-W1-T2 content (bare string[] shape): delete the unrenderable
+        // row — no consumer of this type can display it, and deletion (unlike
+        // completeTask, which sets completed=true and so still satisfies
+        // getReusableTask's eligibility) guarantees it can't be revived to be
+        // rejected again. Fall through to real-time generation.
+        await db.poolTasks.delete(poolTask.id);
       }
     } catch {
       // Fall through to real-time generation
@@ -460,6 +462,11 @@ export const ShadowingTab = ({
         await completeTask(reusable.id, "listening-shadowing");
         setIsLoading(false);
         return;
+      }
+      if (reusable) {
+        // Revived a stale/old-shape row — delete it so getReusableTask can't
+        // keep re-reviving it every interval (mirrors the other 5 consumers).
+        await db.poolTasks.delete(reusable.id);
       }
     } catch {
       // Fall through to real-time generation
