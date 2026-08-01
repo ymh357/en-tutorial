@@ -227,6 +227,12 @@ export const ShadowingTab = ({
   useEffect(() => {
     stageRef.current = stage;
   }, [stage]);
+  // Lyric-style subtitle list: scroll the current sentence into view whenever
+  // index/stage advances. Command-only (no setState) so it's strict-effect-safe.
+  const currentSentenceElRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    currentSentenceElRef.current?.scrollIntoView({ block: "center", behavior: "smooth" });
+  }, [index, stage]);
   const [subtitleMode, setSubtitleMode] = useState<SubtitleMode>("english");
   const [voice, setVoice] = useState<string>("en-US-AriaNeural");
   const [listensCount, setListensCount] = useState<number>(0);
@@ -905,13 +911,54 @@ export const ShadowingTab = ({
                 // which React does not own and thus cannot smear className onto.
                 <div
                   ref={playerHostRef}
-                  className={
-                    stage === "listen"
-                      ? "aspect-video w-full rounded-md overflow-hidden [&>iframe]:block [&>iframe]:h-full [&>iframe]:w-full [&>video]:block [&>video]:h-full [&>video]:w-full [&>video]:object-contain"
-                      : "hidden"
-                  }
+                  // Video stays visible across ALL stages (imagine/listen/recall):
+                  // in imagine it shows the first frame as a visual cue for
+                  // "form the mental picture" (no playback = no sound, per the
+                  // imagine stage's no-play rule); listen plays it; recall keeps
+                  // it visible alongside the recorded/shown sentence. Previously
+                  // hidden outside listen, which forced the user to lose the
+                  // video between stages.
+                  className="aspect-video w-full rounded-md overflow-hidden [&>iframe]:block [&>iframe]:h-full [&>iframe]:w-full [&>video]:block [&>video]:h-full [&>video]:w-full [&>video]:object-contain"
                 />
               )}
+
+              {/* Lyric-style subtitle list —常驻 across all stages (video stays
+                  visible, subtitles stay visible) so the learner sees the whole
+                  transcript like lyrics, current sentence highlighted + auto-
+                  scrolled. Per-stage reveal (保三阶段语义):
+                    imagine — English hidden (opacity-0 skeleton: "form the
+                              picture" first, no text leak); only序号visible.
+                    listen  — English shown (歌词式边听边看跟读; user-confirmed
+                              change to original "listen hides English" methodology).
+                    recall  — English + translation shown, current highlighted.
+                  subtitleMode "hidden" (recall toggle) hides English for纯声音跟读. */}
+              {data?.sentences && data.sentences.length > 0 && (() => {
+                const showEnglish = stage !== "imagine" && subtitleMode !== "hidden";
+                const showTranslation = stage === "recall" && subtitleMode === "bilingual";
+                return (
+                  <div className="max-h-[40vh] overflow-y-auto rounded-md border bg-card/50 px-2 py-1 text-sm leading-relaxed">
+                    {data.sentences.map((s, i) => {
+                      const isCurrent = i === index;
+                      return (
+                        <div
+                          key={i}
+                          ref={isCurrent ? currentSentenceElRef : undefined}
+                          className={
+                            "rounded px-2 py-1 transition-colors " +
+                            (isCurrent ? "bg-primary/10 text-primary font-semibold" : "text-muted-foreground")
+                          }
+                        >
+                          <span className="mr-2 text-xs tabular-nums opacity-60">{i + 1}</span>
+                          <span className={showEnglish ? "" : "opacity-0 select-none"}>{s.text}</span>
+                          {showTranslation && s.translation ? (
+                            <span className="block pl-6 text-xs italic opacity-80">{s.translation}</span>
+                          ) : null}
+                        </div>
+                      );
+                    })}
+                  </div>
+                );
+              })()}
 
               {stage === "imagine" && (
                 <div className="space-y-3 py-1">
@@ -923,17 +970,11 @@ export const ShadowingTab = ({
                   </p>
                   {isMedia && currentImageryHint === "" ? (
                     <div className="space-y-2 text-center">
-                      {isVideo && videoId && (
-                        // eslint-disable-next-line @next/next/no-img-element
-                        <img
-                          src={`https://img.youtube.com/vi/${videoId}/hqdefault.jpg`}
-                          alt={data?.context ?? "video thumbnail"}
-                          className="mx-auto rounded-md max-w-full"
-                        />
-                      )}
+                      {/* 视频常驻后首帧已在上方 host 显示，不再重复贴封面图。
+                          isAudio（无画面）时无 videoId，本分支原就不出图。 */}
                       <p className="text-sm py-2 border-l-2 border-primary/40 pl-3 ml-3 mr-3 text-left">
                         {isVideo
-                          ? "先看视频标题和封面，想象这个视频会讲什么，不要急着播放。"
+                          ? "先看视频画面与标题，想象这个视频会讲什么，不要急着播放。"
                           : "先看标题，想象这段音频会讲什么，不要急着播放。"}
                       </p>
                     </div>
@@ -1059,11 +1100,10 @@ export const ShadowingTab = ({
                       setSubtitleMode("english");
                       setStage("recall");
                       // Media mode: pause when leaving the listen stage — video's
-                      // host goes display:none but YT audio keeps playing under
-                      // it (and AB-loop would loop forever); audio has no host
-                      // but plays just the same. Without this the sentence clip
-                      // bleeds into recall and, while still playing, keeps the
-                      // focus watchdog fed (review [重要]).
+                      // 视频常驻后 host 不再 display:none，但离开 listen 仍要 pause：
+                      // 否则句片段会渗进 recall，且 AB-loop 会无限循环；播放中还会
+                      // 持续喂 focus watchdog（review [重要]）。视频画面保留可见(停帧)，
+                      // 只是停止播放。
                       if (isMedia) {
                         sourceRef.current?.pause();
                       }
