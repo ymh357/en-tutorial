@@ -51,8 +51,8 @@ const SYSTEM = [
   "- A complete sentence has a finished subject+verb+thought; the sentence must read as a self-contained statement.",
   "- Cut ONLY at true sentence boundaries. NEVER end mid-phrase — e.g. after a preposition (for/of/with), an article (a/the), or an adjective lacking its noun ('for high' is WRONG when 'high performance server side applications' is the noun phrase).",
   "- When unsure whether a boundary is complete, MERGE rather than SPLIT — a slightly long complete sentence is far better than a truncated half-sentence.",
-  "- You may lightly clean each sentence: fix initial capitalization and add a trailing period, and merge split proper nouns (e.g. 'Cockroach DB' → 'CockroachDB'). Do NOT paraphrase or reorder words.",
-  "- Drop non-speech fragments ([Music], (applause)) — don't include them in any sentence.",
+  "- PRESERVE EVERY WORD'S SPELLING EXACTLY as it appears in the transcript, including ASR mis-hears (e.g. keep 'serers', do not 'correct' it to 'servers'). You may only: add initial capitalization, add a trailing period, and merge a proper noun split by whitespace ('Cockroach DB' → 'CockroachDB'). Do NOT fix, reorder, drop, or reword anything. This exact-word preservation is required so each returned sentence can be machine-matched back to its timestamps in the transcript.",
+  "- Drop non-speech markers ([Music], (applause)) only when they stand as their own fragment — do not include them inside a sentence.",
   "- Return ONLY the JSON object matching the schema; no markdown, no commentary.",
 ].join("\n");
 
@@ -69,7 +69,11 @@ const segmentOnce = async (joined: string): Promise<string[]> => {
       prompt: `Segment this transcript into complete sentences.\n\nTranscript:\n${joined}`,
       schema: toJsonSchema(segmentationSchema),
       temperature: 0,
-      maxOutputTokens: 4096,
+      // Long transcripts surface as 200+ sentences; 4096 tokens truncates that
+      // mid-JSON and the structured parse yields an empty array, silently
+      // bailing the whole segmentation to parseJson3 fragments. 8192 leaves
+      // headroom (observed ~4k tokens for 236 sentences).
+      maxOutputTokens: 8192,
       disableThinking: true,
     }),
   });
@@ -94,9 +98,16 @@ const segmentOnce = async (joined: string): Promise<string[]> => {
     .filter((s) => s.length > 0);
 };
 
-// Normalize for substring localization: lowercase, drop punctuation + spaces.
-// "Cockroach DB" and "CockroachDB" both -> "cockroachdb"; "Go"/"go" -> "go".
-// `owner[k]` = { fi, si } mapping normalized char k -> its source textEvent (fi)
+// Char-stream normalization for substring localization: lowercase, drop
+// punctuation + spaces. "Cockroach DB" and "CockroachDB" both -> "cockroachdb";
+// "Go"/"go" -> "go". Crucially, non-speech markers "[__]", "[Music]" normalize
+// to nothing (no alnum), so an LLM that drops them still matches the ASR char
+// stream — and because the LLM is told to PRESERVE word spelling exactly (not
+// fix ASR mis-hears), a whole-sentence char substring matches verbatim. That
+// exact match is the precise localization layer; a first/last-word fallback
+// covers the rare sentence where the LLM still merged/split a word.
+//
+// `owner[k]` = { fi, si } maps normalized char k -> its source textEvent (fi)
 // and the seg WITHIN that event (si), so a sentence's start can be timed to the
 // SEG level (event.tStartMs + seg.tOffsetMs) — not just the event's first-word
 // tStartMs. This matters when the LLM starts a sentence mid-event (e.g. event
@@ -116,11 +127,6 @@ const buildNormalizedStream = (
           owner.push({ fi, si });
         }
       }
-      // Spaces between segs within an event are dropped (not alnum) — seg
-      // word boundaries disappear in the normalized stream, letting an
-      // LLM-merged "CockroachDB" match "cockroach"+"db". Inter-event
-      // joining spaces also dropped (textEvents[].text had them, but we
-      // iterate segs directly here so none inserted).
     }
   }
   return { stream, owner };
@@ -153,9 +159,23 @@ export const segmentSentencesFromJson3 = async (
 
     const { stream, owner } = buildNormalizedStream(textEvents);
 
-    // Localize each sentence (in order) as a normalized substring from a
-    // running cursor. Cursor advances past each match, so sentences can't
+    // Localize each sentence (in order) against the normalized char stream from
+    // a running cursor. Cursor advances past each match, so sentences can't
     // re-claim earlier text (LLM preserves word order).
+    //
+    // Two layers (per-word greedy with a span cap was tried and rejected — it
+    // drifts: when a mid-sentence word is absent the next word's "next
+    // occurrence" leaps to a later repeat of that word within the cap window,
+    // and the cursor runs away, collapsing later sentences):
+    //   1. Whole-sentence normalized substring (exact). Works because the LLM is
+    //      told to preserve word spelling verbatim (only punctuate/capitalize),
+    //      and non-speech markers normalize to nothing — so the LLM sentence and
+    //      the ASR char stream agree character-for-character.
+    //   2. First/last word fallback. For the rare sentence where the LLM still
+    //      merged/split a word (e.g. 'Cockroach DB'→'CockroachDB' shifts the last
+    //      word), locate the sentence's first and last normalizable words and
+    //      span them. Tolerates a mid-sentence edit as long as the boundary
+    //      words survive.
     const result: MaterialSentence[] = [];
     let cursor = 0;
     let failCount = 0;
@@ -168,12 +188,9 @@ export const segmentSentencesFromJson3 = async (
       if (norm.length === 0) continue;
       const at = stream.indexOf(norm, cursor);
       if (at === -1) {
-        // The LLM edited beyond punctuation/merges (e.g. "go a" → "Go is"
-        // — fixing ASR grammar), so the whole-sentence normalized substring
-        // doesn't match. Fall back to FIRST/LAST word localization: find the
-        // sentence's first and last normalizable words in the stream from the
-        // cursor, and span [firstWordFrag, lastWordFrag]. This tolerates mid-
-        // sentence rewrites as long as the boundary words survive.
+        // Whole-sentence match failed — the LLM edited a word. Fall back to
+        // FIRST/LAST word localization: find the sentence's first and last
+        // normalizable words in the stream from the cursor, and span them.
         const words = sentence
           .split(/\s+/)
           .map((w) => w.split("").filter((c) => /[a-z0-9]/i.test(c)).join("").toLowerCase())
@@ -200,7 +217,6 @@ export const segmentSentencesFromJson3 = async (
           continue;
         }
         if (!isSpeech(sentence)) continue;
-        // owner.si indexes firstTE.segs (filtered) — see main-path note.
         const startMs = segStartMs(firstTE, firstOwner.si) ?? firstTE.tStartMs;
         const endMs = lastTE.tStartMs + (lastEv.dDurationMs ?? 0);
         result.push({
@@ -231,7 +247,10 @@ export const segmentSentencesFromJson3 = async (
       // late end is harmless).
       const startMs = segStartMs(firstTE, firstOwner.si) ?? firstTE.tStartMs;
       const lastStartMs = lastTE.tStartMs;
-      // Use the LLM-cleaned sentence text (capitalized/punctuated) for display.
+      if (startMs == null || lastStartMs == null) {
+        failCount++;
+        continue;
+      }
       if (!isSpeech(sentence)) continue;
       const endMs = lastStartMs + (lastEv.dDurationMs ?? 0);
       result.push({
