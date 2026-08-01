@@ -132,6 +132,65 @@ const buildNormalizedStream = (
   return { stream, owner };
 };
 
+// Split textEvents into overlapping chunks for LLM segmentation. A single
+// whole-transcript call degrades on long material: the LLM over-merges (a few
+// huge sentences under the "merge rather than split" rule) and risks
+// maxOutputTokens truncation. Chunking keeps each LLM call on a short, clean
+// span where it segments well.
+//
+// Cuts fall on EVENT boundaries (never mid-event), so each chunk is a clean
+// run of events. Chunks OVERLAP by ~overlapChars so the LLM has cross-boundary
+// context to finish/continue sentences straddling a cut — without overlap, a
+// sentence spanning a cut would be severed into two fragments. The overlap
+// re-emits some sentences twice; those duplicates are removed at localization
+// (see the dup-skip below), not here.
+//
+// char offsets are over the joined `t.text + " "` form so maxChars/overlap map
+// to real transcript length, not event count (events vary 1-5s of speech).
+const splitTextEvents = (
+  textEvents: TextEvent[],
+  maxChars = 3000,
+  overlapChars = 600
+): TextEvent[][] => {
+  if (textEvents.length === 0) return [];
+  if (textEvents.length === 1) return [textEvents];
+  const chunks: TextEvent[][] = [];
+  // offsets[k] = char offset of textEvents[k] in the joined stream; offsets[n]=total.
+  const offsets: number[] = [0];
+  let total = 0;
+  for (const t of textEvents) {
+    total += t.text.length + 1; // +1 for the joining space
+    offsets.push(total);
+  }
+  const fullLen = total;
+  let evStart = 0;
+  // Guard against a pathological loop: ensure evStart strictly advances each
+  // iteration so a tiny transcript can't spin. Overlap should never push the
+  // next start behind the current, but clamp defensively.
+  while (evStart < textEvents.length) {
+    const charStart = offsets[evStart];
+    const charEnd = Math.min(charStart + maxChars, fullLen);
+    // Last event whose content ends at/before charEnd (inclusive).
+    let evEnd = textEvents.length - 1;
+    for (let k = evStart; k < textEvents.length; k++) {
+      if (offsets[k + 1] > charEnd) { evEnd = k; break; }
+    }
+    chunks.push(textEvents.slice(evStart, evEnd + 1));
+    if (evEnd >= textEvents.length - 1) break; // reached the end
+    // Next chunk starts ~overlapChars before this chunk's end, snapped to an
+    // event boundary. Find the first event whose offset is >= (charEnd - overlap).
+    const targetCharStart = Math.max(charEnd - overlapChars, 0);
+    let evNextStart = evEnd;
+    for (let k = evEnd; k >= 0; k--) {
+      if (offsets[k] >= targetCharStart) evNextStart = k;
+      else break;
+    }
+    if (evNextStart <= evStart) evNextStart = evStart + 1; // force progress
+    evStart = evNextStart;
+  }
+  return chunks;
+};
+
 /** Segment YouTube json3 events into sentence-bounded MaterialSentences via LLM.
  *  Returns [] on any failure (caller falls back to parseJson3). */
 export const segmentSentencesFromJson3 = async (
@@ -153,8 +212,16 @@ export const segmentSentencesFromJson3 = async (
     }
     if (textEvents.length === 0) return [];
 
-    const joined = textEvents.map((t) => t.text).join(" ");
-    const sentences = await segmentOnce(joined);
+    // Chunked segmentation for long transcripts: a single whole-transcript call
+    // over-merges / truncates on long material (root-caused on a 13K-char
+    // montage). Split into overlapping event-boundary chunks, segment each, and
+    // concatenate — overlap duplicates are removed at localization below.
+    const chunks = splitTextEvents(textEvents);
+    const sentences: string[] = [];
+    for (const chunk of chunks) {
+      const joined = chunk.map((t) => t.text).join(" ");
+      sentences.push(...(await segmentOnce(joined)));
+    }
     if (sentences.length === 0) return [];
 
     const { stream, owner } = buildNormalizedStream(textEvents);
@@ -188,6 +255,15 @@ export const segmentSentencesFromJson3 = async (
       if (norm.length === 0) continue;
       const at = stream.indexOf(norm, cursor);
       if (at === -1) {
+        // Dup-skip (chunked segmentation): overlapping chunks re-emit the
+        // overlap region's sentences. Such a sentence's text already exists in
+        // the stream BEFORE the cursor (a prior chunk localized it and advanced
+        // the cursor past it). Detect: the whole-sentence text is found
+        // somewhere before the cursor. Skip it — it's already in `result` —
+        // WITHOUT counting a failure (a real paraphrase failure doesn't match
+        // anywhere, so this check won't swallow those).
+        const anywhere = stream.indexOf(norm);
+        if (anywhere !== -1 && anywhere < cursor) continue;
         // Whole-sentence match failed — the LLM edited a word. Fall back to
         // FIRST/LAST word localization: find the sentence's first and last
         // normalizable words in the stream from the cursor, and span them.
