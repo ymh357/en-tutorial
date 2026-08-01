@@ -595,15 +595,12 @@ export const ShadowingTab = ({
     // the true boundary by construction. Last sentence (no next) falls back to
     // audioEndMs, then a 15s cap.
     const nextStart = material?.sentences?.[i + 1]?.audioStartMs;
-    const endMs =
-      nextStart ?? s.audioEndMs ?? s.audioStartMs + 15000;
-    // Start a touch BEFORE the sentence's first ASR event: that event's tStartMs
-    // is the phrase-block start, which ASR typically places slightly AFTER the
-    // real word onset, so seeking exactly to it clips the句首. -300ms (floored at
-    // 0) compensates consistently with the endMs=nextStart construction above.
-    const startMs = Math.max(0, s.audioStartMs - 300);
+    const endMs = nextStart ?? s.audioEndMs ?? s.audioStartMs + 15000;
+    // audioStartMs comes from the sentence's first ASR event's tStartMs, which
+    // is the精细 word-onset timestamp (json3 segs carry tOffsetMs within the
+    // event) — no heuristic lead-in needed.句末 ends at next sentence's start.
     setListensCount((c) => c + 1);
-    sourceRef.current?.play(startMs, endMs);
+    sourceRef.current?.play(s.audioStartMs, endMs);
   };
 
   const startAttempt = async (): Promise<void> => {
