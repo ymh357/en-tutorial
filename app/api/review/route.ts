@@ -7,9 +7,11 @@ const MAX_BODY_SIZE = 100_000; // ~100KB
 
 // Optional caller-selected model. Quality (deepseek-v4-pro) is the default
 // for callers that omit `model` (every existing consumer — backward compatible).
-// `deepseek-v4-flash` is the fast/cheap tier, used by low-stakes high-frequency
-// tasks like caption sentence segmentation. Anything unrecognized falls back
-// to qualityModel rather than erroring, so a bad model string never 500s.
+// `deepseek-v4-flash` is the fast/cheap tier for low-stakes high-frequency
+// tasks. Note: caption sentence segmentation (lib/segment-sentences.ts)
+// explicitly selects pro — flash ignored the JSON schema under non-strict
+// mode in probing, so it is NOT a flash consumer. Anything unrecognized falls
+// back to qualityModel rather than erroring, so a bad model string never 500s.
 const resolveModel = (name?: string) =>
   name === "deepseek-v4-flash" ? defaultModel : qualityModel;
 

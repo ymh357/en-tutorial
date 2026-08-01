@@ -595,10 +595,16 @@ export const ShadowingTab = ({
     // the true boundary by construction. Last sentence (no next) falls back to
     // audioEndMs, then a 15s cap.
     const nextStart = material?.sentences?.[i + 1]?.audioStartMs;
-    const endMs = nextStart ?? s.audioEndMs ?? s.audioStartMs + 15000;
-    // audioStartMs comes from the sentence's first ASR event's tStartMs, which
-    // is the精细 word-onset timestamp (json3 segs carry tOffsetMs within the
-    // event) — no heuristic lead-in needed.句末 ends at next sentence's start.
+    const rawEnd = nextStart ?? s.audioEndMs ?? s.audioStartMs + 15000;
+    // Guard against a non-positive clip: the segmentation path sorts+clamps
+    // adjacent sentences, but parseJson3/parseBilibili/parseSrt fallbacks
+    // don't — a nextStart <= this start (out-of-order cues) would make
+    // startPoll fire immediately (silent sentence, or a tight AB-loop seek
+    // hammer). Fall back to a 15s cap so the clip always has a positive window.
+    const endMs = rawEnd > s.audioStartMs ? rawEnd : s.audioStartMs + 15000;
+    // audioStartMs is the sentence's first word onset — segment-sentences.ts
+    // times it to the json3 SEG level (event.tStartMs + seg.tOffsetMs), not
+    // the event's first-word tStartMs, so no heuristic lead-in is needed.
     setListensCount((c) => c + 1);
     sourceRef.current?.play(s.audioStartMs, endMs);
   };
@@ -956,7 +962,18 @@ export const ShadowingTab = ({
                           }
                         >
                           <span className="mr-2 text-xs tabular-nums opacity-60">{i + 1}</span>
-                          <span className={showEnglish ? "" : "opacity-0 select-none"}>{s.text}</span>
+                          {/* Recall vocabulary-card selection lives on the
+                              current row's English span: the old single-
+                              sentence <p> was removed (this list already shows
+                              the current sentence), so this is the selection
+                              surface. handleSentenceMouseUp self-guards
+                              stage/mode and validates against currentSentence. */}
+                          <span
+                            className={showEnglish ? "" : "opacity-0 select-none"}
+                            onMouseUp={isCurrent ? handleSentenceMouseUp : undefined}
+                          >
+                            {s.text}
+                          </span>
                           {showTranslation && s.translation ? (
                             <span className="block pl-6 text-xs italic opacity-80">{s.translation}</span>
                           ) : null}
@@ -1125,14 +1142,12 @@ export const ShadowingTab = ({
 
               {stage === "recall" && (
                 <div className="space-y-3">
-                  {subtitleMode !== "hidden" && (
-                    <p
-                      className="text-base font-medium text-center py-2"
-                      onMouseUp={handleSentenceMouseUp}
-                    >
-                      {currentSentence}
-                    </p>
-                  )}
+                  {/* The current sentence's English + translation are shown in
+                      the lyric list above (current row highlighted). The old
+                      single-sentence <p> blocks were removed to avoid showing
+                      them twice; vocabulary-card text selection now targets
+                      the list's current row (see onMouseUp there). Only the
+                      card-action UI and mode notices remain here. */}
                   {pendingSelection ? (
                     <div className="flex justify-center">
                       <Button
@@ -1147,11 +1162,6 @@ export const ShadowingTab = ({
                   {justSavedCard ? (
                     <p className="text-xs text-center text-primary">已存</p>
                   ) : null}
-                  {subtitleMode === "bilingual" && (
-                    <p className="text-sm text-muted-foreground text-center italic">
-                      {currentTranslation}
-                    </p>
-                  )}
                   {subtitleMode === "hidden" && (
                     <p className="text-xs text-muted-foreground text-center py-2">
                       字幕已隐藏——纯靠声音跟读。

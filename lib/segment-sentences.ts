@@ -24,9 +24,10 @@ import { isSpeech } from "@/lib/subtitle-parse";
 import type { MaterialSentence } from "@/lib/types";
 
 interface TextEvent {
-  i: number; // index into the ORIGINAL events array (for timing)
+  i: number; // index into the ORIGINAL events array (for dDurationMs lookup)
   text: string;
-  segs?: { utf8?: string; tOffsetMs?: number }[]; // original segs for seg-level timing
+  tStartMs: number; // event's absolute start (raw events[i].tStartMs; non-null by construction)
+  segs?: { utf8?: string; tOffsetMs?: number }[]; // FILTERED non-empty segs — owner.si indexes THIS array, so segStartMs must read it here, not the raw event's unfiltered segs (whose indices drift when leading empty segs are filtered out).
 }
 
 /** Absolute timestamp (ms) of a seg within its event: event.tStartMs + seg.tOffsetMs. */
@@ -142,7 +143,7 @@ export const segmentSentencesFromJson3 = async (
         .replace(/\n/g, " ")
         .trim();
       if (!raw) continue;
-      textEvents.push({ i, text: raw, segs });
+      textEvents.push({ i, text: raw, segs, tStartMs: ev.tStartMs });
     }
     if (textEvents.length === 0) return [];
 
@@ -191,19 +192,17 @@ export const segmentSentencesFromJson3 = async (
         }
         const firstOwner = owner[fAt];
         const lastOwner = owner[lAt + lastWord.length - 1];
-        const firstEv = events[textEvents[firstOwner.fi].i];
-        const lastEv = events[textEvents[lastOwner.fi].i];
-        if (!firstEv || !lastEv || firstEv.tStartMs == null || lastEv.tStartMs == null) {
+        const firstTE = textEvents[firstOwner.fi];
+        const lastTE = textEvents[lastOwner.fi];
+        const lastEv = events[lastTE.i]; // raw event, only for dDurationMs
+        if (!lastEv) {
           failCount++;
           continue;
         }
         if (!isSpeech(sentence)) continue;
-        // Capture the guarded number before the segStartMs call so narrowing
-        // survives (a function call can reset property narrowing in TS); the
-        // seg-level start is preferred, falling back to the event's tStartMs.
-        const firstBase = firstEv.tStartMs;
-        const startMs = segStartMs(firstEv, firstOwner.si) ?? firstBase;
-        const endMs = lastEv.tStartMs + (lastEv.dDurationMs ?? 0);
+        // owner.si indexes firstTE.segs (filtered) — see main-path note.
+        const startMs = segStartMs(firstTE, firstOwner.si) ?? firstTE.tStartMs;
+        const endMs = lastTE.tStartMs + (lastEv.dDurationMs ?? 0);
         result.push({
           text: sentence,
           audioStartMs: startMs,
@@ -215,23 +214,23 @@ export const segmentSentencesFromJson3 = async (
       const end = at + norm.length - 1; // inclusive
       const firstOwner = owner[at];
       const lastOwner = owner[end];
-      const firstEv = events[textEvents[firstOwner.fi].i];
-      const lastEv = events[textEvents[lastOwner.fi].i];
-      if (!firstEv || !lastEv) {
+      const firstTE = textEvents[firstOwner.fi];
+      const lastTE = textEvents[lastOwner.fi];
+      const lastEv = events[lastTE.i]; // raw event, only for dDurationMs (endMs)
+      if (!lastEv) {
         failCount++;
         continue;
       }
-      // Seg-level start: when the LLM starts a sentence mid-event, the first
-      // word's seg tOffsetMs pins the true start (event.tStartMs alone would be
-      // too early and drag in the event's earlier words). lastStartMs stays
-      // event-level — endMs is clamped to the next sentence's start downstream
-      // (playSentence uses nextStart), so a slightly-late event end is harmless.
-      const startMs = segStartMs(firstEv, firstOwner.si) ?? firstEv.tStartMs;
-      const lastStartMs = lastEv.tStartMs;
-      if (startMs == null || lastStartMs == null) {
-        failCount++;
-        continue;
-      }
+      // Seg-level start: owner.si indexes firstTE.segs (the FILTERED array on
+      // the TextEvent), so segStartMs reads that same array — NOT the raw
+      // event's unfiltered segs. Raw indices don't line up with filtered ones
+      // when leading empty/whitespace segs were dropped, which silently read
+      // the wrong (empty) seg's tOffsetMs==undefined→0 and fell back to event
+      // tStartMs — defeating the seg-level fix. endMs stays event-level
+      // (clamped to the next sentence's start in playSentence, so a slightly-
+      // late end is harmless).
+      const startMs = segStartMs(firstTE, firstOwner.si) ?? firstTE.tStartMs;
+      const lastStartMs = lastTE.tStartMs;
       // Use the LLM-cleaned sentence text (capitalized/punctuated) for display.
       if (!isSpeech(sentence)) continue;
       const endMs = lastStartMs + (lastEv.dDurationMs ?? 0);
