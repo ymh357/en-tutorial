@@ -45,18 +45,28 @@ const segmentationSchema = z.object({
 });
 
 const SYSTEM = [
-  "You segment an English ASR transcript (no punctuation, one long string) into complete spoken sentences.",
+  "You segment an English ASR transcript into complete spoken sentences.",
   "Return each sentence as a string in the `sentences` array, in order.",
+  "The transcript is given ONE ASR FRAGMENT PER LINE. Each line break marks a speech pause the ASR detected — most lines are a phrase or short interjection. In dense dialogue, a line break is usually a turn change or sentence boundary.",
   "Rules:",
   "- A complete sentence has a finished subject+verb+thought; the sentence must read as a self-contained statement.",
+  "- PREFER to cut at LINE BREAKS: the ASR already paused there, so a sentence boundary there is likely correct. Only MERGE across a line break when the next line clearly continues THIS sentence (object/dependent clause of the same thought) — e.g. 'I am' / 'the one who knocks' merges; 'I just want to go home' / 'me too' does NOT (the latter is a separate utterance).",
+  "- Never merge many short interjections/replies ('okay' / 'yeah' / 'me too' / 'no') into one sentence — each is its own sentence. A rapid back-and-forth of one-word replies ends each as its own short sentence.",
   "- Cut ONLY at true sentence boundaries. NEVER end mid-phrase — e.g. after a preposition (for/of/with), an article (a/the), or an adjective lacking its noun ('for high' is WRONG when 'high performance server side applications' is the noun phrase).",
-  "- When unsure whether a boundary is complete, MERGE rather than SPLIT — a slightly long complete sentence is far better than a truncated half-sentence.",
-  "- PRESERVE EVERY WORD'S SPELLING EXACTLY as it appears in the transcript, including ASR mis-hears (e.g. keep 'serers', do not 'correct' it to 'servers'). You may only: add initial capitalization, add a trailing period, and merge a proper noun split by whitespace ('Cockroach DB' → 'CockroachDB'). Do NOT fix, reorder, drop, or reword anything. This exact-word preservation is required so each returned sentence can be machine-matched back to its timestamps in the transcript.",
-  "- Drop non-speech markers ([Music], (applause)) only when they stand as their own fragment — do not include them inside a sentence.",
+  "- PRESERVE EVERY WORD'S SPELLING EXACTLY as it appears in the transcript, including ASR mis-hears (e.g. keep 'serers', do not 'correct' it to 'servers'). You may only: add initial capitalization, add a trailing period, and merge a proper noun split by whitespace ('Cockroach DB' → 'CockroachDB'). Do NOT fix, reorder, drop, or reword anything. This exact-word preservation is required so each returned sentence can be machine-matched back to its timestamps in the transcript. Whitespace between words inside a sentence is a single space.",
+  "- Drop non-speech markers ([Music], (applause)) only when they stand as their own line — do not include them inside a sentence.",
   "- Return ONLY the JSON object matching the schema; no markdown, no commentary.",
 ].join("\n");
 
-const segmentOnce = async (joined: string): Promise<string[]> => {
+const segmentOnce = async (lines: string[]): Promise<string[]> => {
+  // Feed the LLM ONE ASR FRAGMENT PER LINE (not a joined flat string). ASR
+  // fragment boundaries are speech pauses — in dense dialogue they're mostly
+  // turn/sentence changes. Giving the LLM that boundary signal lets it cut at
+  // real pauses instead of over-merging rapid back-and-forth replies into one
+  // huge sentence (the symptom on O1gFxMoBAVw: a dozen replies became one line
+  // because a flat string hid every pause). The line breaks are SIGNAL ONLY:
+  // localization matches against a normalized char stream that drops them.
+  const transcript = lines.join("\n");
   const res = await fetch("/api/review", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -66,7 +76,7 @@ const segmentOnce = async (joined: string): Promise<string[]> => {
       // runs once per imported video, so the higher tier is acceptable.
       model: "deepseek-v4-pro",
       system: SYSTEM,
-      prompt: `Segment this transcript into complete sentences.\n\nTranscript:\n${joined}`,
+      prompt: `Segment this transcript into complete sentences. Each line below is one ASR fragment (a detected pause). Prefer cutting at line breaks; only merge lines that clearly continue the same sentence.\n\nTranscript:\n${transcript}`,
       schema: toJsonSchema(segmentationSchema),
       temperature: 0,
       // Long transcripts surface as 200+ sentences; 4096 tokens truncates that
@@ -219,8 +229,7 @@ export const segmentSentencesFromJson3 = async (
     const chunks = splitTextEvents(textEvents);
     const sentences: string[] = [];
     for (const chunk of chunks) {
-      const joined = chunk.map((t) => t.text).join(" ");
-      sentences.push(...(await segmentOnce(joined)));
+      sentences.push(...(await segmentOnce(chunk.map((t) => t.text))));
     }
     if (sentences.length === 0) return [];
 
