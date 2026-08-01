@@ -15,7 +15,9 @@ Local run (not `next dev`): `vercel dev` boots all services together.
 import json
 import os
 import re
-from urllib.parse import parse_qs
+from urllib import error as urlerror
+from urllib import request as urlrequest
+from urllib.parse import parse_qs, urlencode
 
 import yt_dlp
 from yt_dlp.utils import DownloadError, ExtractorError
@@ -25,6 +27,15 @@ VIDEO_ID_RE = re.compile(r"^[a-zA-Z0-9_-]{11}$")
 # Surface yt-dlp's raw error text only when explicitly enabled. Off by default:
 # the text can carry signed URLs / internal endpoints we don't want to expose.
 DEBUG_DETAIL = os.environ.get("YTC_DEBUG", "") not in ("", "0", "false")
+
+# Best-effort fallback to a self-hosted POT provider (e.g. a MacBook running
+# bgutil-ytdlp-pot-provider + yt-dlp behind a cloudflared tunnel). When the
+# local yt-dlp call is POT-blocked (503) or produces nothing, the route asks
+# the provider for the json3 captions instead. Both envs are optional: unset
+# means "no provider configured" and the route behaves exactly as before
+# (503 → the import page's paste-srt fallback). See docs/handoff-captions-pot.md.
+POT_PROVIDER_URL = os.environ.get("POT_PROVIDER_URL", "").strip()
+POT_PROVIDER_SECRET = os.environ.get("POT_PROVIDER_SECRET", "").strip()
 
 
 def fetch_captions(video_id):
@@ -103,6 +114,33 @@ def fetch_captions(video_id):
     return None
 
 
+def _pot_fallback(video_id):
+    """Best-effort: ask the configured POT provider for json3 captions.
+
+    Returns ``{"languageCode": str, "json3": dict}`` on success, ``None`` if the
+    provider is unconfigured or the request fails (caller falls through to the
+    normal error path). The provider is a separate host (bgutil + yt-dlp behind
+    a tunnel) that can compute the POT YouTube requires — something this
+    serverless function cannot do. Uses stdlib urllib only (no new dependency).
+    """
+    if not POT_PROVIDER_URL or not POT_PROVIDER_SECRET:
+        return None
+    target = f"{POT_PROVIDER_URL.rstrip('/')}?{urlencode({'v': video_id})}"
+    req = urlrequest.Request(target, headers={"X-Pot-Secret": POT_PROVIDER_SECRET})
+    try:
+        with urlrequest.urlopen(req, timeout=45) as resp:
+            if resp.status != 200:
+                return None
+            data = json.loads(resp.read().decode("utf-8"))
+    except (urlerror.URLError, TimeoutError, ValueError):
+        return None
+    lang = data.get("languageCode")
+    json3 = data.get("json3")
+    if lang and isinstance(json3, dict) and json3.get("events"):
+        return {"languageCode": lang, "json3": json3}
+    return None
+
+
 async def app(scope, receive, send):
     """Minimal ASGI app: GET ?v=VIDEOID -> caption JSON."""
     # Handle ASGI lifespan events correctly; a naive "http-only" guard would
@@ -136,14 +174,30 @@ async def app(scope, receive, send):
         unavailable = any(
             s in lower for s in ("private", "unavailable", "does not exist", "removed")
         )
-        status = 404 if unavailable else 503
-        body = {
-            "error": "caption source unavailable" if unavailable else "caption fetch failed",
-            "videoId": video_id,
-        }
+        if unavailable:
+            body = {"error": "caption source unavailable", "videoId": video_id}
+            if DEBUG_DETAIL:
+                body["detail"] = msg
+            await _respond(send, 404, body)
+            return
+        # 503 case: YouTube is POT/risk-control blocking this serverless call.
+        # Try the self-hosted POT provider before surfacing 503 (best-effort).
+        fallback = _pot_fallback(video_id)
+        if fallback is not None:
+            await _respond(
+                send,
+                200,
+                {
+                    "videoId": video_id,
+                    "languageCode": fallback["languageCode"],
+                    "json3": fallback["json3"],
+                },
+            )
+            return
+        body = {"error": "caption fetch failed", "videoId": video_id}
         if DEBUG_DETAIL:
             body["detail"] = msg
-        await _respond(send, status, body)
+        await _respond(send, 503, body)
         return
     except Exception as e:  # noqa: BLE001 — intentional ASGI catch-all so an unexpected (non yt-dlp) failure returns a clean 500 instead of a stack trace
         # Unexpected (non yt-dlp) error — keep the diagnostic behind the flag too.
@@ -154,6 +208,19 @@ async def app(scope, receive, send):
         return
 
     if result is None:
+        # Local yt-dlp produced nothing; try the POT provider before 404.
+        fallback = _pot_fallback(video_id)
+        if fallback is not None:
+            await _respond(
+                send,
+                200,
+                {
+                    "videoId": video_id,
+                    "languageCode": fallback["languageCode"],
+                    "json3": fallback["json3"],
+                },
+            )
+            return
         await _respond(
             send,
             404,
