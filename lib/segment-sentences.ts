@@ -214,6 +214,24 @@ export const segmentSentencesFromJson3 = async (
         audioEndMs: Number.isFinite(endMs) && endMs > startMs ? endMs : undefined,
       });
     }
+    // Adjacent-sentence overlap fix: json3 ASR event timestamps naturally
+    // overlap/interleave, so a merged sentence's endMs (last event start+dur)
+    // often lands inside the NEXT sentence's startMs — seeking to the next
+    // sentence mid-overlap feels broken. Clamp each sentence's endMs down to
+    // the next sentence's audioStartMs (sorted by start first so "next" is
+    // temporal). The final sentence keeps its computed end.
+    result.sort((a, b) => (a.audioStartMs ?? 0) - (b.audioStartMs ?? 0));
+    for (let i = 0; i < result.length - 1; i++) {
+      const nextStart = result[i + 1].audioStartMs;
+      if (
+        result[i].audioEndMs != null &&
+        nextStart != null &&
+        result[i].audioEndMs! > nextStart
+      ) {
+        // Don't shrink below this sentence's own start (keep a non-empty window).
+        result[i].audioEndMs = Math.max(nextStart, result[i].audioStartMs! + 1);
+      }
+    }
     return result;
   } catch {
     return [];
