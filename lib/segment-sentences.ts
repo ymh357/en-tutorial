@@ -26,7 +26,18 @@ import type { MaterialSentence } from "@/lib/types";
 interface TextEvent {
   i: number; // index into the ORIGINAL events array (for timing)
   text: string;
+  segs?: { utf8?: string; tOffsetMs?: number }[]; // original segs for seg-level timing
 }
+
+/** Absolute timestamp (ms) of a seg within its event: event.tStartMs + seg.tOffsetMs. */
+const segStartMs = (
+  ev: { tStartMs?: number; segs?: { tOffsetMs?: number }[] } | undefined,
+  segIdx: number
+): number | null => {
+  if (!ev || ev.tStartMs == null) return null;
+  const off = ev.segs?.[segIdx]?.tOffsetMs ?? 0;
+  return ev.tStartMs + off;
+};
 
 const segmentationSchema = z.object({
   sentences: z.array(z.string()).default([]),
@@ -84,24 +95,32 @@ const segmentOnce = async (joined: string): Promise<string[]> => {
 
 // Normalize for substring localization: lowercase, drop punctuation + spaces.
 // "Cockroach DB" and "CockroachDB" both -> "cockroachdb"; "Go"/"go" -> "go".
-// Returns the normalized string; `owner[i]` = index into textEvents of the
-// source fragment that contributed normalized char i.
+// `owner[k]` = { fi, si } mapping normalized char k -> its source textEvent (fi)
+// and the seg WITHIN that event (si), so a sentence's start can be timed to the
+// SEG level (event.tStartMs + seg.tOffsetMs) — not just the event's first-word
+// tStartMs. This matters when the LLM starts a sentence mid-event (e.g. event
+// "century it's a popular..." t=5560, LLM sentence "It's a popular..." starts at
+// seg "it's" tOffsetMs=520 -> 6080ms, not 5560ms which would drag in "century").
 const buildNormalizedStream = (
   textEvents: TextEvent[]
-): { stream: string; owner: number[] } => {
+): { stream: string; owner: { fi: number; si: number }[] } => {
   let stream = "";
-  const owner: number[] = [];
+  const owner: { fi: number; si: number }[] = [];
   for (let fi = 0; fi < textEvents.length; fi++) {
-    const raw = textEvents[fi].text;
-    for (const ch of raw) {
-      if (/[a-z0-9]/i.test(ch)) {
-        stream += ch.toLowerCase();
-        owner.push(fi);
+    const segs = textEvents[fi].segs ?? [];
+    for (let si = 0; si < segs.length; si++) {
+      for (const ch of segs[si].utf8 ?? "") {
+        if (/[a-z0-9]/i.test(ch)) {
+          stream += ch.toLowerCase();
+          owner.push({ fi, si });
+        }
       }
+      // Spaces between segs within an event are dropped (not alnum) — seg
+      // word boundaries disappear in the normalized stream, letting an
+      // LLM-merged "CockroachDB" match "cockroach"+"db". Inter-event
+      // joining spaces also dropped (textEvents[].text had them, but we
+      // iterate segs directly here so none inserted).
     }
-    // Joining space between fragments is dropped (not alnum) — fragments'
-    // word boundaries disappear in the normalized stream, which is exactly
-    // what lets an LLM-merged "CockroachDB" match "cockroach"+"db".
   }
   return { stream, owner };
 };
@@ -109,20 +128,21 @@ const buildNormalizedStream = (
 /** Segment YouTube json3 events into sentence-bounded MaterialSentences via LLM.
  *  Returns [] on any failure (caller falls back to parseJson3). */
 export const segmentSentencesFromJson3 = async (
-  events: { tStartMs?: number; dDurationMs?: number; segs?: { utf8?: string }[] }[]
+  events: { tStartMs?: number; dDurationMs?: number; segs?: { utf8?: string; tOffsetMs?: number }[] }[]
 ): Promise<MaterialSentence[]> => {
   try {
     const textEvents: TextEvent[] = [];
     for (let i = 0; i < events.length; i++) {
       const ev = events[i];
       if (ev?.tStartMs == null) continue;
-      const raw = (ev.segs ?? [])
+      const segs = (ev.segs ?? []).filter((s) => (s.utf8 ?? "").replace(/\n/g, "").trim().length > 0);
+      const raw = segs
         .map((s) => s.utf8 ?? "")
         .join("")
         .replace(/\n/g, " ")
         .trim();
       if (!raw) continue;
-      textEvents.push({ i, text: raw });
+      textEvents.push({ i, text: raw, segs });
     }
     if (textEvents.length === 0) return [];
 
@@ -169,16 +189,20 @@ export const segmentSentencesFromJson3 = async (
           failCount++;
           continue;
         }
-        const firstFragIdx = owner[fAt];
-        const lastFragIdx = owner[lAt + lastWord.length - 1];
-        const firstEv = events[textEvents[firstFragIdx].i];
-        const lastEv = events[textEvents[lastFragIdx].i];
+        const firstOwner = owner[fAt];
+        const lastOwner = owner[lAt + lastWord.length - 1];
+        const firstEv = events[textEvents[firstOwner.fi].i];
+        const lastEv = events[textEvents[lastOwner.fi].i];
         if (!firstEv || !lastEv || firstEv.tStartMs == null || lastEv.tStartMs == null) {
           failCount++;
           continue;
         }
         if (!isSpeech(sentence)) continue;
-        const startMs = firstEv.tStartMs;
+        // Capture the guarded number before the segStartMs call so narrowing
+        // survives (a function call can reset property narrowing in TS); the
+        // seg-level start is preferred, falling back to the event's tStartMs.
+        const firstBase = firstEv.tStartMs;
+        const startMs = segStartMs(firstEv, firstOwner.si) ?? firstBase;
         const endMs = lastEv.tStartMs + (lastEv.dDurationMs ?? 0);
         result.push({
           text: sentence,
@@ -189,15 +213,20 @@ export const segmentSentencesFromJson3 = async (
         continue;
       }
       const end = at + norm.length - 1; // inclusive
-      const firstFragIdx = owner[at];
-      const lastFragIdx = owner[end];
-      const firstEv = events[textEvents[firstFragIdx].i];
-      const lastEv = events[textEvents[lastFragIdx].i];
+      const firstOwner = owner[at];
+      const lastOwner = owner[end];
+      const firstEv = events[textEvents[firstOwner.fi].i];
+      const lastEv = events[textEvents[lastOwner.fi].i];
       if (!firstEv || !lastEv) {
         failCount++;
         continue;
       }
-      const startMs = firstEv.tStartMs;
+      // Seg-level start: when the LLM starts a sentence mid-event, the first
+      // word's seg tOffsetMs pins the true start (event.tStartMs alone would be
+      // too early and drag in the event's earlier words). lastStartMs stays
+      // event-level — endMs is clamped to the next sentence's start downstream
+      // (playSentence uses nextStart), so a slightly-late event end is harmless.
+      const startMs = segStartMs(firstEv, firstOwner.si) ?? firstEv.tStartMs;
       const lastStartMs = lastEv.tStartMs;
       if (startMs == null || lastStartMs == null) {
         failCount++;
