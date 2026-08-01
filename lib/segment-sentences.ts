@@ -24,8 +24,6 @@ interface TextEvent {
   text: string;
 }
 
-const BATCH_SIZE = 40;
-
 const segmentationSchema = z.object({
   sentences: z
     .array(
@@ -76,7 +74,7 @@ const segmentBatch = async (
       // runs once per imported video, so the higher tier is acceptable.
       model: "deepseek-v4-pro",
       temperature: 0,
-      maxOutputTokens: 2048,
+      maxOutputTokens: 4096,
       disableThinking: true,
     }),
   });
@@ -99,43 +97,32 @@ const segmentBatch = async (
   return data.object.sentences;
 };
 
-// Sanitize LLM ranges. The 0g router runs WITHOUT structured-outputs enforcement
-// (supportsStructuredOutputs is off unless OG_NATIVE_JSON_SCHEMA=1), so the model
-// can return malformed objects — e.g. {startIdx:0} missing endIdx, or split a
-// pair into two single-field objects. We COPE rather than reject: a missing
-// field is back-filled from the other (a single-fragment sentence [s,s]); only
-// fully-missing (both undefined) entries are dropped. Out-of-bounds whole-object
-// => null (whole-batch bail to parseJson3, since a hallucinated index can't be
-// safely salvaged).
+// Sanitize LLM ranges: back-fill a missing startIdx/endIdx from the other
+// (single-fragment [s,s]), clamp out-of-bounds to [0, batchLen-1], sort, merge
+// overlaps. Clamping (not rejecting) is deliberate: prod probing shows the LLM
+// (even pro) routinely returns a slightly-oversized endIdx (e.g. 78 when the
+// batch is 71) — clamping that to the last index is safe (sentence end aligns
+// to the final event) and far better than rejecting the whole batch, which
+// would fall back to ALL parseJson3 fragments. Non-integer/fully-missing
+// entries are skipped (don't fail the batch).
 const sanitizeRanges = (
   raw: { startIdx?: number; endIdx?: number }[],
   batchLen: number
-): { startIdx: number; endIdx: number }[] | null => {
+): { startIdx: number; endIdx: number }[] => {
   if (batchLen === 0) return [];
   const out: { startIdx: number; endIdx: number }[] = [];
   for (const r of raw) {
     const s = r.startIdx;
     const e = r.endIdx;
-    // Both missing → unusable entry, skip (don't fail the whole batch).
-    if (s == null && e == null) continue;
-    // Back-fill a missing side from the other (single-fragment sentence).
-    const start = s ?? e!;
-    const end = e ?? s!;
-    // Out-of-bounds / non-integer → can't safely salvage → bail the batch.
-    if (
-      !Number.isInteger(start) ||
-      !Number.isInteger(end) ||
-      start < 0 ||
-      end < 0 ||
-      start >= batchLen ||
-      end >= batchLen
-    ) {
-      return null;
-    }
-    let lo = start;
-    let hi = end;
-    if (lo > hi) [lo, hi] = [hi, lo];
-    out.push({ startIdx: lo, endIdx: hi });
+    if (s == null && e == null) continue; // unusable entry
+    let start = (s ?? e) as number;
+    let end = (e ?? s) as number;
+    if (!Number.isInteger(start) || !Number.isInteger(end)) continue;
+    // Clamp to valid range (LLM often overshoots endIdx; clamping is safe here).
+    start = Math.max(0, Math.min(start, batchLen - 1));
+    end = Math.max(0, Math.min(end, batchLen - 1));
+    if (start > end) [start, end] = [end, start];
+    out.push({ startIdx: start, endIdx: end });
   }
   out.sort((a, b) => a.startIdx - b.startIdx);
   // Merge overlaps (keep earlier; extend to the later's end).
@@ -173,59 +160,59 @@ export const segmentSentencesFromJson3 = async (
     if (textEvents.length === 0) return [];
 
     const result: MaterialSentence[] = [];
-    for (let start = 0; start < textEvents.length; start += BATCH_SIZE) {
-      const batch = textEvents.slice(start, start + BATCH_SIZE);
-      const ranges = sanitizeRanges(await segmentBatch(batch), batch.length);
-      // A null sanitize = out-of-bounds/hallucinated index → treat as total
-      // failure: bail to the parseJson3 fallback rather than emit corrupted
-      // sentences. (Partial-batch degradation isn't worth the complexity —
-      // parseJson3 fragments for the whole video are still usable.)
-      if (ranges === null) return [];
+    // Single batch (whole transcript at once). Batching cuts sentences at batch
+    // edges ("...version 1.0 was" / "released in 2012..." split across batches),
+    // which reads as a truncated sentence — the worst outcome for listening. A
+    // typical YouTube transcript is fewer than ~400 short fragments (<30KB JSON),
+    // well under both model context and the /api/review 100KB body limit. If a
+    // pathologically long transcript exceeds the limit, /api/review returns 413,
+    // segmentBatch returns [], and the caller falls back to parseJson3 fragments.
+    const batch = textEvents;
+    const ranges = sanitizeRanges(await segmentBatch(batch), batch.length);
 
-      // Track which batch positions the LLM covered; uncovered positions (the
-      // LLM dropped speech it shouldn't have, or a coverage gap) become their
-      // own single-event sentences so NO speech text is silently lost.
-      const covered = new Array<boolean>(batch.length).fill(false);
-      for (const r of ranges) {
-        for (let p = r.startIdx; p <= r.endIdx; p++) covered[p] = true;
-        const firstEv = events[batch[r.startIdx].i];
-        const lastEv = events[batch[r.endIdx].i];
-        if (!firstEv || !lastEv) continue;
-        const startMs = firstEv.tStartMs;
-        const lastStartMs = lastEv.tStartMs;
-        if (startMs == null || lastStartMs == null) continue;
-        const text = batch
-          .slice(r.startIdx, r.endIdx + 1)
-          .map((t) => t.text)
-          .join(" ")
-          .replace(/\s+/g, " ")
-          .trim();
-        if (!isSpeech(text)) continue; // all-non-speech merged range — skip
-        const endMs = lastStartMs + (lastEv.dDurationMs ?? 0);
-        result.push({
-          text,
-          audioStartMs: startMs,
-          // toSentence's endMs>startMs guard inlined (字幕 parse 约束一致)
-          audioEndMs: Number.isFinite(endMs) && endMs > startMs ? endMs : undefined,
-        });
-      }
-      // Uncovered positions: emit each as its own single-fragment sentence so
-      // speech is never silently dropped (degrades to parseJson3-like granularity
-      // for just those fragments, not the whole video).
-      for (let p = 0; p < batch.length; p++) {
-        if (covered[p]) continue;
-        const ev = events[batch[p].i];
-        if (!ev || ev.tStartMs == null) continue;
-        const text = batch[p].text;
-        if (!isSpeech(text)) continue;
-        const startMs = ev.tStartMs;
-        const endMs = startMs + (ev.dDurationMs ?? 0);
-        result.push({
-          text,
-          audioStartMs: startMs,
-          audioEndMs: Number.isFinite(endMs) && endMs > startMs ? endMs : undefined,
-        });
-      }
+    // Track which positions the LLM covered; uncovered positions (the LLM
+    // dropped speech it shouldn't have, or a coverage gap) become their own
+    // single-event sentences so NO speech text is silently lost.
+    const covered = new Array<boolean>(batch.length).fill(false);
+    for (const r of ranges) {
+      for (let p = r.startIdx; p <= r.endIdx; p++) covered[p] = true;
+      const firstEv = events[batch[r.startIdx].i];
+      const lastEv = events[batch[r.endIdx].i];
+      if (!firstEv || !lastEv) continue;
+      const startMs = firstEv.tStartMs;
+      const lastStartMs = lastEv.tStartMs;
+      if (startMs == null || lastStartMs == null) continue;
+      const text = batch
+        .slice(r.startIdx, r.endIdx + 1)
+        .map((t) => t.text)
+        .join(" ")
+        .replace(/\s+/g, " ")
+        .trim();
+      if (!isSpeech(text)) continue; // all-non-speech merged range — skip
+      const endMs = lastStartMs + (lastEv.dDurationMs ?? 0);
+      result.push({
+        text,
+        audioStartMs: startMs,
+        // toSentence's endMs>startMs guard inlined (字幕 parse 约束一致)
+        audioEndMs: Number.isFinite(endMs) && endMs > startMs ? endMs : undefined,
+      });
+    }
+    // Uncovered positions: emit each as its own single-fragment sentence so
+    // speech is never silently dropped (degrades to parseJson3-like granularity
+    // for just those fragments, not the whole video).
+    for (let p = 0; p < batch.length; p++) {
+      if (covered[p]) continue;
+      const ev = events[batch[p].i];
+      if (!ev || ev.tStartMs == null) continue;
+      const text = batch[p].text;
+      if (!isSpeech(text)) continue;
+      const startMs = ev.tStartMs;
+      const endMs = startMs + (ev.dDurationMs ?? 0);
+      result.push({
+        text,
+        audioStartMs: startMs,
+        audioEndMs: Number.isFinite(endMs) && endMs > startMs ? endMs : undefined,
+      });
     }
     return result;
   } catch {
