@@ -50,6 +50,8 @@ const SYSTEM = [
   "- Cover EVERY input fragment exactly once (no gaps, no overlaps) — every position must belong to one range, unless it is non-speech.",
   "- Non-speech fragments (e.g. \"[Music]\", \"(applause)\"): you may omit them, but state ranges only over speech positions.",
   "- Prefer fewer, longer sentences over many short ones.",
+  "- Each range object MUST contain BOTH startIdx and endIdx (never just one).",
+  "- Example: input [\"go a statically typed\",\"compiled language\",\"often described as\",\"C for the 21st century\"] → {\"sentences\":[{\"startIdx\":0,\"endIdx\":3}]} (all four merged into one sentence).",
   "- Return ONLY the JSON object matching the schema; no markdown, no commentary.",
 ].join("\n");
 
@@ -68,7 +70,11 @@ const segmentBatch = async (
       prompt: `Segment these caption fragments into complete sentences.\n\nInput array (each element is one fragment, 0-indexed):\n${userPayload}`,
       system: SYSTEM,
       schema: toJsonSchema(segmentationSchema),
-      model: "deepseek-v4-flash",
+      // qualityModel (pro), NOT flash: probing prod showed flash ignores the
+      // schema under non-strict mode (returns {startIdx} without endIdx, and
+      // doesn't merge fragments), while pro returns well-formed ranges. Segmentation
+      // runs once per imported video, so the higher tier is acceptable.
+      model: "deepseek-v4-pro",
       temperature: 0,
       maxOutputTokens: 2048,
       disableThinking: true,
@@ -93,33 +99,43 @@ const segmentBatch = async (
   return data.object.sentences;
 };
 
-// Sanitize LLM ranges. Returns null if ANY range is out of bounds for the
-// batch — treating a bad/hallucinated index as a whole-batch failure (caller
-// falls back to parseJson3 fragments for this batch) rather than silently
-// clamping it to the last element (which would corrupt timing/text). In-bounds
-// ranges are sorted + merged for overlaps.
+// Sanitize LLM ranges. The 0g router runs WITHOUT structured-outputs enforcement
+// (supportsStructuredOutputs is off unless OG_NATIVE_JSON_SCHEMA=1), so the model
+// can return malformed objects — e.g. {startIdx:0} missing endIdx, or split a
+// pair into two single-field objects. We COPE rather than reject: a missing
+// field is back-filled from the other (a single-fragment sentence [s,s]); only
+// fully-missing (both undefined) entries are dropped. Out-of-bounds whole-object
+// => null (whole-batch bail to parseJson3, since a hallucinated index can't be
+// safely salvaged).
 const sanitizeRanges = (
-  raw: { startIdx: number; endIdx: number }[],
+  raw: { startIdx?: number; endIdx?: number }[],
   batchLen: number
 ): { startIdx: number; endIdx: number }[] | null => {
   if (batchLen === 0) return [];
   const out: { startIdx: number; endIdx: number }[] = [];
   for (const r of raw) {
-    // Reject out-of-bounds entirely — do NOT clamp (clamping silently corrupts).
+    const s = r.startIdx;
+    const e = r.endIdx;
+    // Both missing → unusable entry, skip (don't fail the whole batch).
+    if (s == null && e == null) continue;
+    // Back-fill a missing side from the other (single-fragment sentence).
+    const start = s ?? e!;
+    const end = e ?? s!;
+    // Out-of-bounds / non-integer → can't safely salvage → bail the batch.
     if (
-      !Number.isInteger(r.startIdx) ||
-      !Number.isInteger(r.endIdx) ||
-      r.startIdx < 0 ||
-      r.endIdx < 0 ||
-      r.startIdx >= batchLen ||
-      r.endIdx >= batchLen
+      !Number.isInteger(start) ||
+      !Number.isInteger(end) ||
+      start < 0 ||
+      end < 0 ||
+      start >= batchLen ||
+      end >= batchLen
     ) {
       return null;
     }
-    let s = r.startIdx;
-    let e = r.endIdx;
-    if (s > e) [s, e] = [e, s];
-    out.push({ startIdx: s, endIdx: e });
+    let lo = start;
+    let hi = end;
+    if (lo > hi) [lo, hi] = [hi, lo];
+    out.push({ startIdx: lo, endIdx: hi });
   }
   out.sort((a, b) => a.startIdx - b.startIdx);
   // Merge overlaps (keep earlier; extend to the later's end).
