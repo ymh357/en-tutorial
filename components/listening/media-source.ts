@@ -118,7 +118,7 @@ export const createYouTubePlayer = (
 ): YouTubeMediaSource => {
   const { host, videoId } = opts;
   let player: YTPlayer | null = null;
-  let pollInterval: ReturnType<typeof setInterval> | null = null;
+  let rafId: number | null = null;
   let abLoop = false;
   let currentStartMs = 0;
   let currentEndMs = 0;
@@ -156,32 +156,53 @@ export const createYouTubePlayer = (
   let mountNode: HTMLDivElement | null = null;
 
   const clearPoll = (): void => {
-    if (pollInterval) {
-      clearInterval(pollInterval);
-      pollInterval = null;
+    if (rafId != null) {
+      cancelAnimationFrame(rafId);
+      rafId = null;
     }
   };
   const startPoll = (): void => {
     clearPoll();
-    pollInterval = setInterval(() => {
-      if (!player) return;
+    // requestAnimationFrame (~16ms) instead of setInterval(100ms): the YT
+    // IFrame API's getCurrentTime() updates in coarse ~70-100ms steps, so we
+    // can't beat that grain — but checking every frame lets us pause the
+    // MOMENT the first coarse report crosses currentEndMs, cutting the
+    // stop-latency from poll-interval(0-100ms)+grain to just the grain.
+    const tick = (): void => {
+      if (!player) {
+        rafId = requestAnimationFrame(tick);
+        return;
+      }
       const ms = (player.getCurrentTime?.() ?? 0) * 1000;
       if (ms >= currentEndMs) {
         if (abLoop) {
           player.seekTo?.(currentStartMs / 1000, true);
+          rafId = requestAnimationFrame(tick);
         } else {
           player.pauseVideo?.();
           clearPoll();
+          return;
         }
+      } else {
+        rafId = requestAnimationFrame(tick);
       }
-    }, 100);
+    };
+    rafId = requestAnimationFrame(tick);
   };
 
   // Shared logic for both the public play() and the flushed pendingPlay —
   // requires `player` to be non-null (caller must check).
   const playInternal = (startMs: number, endMs: number): void => {
     currentStartMs = startMs;
-    currentEndMs = endMs;
+    // YouTube IFrame API stop-latency compensation (B): getCurrentTime()
+    // reports in coarse ~70-100ms steps, so even with rAF polling we overshoot
+    // currentEndMs by ~one API grain before pause triggers — dragging in the
+    // next sentence's first short word ("and"/"it" ~150ms) wholesale. Pull the
+    // trip point earlier by that grain so the pause fires at the true boundary;
+    // the cost is ~100ms of the current sentence's final tail (consonant
+    // decay), which is far less audible than a whole extra word up front.
+    const grainMs = 100;
+    currentEndMs = Math.max(endMs - grainMs, startMs + 50);
     player?.seekTo?.(startMs / 1000, true);
     player?.playVideo?.();
     startPoll();
@@ -411,7 +432,7 @@ export const createVideoPlayer = (opts: VideoPlayerOpts): MediaSource => {
   const stateCbs = new Set<(s: "playing" | "paused" | "ended") => void>();
   const onReadyCbs = new Set<() => void>();
   const onErrorCbs = new Set<(message: string) => void>();
-  let pollInterval: ReturnType<typeof setInterval> | null = null;
+  let rafId: number | null = null;
   let abLoop = false;
   let currentStartMs = 0;
   let currentEndMs = 0;
@@ -506,28 +527,33 @@ export const createVideoPlayer = (opts: VideoPlayerOpts): MediaSource => {
   });
 
   const clearPoll = (): void => {
-    if (pollInterval) {
-      clearInterval(pollInterval);
-      pollInterval = null;
+    if (rafId != null) {
+      cancelAnimationFrame(rafId);
+      rafId = null;
     }
   };
   const startPoll = (): void => {
     clearPoll();
-    pollInterval = setInterval(() => {
+    // requestAnimationFrame (~16ms) vs setInterval(100ms): HTML5 media
+    // currentTime is continuously readable, so frame-level polling lets us
+    // pause within ~16ms of currentEndMs (vs 0-100ms). Overshoot drops to
+    // <30ms — short next-sentence words no longer get dragged in.
+    const tick = (): void => {
       const ms = video.currentTime * 1000;
       if (ms >= currentEndMs) {
         if (abLoop) {
-          // Seek back without pausing — element is already playing, so it
-          // keeps playing from startMs with no second play() call. Calling
-          // play() here would run outside any user gesture (setInterval
-          // callback) and be rejected by the autoplay policy.
           video.currentTime = currentStartMs / 1000;
+          rafId = requestAnimationFrame(tick);
         } else {
           video.pause();
           clearPoll();
+          return;
         }
+      } else {
+        rafId = requestAnimationFrame(tick);
       }
-    }, 100);
+    };
+    rafId = requestAnimationFrame(tick);
   };
 
   // Requires metadata ready (currentTime is settable only once duration is known).

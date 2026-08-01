@@ -26,7 +26,7 @@ export const createAudioPlayer = (opts: AudioPlayerOpts): MediaSource => {
   const stateCbs = new Set<(s: "playing" | "paused" | "ended") => void>();
   const onReadyCbs = new Set<() => void>();
   const onErrorCbs = new Set<(message: string) => void>();
-  let pollInterval: ReturnType<typeof setInterval> | null = null;
+  let rafId: number | null = null;
   let abLoop = false;
   let currentStartMs = 0;
   let currentEndMs = 0;
@@ -89,29 +89,38 @@ export const createAudioPlayer = (opts: AudioPlayerOpts): MediaSource => {
   });
 
   const clearPoll = (): void => {
-    if (pollInterval) {
-      clearInterval(pollInterval);
-      pollInterval = null;
+    if (rafId != null) {
+      cancelAnimationFrame(rafId);
+      rafId = null;
     }
   };
   const startPoll = (): void => {
     clearPoll();
-    pollInterval = setInterval(() => {
+    // requestAnimationFrame (~16ms) vs setInterval(100ms): HTML5 audio
+    // currentTime is continuously readable, so frame-level polling pauses
+    // within ~16ms of currentEndMs (vs 0-100ms) — short next-sentence words
+    // no longer get dragged in at clip end.
+    const tick = (): void => {
       const ms = audio.currentTime * 1000;
       if (ms >= currentEndMs) {
         if (abLoop) {
           // Seek back to the sentence start WITHOUT pausing — the element is
           // already in the playing state, so it keeps playing from startMs with
           // no second play() call. Calling play() here would run outside any
-          // user gesture (it's a setInterval callback) and be rejected by the
-          // autoplay policy, breaking the loop.
+          // user gesture (rAF callback) and be rejected by the autoplay
+          // policy, breaking the loop.
           audio.currentTime = currentStartMs / 1000;
+          rafId = requestAnimationFrame(tick);
         } else {
           audio.pause();
           clearPoll();
+          return;
         }
+      } else {
+        rafId = requestAnimationFrame(tick);
       }
-    }, 100);
+    };
+    rafId = requestAnimationFrame(tick);
   };
 
   // Requires metadata ready (currentTime is settable only once duration is known).
