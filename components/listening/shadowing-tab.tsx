@@ -588,10 +588,15 @@ export const ShadowingTab = ({
   const playSentence = (i: number): void => {
     const s = material?.sentences?.[i];
     if (s?.audioStartMs == null) return;
+    // End the clip AT THE NEXT SENTENCE'S START — that's the exact "文案断句处".
+    // ASR event timestamps (the source of audioEndMs) are phrase-block boundaries
+    // that don't align with真正的句子语义边界, so s.audioEndMs often stops early
+    // or late vs where the sentence actually ends. The next sentence's start is
+    // the true boundary by construction. Last sentence (no next) falls back to
+    // audioEndMs, then a 15s cap.
     const nextStart = material?.sentences?.[i + 1]?.audioStartMs;
     const endMs =
-      s.audioEndMs ??
-      Math.min(nextStart ?? s.audioStartMs + 5000, s.audioStartMs + 15000);
+      nextStart ?? s.audioEndMs ?? Math.min(s.audioStartMs + 15000, s.audioStartMs + 15000);
     setListensCount((c) => c + 1);
     sourceRef.current?.play(s.audioStartMs, endMs);
   };
