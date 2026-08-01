@@ -596,9 +596,14 @@ export const ShadowingTab = ({
     // audioEndMs, then a 15s cap.
     const nextStart = material?.sentences?.[i + 1]?.audioStartMs;
     const endMs =
-      nextStart ?? s.audioEndMs ?? Math.min(s.audioStartMs + 15000, s.audioStartMs + 15000);
+      nextStart ?? s.audioEndMs ?? s.audioStartMs + 15000;
+    // Start a touch BEFORE the sentence's first ASR event: that event's tStartMs
+    // is the phrase-block start, which ASR typically places slightly AFTER the
+    // real word onset, so seeking exactly to it clips the句首. -300ms (floored at
+    // 0) compensates consistently with the endMs=nextStart construction above.
+    const startMs = Math.max(0, s.audioStartMs - 300);
     setListensCount((c) => c + 1);
-    sourceRef.current?.play(s.audioStartMs, endMs);
+    sourceRef.current?.play(startMs, endMs);
   };
 
   const startAttempt = async (): Promise<void> => {
