@@ -151,3 +151,58 @@ user 要求"代码做到能自证",不靠真机实测。自证轮 3 任务完成
 
 **运维新增**:`tsx` devDep(test 运行);`npm test` 跑 `**/*.test.ts`。无新 env。push 后 prod 自动部署。
 
+---
+
+## 突破(2026-08-01):YouTube POT 死结解开 — MacBook tunnel + bgutil fallback
+
+之前判"POT 死结 serverless 不可解"是基于"边 @ Vercel serverless + 无常驻 host"。本节用 **cloudflared 出站隧道 + MacBook bgutil POT provider** 解开,prod 已验通(视频 `446E-r0rXHI`:Vercel→隧道→MacBook→真实 json3 142 句,HTTP 200)。Plan: `~/.claude-personal/plans/encapsulated-meandering-flame.md`(self-proving round plan 同文件被覆盖为此 plan)。
+
+### 关键技术修正(推翻本文件早期论断)
+1. **bgutil-ytdlp-pot-provider 不需 Chromium/Docker/Playwright**。`server/package.json` 纯 Node(`bgutils-js`+`jsdom`+`canvas`+`youtubei.js`+`express`),Node>=20,LuanRT BgUtils 已演进为纯 JS 经 jsdom 算 POT。早期 handoff/writeup "需持久 headless Chromium" 过时。
+2. **cloudflared 出站隧道绕开 v6 入站被挡**:之前判"MacBook v6 入站被家宽防火墙/CGNAT 挡,Vercel 调不到"——对。但 cloudflared 让 MacBook **主动出站**连 Cloudflare,Cloudflare 给 `*.trycloudflare.com` 公网域名反代回 MacBook 4417,无任何公网入站需求。实测外部 curl→HTTP 200。Netbird 不受影响(独立)。
+
+### 架构(prod 已通)
+```
+Vercel api/youtube_captions.py
+  ├─ yt-dlp + YTC_COOKIES(本地,现有)→ 200 json3(未被 POT-flag 时)
+  └─ 503/None → fallback: GET POT_PROVIDER_URL?v= (header X-Pot-Secret)
+       → Cloudflare → cloudflared(MacBook 出站)→ yt-captions-wrapper(:4417)
+            → shells yt-dlp(--extractor-args youtubepot-bgutilhttp:base_url=127.0.0.1:4416 + cookies.txt)
+            → bgutil POT server(:4416, localhost only)算 token
+            → 返 {videoId, languageCode, json3}
+```
+两个 MacBook 进程:bgutil(4416,POT)+ wrapper(4417,yt-dlp)。cloudflared 只隧道 4417;bgutil 仅 localhost。
+
+### 代码改动(仅 1 文件,commit bb71853)
+`api/youtube_captions.py`:`_pot_fallback(video_id)` 函数(stdlib urllib,无新依赖),在 503 分支 + result-None 分支调;`POT_PROVIDER_URL`/`POT_PROVIDER_SECRET` env 门控(都不设=完全旧行为)。30 行。两 env 都设才生效。pyproject/ruff 不动(Node/Python 依赖全在 MacBook,Vercel 侧零新依赖)。
+
+### MacBook ops(不在 repo,~/yt-pot/)
+- `~/yt-pot/install.sh`(幂等装机):pip yt-dlp+bgutil plugin、clone bgutil+npm ci+tsc、wrapper express、cloudflared 二进制、.env(POT_SECRET 随机)、空 cookies.txt 提示。
+- `~/yt-pot/start.sh`:起 bgutil+wrapper+cloudflared quick tunnel,打印 trycloudflare URL + secret + Vercel env 设置提示。
+- `~/yt-pot/stop.sh`:pkill 三进程。
+- `~/yt-pot/wrapper/server.js`(94 行):express,GET ?v=,X-Pot-Secret 恒时比较(无/错→403),11-char 校验(→400),shell yt-dlp 配 bgutil base_url+cookies.txt+en/en-orig/json3+skip_download,产 json3,行为对齐 `api/youtube_captions.py`(empty-events guard),返 `{videoId,languageCode,json3}`,失败→503。
+- `~/yt-pot/cookies.txt`:Netscape 格式(从用户浏览器导出转换),同 Vercel `YTC_COOKIES` 的 Google session。bgutil 解 POT + cookies 解 bot 检查,两者都需要。
+- `~/yt-pot/.env`:`POT_SECRET=7532...`(也设于 Vercel `POT_PROVIDER_SECRET`)。
+
+### Vercel env(production, Encrypted)
+- `POT_PROVIDER_URL`=当前 trycloudflare URL(**每次 MacBook start.sh 重启会变,需更新此 env**)。
+- `POT_PROVIDER_SECRET`=稳定 shared secret(同 MacBook .env 的 POT_SECRET)。
+
+### 运维负担(用户须知)
+1. **MacBook 需常开 + yt-pot 运行**(start.sh)。关机/停服务 → YouTube 自动抓取降级到 503→粘贴兜底(B站路径不受影响,独立代码)。
+2. **quick tunnel URL 每次重启变** → 更新 Vercel `POT_PROVIDER_URL`。摩擦点;若烦可升级 named tunnel(需 Cloudflare 管理的域名,仍免费)。
+3. **cookies 会过期/轮换**(YouTube 主动轮)→ MacBook cookies.txt + Vercel YTC_COOKIES 都要重导(同 session)。
+4. bgutil "不保证绕过"(README CAUTION)——YouTube 再收紧则 fallback 也挂,落 503→粘贴。架构优雅降级。
+
+### 验收(本节 prod 实测)
+- MacBook curl tunnel+secret ?v=446E-r0rXHI → 200 真实 json3 142 events(首句"go a statically typed compiled...")。**自 POT 阻断以来首次成功自动抓 YouTube 字幕。**
+- 无 secret 403、错 secret 403、坏 videoId 400(安全门)。
+- Vercel prod `/api/youtube_captions?v=446E-r0rXHI` → 200(fallback 经隧道到 MacBook 成功)。
+- import 页:粘该 URL → 抓字幕 → 预览句子(非 503)。用户可即刻验证。
+
+### 未做/遗留
+- named tunnel 固定域名(用户选 quick,接受重启换 URL 摩擦)。
+- launchd 常驻(用户选手动 start/stop 脚本)。
+- Phase D Python fallback 无单元测试(CLAUDE.md 默认不写测试;end-to-end prod 实测即验收)。
+- b23/B站英文软字幕稀的根本问题未治(B站路径保持现状,英文素材转向 YouTube+POT-fallback)。
+
