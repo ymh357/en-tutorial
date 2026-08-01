@@ -1,9 +1,17 @@
 import { generateObject, generateText, jsonSchema } from "ai";
-import { qualityModel } from "@/lib/ai";
+import { defaultModel, qualityModel } from "@/lib/ai";
 
 export const maxDuration = 120;
 
 const MAX_BODY_SIZE = 100_000; // ~100KB
+
+// Optional caller-selected model. Quality (deepseek-v4-pro) is the default
+// for callers that omit `model` (every existing consumer — backward compatible).
+// `deepseek-v4-flash` is the fast/cheap tier, used by low-stakes high-frequency
+// tasks like caption sentence segmentation. Anything unrecognized falls back
+// to qualityModel rather than erroring, so a bad model string never 500s.
+const resolveModel = (name?: string) =>
+  name === "deepseek-v4-flash" ? defaultModel : qualityModel;
 
 export const POST = async (req: Request): Promise<Response> => {
   const contentLength = req.headers.get("content-length");
@@ -18,6 +26,7 @@ export const POST = async (req: Request): Promise<Response> => {
     temperature?: number;
     maxOutputTokens?: number;
     disableThinking?: boolean;
+    model?: string;
   };
   try {
     body = await req.json();
@@ -25,7 +34,7 @@ export const POST = async (req: Request): Promise<Response> => {
     return Response.json({ error: "Invalid JSON body" }, { status: 400 });
   }
 
-  const { prompt, system, schema, temperature, maxOutputTokens, disableThinking } = body;
+  const { prompt, system, schema, temperature, maxOutputTokens, disableThinking, model } = body;
 
   if (!prompt || typeof prompt !== "string") {
     return Response.json({ error: "prompt string is required" }, { status: 400 });
@@ -60,6 +69,12 @@ export const POST = async (req: Request): Promise<Response> => {
     );
   }
 
+  if (model !== undefined && typeof model !== "string") {
+    return Response.json({ error: "model must be a string" }, { status: 400 });
+  }
+
+  const selectedModel = resolveModel(model);
+
   // DeepSeek V4 runs a reasoning pass by default. Callers that pass
   // disableThinking turn it off via the 0g router's enable_thinking flag: it
   // cuts the bulk of the latency (a small structured request drops from ~4.5s
@@ -80,7 +95,7 @@ export const POST = async (req: Request): Promise<Response> => {
     // not-yet-migrated callers keep working exactly as before.
     if (schema) {
       const { object, usage, response } = await generateObject({
-        model: qualityModel,
+        model: selectedModel,
         schema: jsonSchema(schema),
         system,
         prompt,
@@ -106,7 +121,7 @@ export const POST = async (req: Request): Promise<Response> => {
     // max_tokens either, so leaving it unset preserves that behavior and lets
     // the provider default (higher than any cap we'd pick) apply.
     const { text, usage, response } = await generateText({
-      model: qualityModel,
+      model: selectedModel,
       system,
       prompt,
       maxOutputTokens,

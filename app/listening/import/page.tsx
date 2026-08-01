@@ -30,6 +30,7 @@ import {
 } from "@/components/ui/select";
 import { dbHelpers } from "@/lib/db-helpers";
 import { parseJson3, parseSubtitles } from "@/lib/subtitle-parse";
+import { segmentSentencesFromJson3 } from "@/lib/segment-sentences";
 import { extractVideoId } from "@/lib/youtube";
 import { isBilibiliLink } from "@/lib/bilibili-client";
 import { TOPICS, DEFAULT_TOPIC } from "@/lib/topics";
@@ -52,6 +53,7 @@ export default function ImportPage() {
   const [url, setUrl] = useState("");
   const [videoId, setVideoId] = useState<string | null>(null);
   const [isFetching, setIsFetching] = useState(false);
+  const [isSegmenting, setIsSegmenting] = useState(false);
   const [isCreating, setIsCreating] = useState(false);
   // 503 fallback: automatic yt-dlp fetch failed (rate-limited/blocked), so the
   // user pastes srt/vtt/json3 captions by hand instead.
@@ -125,7 +127,20 @@ export default function ImportPage() {
         return;
       }
       const { json3 } = await res.json();
-      const parsed = parseJson3(json3);
+      // YouTube auto-captions are phrase fragments — re-segment into full
+      // sentences via LLM (best-effort; falls back to parseJson3 fragments on
+      // any failure so import never blocks).
+      setIsFetching(false);
+      setIsSegmenting(true);
+      let parsed: MaterialSentence[] = [];
+      try {
+        parsed = await segmentSentencesFromJson3(json3?.events ?? []);
+      } catch {
+        parsed = [];
+      }
+      if (parsed.length === 0) {
+        parsed = parseJson3(json3);
+      }
       if (parsed.length === 0) {
         setError("未解析到字幕");
         return;
@@ -136,6 +151,7 @@ export default function ImportPage() {
       setPasting(true);
     } finally {
       setIsFetching(false);
+      setIsSegmenting(false);
     }
   };
 
@@ -314,11 +330,16 @@ export default function ImportPage() {
                 />
                 <Button
                   onClick={handleFetchCaptions}
-                  disabled={!url.trim() || isFetching}
+                  disabled={!url.trim() || isFetching || isSegmenting}
                   className="shrink-0"
                 >
                   {isFetching ? (
                     <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : isSegmenting ? (
+                    <>
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                      断句中...
+                    </>
                   ) : (
                     "抓字幕"
                   )}

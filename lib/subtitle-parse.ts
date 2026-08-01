@@ -24,7 +24,7 @@ interface Json3 {
 // Drop YouTube's non-speech markers like [Music], [Applause], ♪♪♪ so sentences
 // are real spoken text usable for listening practice.
 const SPEECH_ONLY = /^[\[\(]/;
-const isSpeech = (text: string): boolean =>
+export const isSpeech = (text: string): boolean =>
   text.length > 0 && !SPEECH_ONLY.test(text);
 
 const toSentence = (
